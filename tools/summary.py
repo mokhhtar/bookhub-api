@@ -50,7 +50,16 @@ class SearchResponseItem(BaseModel):
 
 @router.get("/search", response_model=list[SearchResponseItem])
 def search_books(q: str):
-    return book_data.search_books_list(q, limit=8)
+    query_clean = q.strip().lower()
+    if not query_clean:
+        return []
+    cache_key = ("search", query_clean)
+    cached = cache.get(*cache_key)
+    if cached is not None:
+        return cached
+    results = book_data.search_books_list(q, limit=8)
+    cache.set(results, *cache_key, ttl=86400 * 7) # Cache search results for 7 days
+    return results
 
 
 # ── Prompt (kept local to this tool — not shared) ──────────
