@@ -355,34 +355,73 @@ def find_similar_by_category(category: str, exclude_title: str = "", limit: int 
     return results
 
 
-def search_books_list(query: str, limit: int = 20) -> list[dict]:
+def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict]:
     """
     Search books from Google Books (or Open Library fallback) returning a list of matched records.
+    Supports offset-based pagination and chunked requests for limit > 40.
     """
     import urllib.parse
-    params = {"q": query, "maxResults": limit, "printType": "books", "langRestrict": "en"}
-    if GOOGLE_BOOKS_API_KEY:
-        params["key"] = GOOGLE_BOOKS_API_KEY
-
+    
     items = []
-    try:
-        resp = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=8.0)
-        resp.raise_for_status()
-        data = resp.json()
-        items = data.get("items", [])
-    except Exception as e:
-        log.warning(f"Google Books search query failed: {e}")
-
-    # Fallback to Open Library if Google Books fails or returns empty
-    if not items:
-        # Try without langRestrict first
-        params.pop("langRestrict", None)
+    current_offset = offset
+    remaining = limit
+    
+    # 1. Primary Source: Google Books
+    while remaining > 0:
+        chunk_size = min(remaining, 40)
+        params = {
+            "q": query,
+            "maxResults": chunk_size,
+            "startIndex": current_offset,
+            "printType": "books",
+            "langRestrict": "en"
+        }
+        if GOOGLE_BOOKS_API_KEY:
+            params["key"] = GOOGLE_BOOKS_API_KEY
+            
         try:
             resp = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=8.0)
             resp.raise_for_status()
-            items = resp.json().get("items", [])
+            chunk_items = resp.json().get("items", [])
+            if not chunk_items:
+                break
+            items.extend(chunk_items)
+            if len(chunk_items) < chunk_size:
+                break  # No more results
+            current_offset += len(chunk_items)
+            remaining -= len(chunk_items)
         except Exception as e:
-            log.warning(f"Google Books fallback search failed: {e}")
+            log.warning(f"Google Books search query failed at offset {current_offset}: {e}")
+            break
+
+    # Fallback to Google Books without langRestrict if first attempt returned nothing and offset is 0
+    if not items and offset == 0:
+        current_offset = offset
+        remaining = limit
+        while remaining > 0:
+            chunk_size = min(remaining, 40)
+            params = {
+                "q": query,
+                "maxResults": chunk_size,
+                "startIndex": current_offset,
+                "printType": "books"
+            }
+            if GOOGLE_BOOKS_API_KEY:
+                params["key"] = GOOGLE_BOOKS_API_KEY
+            try:
+                resp = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=8.0)
+                resp.raise_for_status()
+                chunk_items = resp.json().get("items", [])
+                if not chunk_items:
+                    break
+                items.extend(chunk_items)
+                if len(chunk_items) < chunk_size:
+                    break
+                current_offset += len(chunk_items)
+                remaining -= len(chunk_items)
+            except Exception as e:
+                log.warning(f"Google Books fallback search failed at offset {current_offset}: {e}")
+                break
 
     results = []
     
@@ -418,10 +457,12 @@ def search_books_list(query: str, limit: int = 20) -> list[dict]:
                 "published_year": info.get("publishedDate", "")[:4] or None
             })
             
-    # Open Library fallback search if still no results
+    # 2. Fallback Source: Open Library
     if not results:
         try:
-            resp = httpx.get(f"{OPEN_LIBRARY_SEARCH_API}?q={urllib.parse.quote(query)}&limit={limit}", timeout=10.0)
+            # Map offset and limit to Open Library page number (1-based index)
+            page = (offset // limit) + 1
+            resp = httpx.get(f"{OPEN_LIBRARY_SEARCH_API}?q={urllib.parse.quote(query)}&page={page}&limit={limit}", timeout=10.0)
             resp.raise_for_status()
             docs = resp.json().get("docs", [])
             for d in docs:
