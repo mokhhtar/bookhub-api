@@ -19,6 +19,7 @@ Pipeline:
 """
 
 import logging
+from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
@@ -142,8 +143,6 @@ def _get_amazon_url_from_api(title: str, author: str = "") -> Optional[str]:
 
     return None
 
-
-from typing import Optional
 
 # ── Route ───────────────────────────────────────────────────
 @router.post("/summary")
