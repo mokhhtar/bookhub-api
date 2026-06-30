@@ -34,7 +34,7 @@ _client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 DEFAULT_CONFIG = genai_types.GenerateContentConfig(
     temperature=0.3,
-    max_output_tokens=1024,
+    max_output_tokens=2048,
 )
 
 

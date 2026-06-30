@@ -92,6 +92,29 @@ RULES:
 - Sentence case, clear prose, no filler phrases."""
 
 
+def _build_chapters_prompt(record: book_data.BookRecord) -> str:
+    """
+    Chapter titles are NOT available as structured data from Google Books
+    or Open Library search responses — there is no reliable API field for
+    a table of contents. So this is the one place we let Gemini use its
+    own training knowledge of this SPECIFIC, already-verified book, with
+    an explicit instruction to admit uncertainty rather than invent a
+    plausible-looking but fake chapter list.
+    """
+    return f"""You are a literary reference assistant.
+
+The book "{record.title}" by {record.author} (category: {record.primary_category or "unspecified"}) has been verified to exist via {record.source}.
+
+TASK: List this book's actual chapter titles or part/section titles, if you reliably know them from your training knowledge of this specific, real book.
+
+RULES:
+- Only list titles you are confident are accurate for THIS book — do not guess or generate plausible-sounding generic chapter names.
+- If you do not have reliable knowledge of this book's actual chapter structure, return an empty list — do not fabricate one.
+- Return ONLY a JSON object, nothing else. No markdown, no preamble.
+- Format: {{"confident": true_or_false, "chapters": ["Chapter title 1", "Chapter title 2", ...]}}
+- Maximum 25 chapters. If the book has parts AND chapters, prefix with the part, e.g. "Part One: Chapter title"."""
+
+
 # ── Route ───────────────────────────────────────────────────
 @router.post("/summary")
 def summary(req: SummaryRequest):
@@ -125,6 +148,23 @@ def summary(req: SummaryRequest):
         record.primary_category, exclude_title=record.title, limit=4
     )
 
+    # Chapters are best-effort and cached separately by (title, author) only
+    # — independent of depth — since the chapter list never changes with
+    # summary depth, no need to regenerate it per depth variant.
+    chapters_cache_key = ("chapters", record.title, record.author)
+    chapters_cached = cache.get(*chapters_cache_key)
+    if chapters_cached is not None:
+        chapters = chapters_cached
+    else:
+        try:
+            chapters_raw = gemini_client.generate(_build_chapters_prompt(record))
+            chapters_data = gemini_client.parse_json_response(chapters_raw)
+            chapters = chapters_data.get("chapters", []) if chapters_data.get("confident") else []
+        except Exception as e:
+            log.warning(f"Chapter extraction failed for '{record.title}': {e}")
+            chapters = []
+        cache.set(chapters, *chapters_cache_key)
+
     result = {
         "found": True,
         "source": record.source,
@@ -139,6 +179,7 @@ def summary(req: SummaryRequest):
         "average_rating": record.average_rating,
         "isbn_13": record.isbn_13,
         "similar_books": similar,
+        "chapters": chapters,
     }
     cache.set(result, *cache_key)
     return result
