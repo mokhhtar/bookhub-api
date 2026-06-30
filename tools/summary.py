@@ -121,6 +121,23 @@ def summary(req: SummaryRequest):
     cache_key = ("summary", req.title, req.author, req.depth)
     cached = cache.get(*cache_key)
     if cached:
+        if isinstance(cached, dict) and cached.get("found") and "amazon_url" not in cached:
+            import os
+            import urllib.parse
+            tag = os.environ.get("AMAZON_TAG", "oceansidehair-20")
+            isbn_10 = cached.get("isbn_10")
+            if not isbn_10 and cached.get("isbn_13"):
+                from book_data import isbn13_to_isbn10
+                isbn_10 = isbn13_to_isbn10(cached["isbn_13"])
+                cached["isbn_10"] = isbn_10
+            
+            if isbn_10:
+                cached["amazon_url"] = f"https://www.amazon.com/dp/{isbn_10}?tag={tag}"
+            else:
+                q = urllib.parse.quote(cached.get("title", req.title))
+                cached["amazon_url"] = f"https://www.amazon.com/s?k={q}&tag={tag}"
+            
+            cache.set(cached, *cache_key)
         return cached
 
     record = book_data.resolve_book(req.title, req.author)
