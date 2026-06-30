@@ -50,12 +50,32 @@ class BookRecord:
     cover_url: Optional[str] = None
     average_rating: Optional[float] = None
     isbn_13: Optional[str] = None
+    isbn_10: Optional[str] = None
     google_volume_id: Optional[str] = None
     open_library_work_key: Optional[str] = None
 
     @property
     def primary_category(self) -> str:
         return self.categories[0] if self.categories else ""
+
+
+def isbn13_to_isbn10(isbn13: str) -> Optional[str]:
+    if not isbn13:
+        return None
+    clean = "".join(c for c in isbn13 if c.isdigit())
+    if len(clean) != 13 or not clean.startswith("978"):
+        return None
+    digits = clean[3:12]
+    val = sum((10 - i) * int(d) for i, d in enumerate(digits))
+    rem = val % 11
+    chk = 11 - rem
+    if chk == 10:
+        chk_str = "X"
+    elif chk == 11:
+        chk_str = "0"
+    else:
+        chk_str = str(chk)
+    return digits + chk_str
 
 
 def _empty_record() -> BookRecord:
@@ -99,10 +119,15 @@ def _query_google_books(title: str, author: str = "") -> Optional[BookRecord]:
         return None
 
     isbn_13 = None
+    isbn_10 = None
     for ident in info.get("industryIdentifiers", []):
         if ident.get("type") == "ISBN_13":
             isbn_13 = ident.get("identifier")
-            break
+        elif ident.get("type") == "ISBN_10":
+            isbn_10 = ident.get("identifier")
+
+    if isbn_13 and not isbn_10:
+        isbn_10 = isbn13_to_isbn10(isbn_13)
 
     image_links = info.get("imageLinks", {})
     cover = image_links.get("thumbnail") or image_links.get("smallThumbnail")
@@ -121,6 +146,7 @@ def _query_google_books(title: str, author: str = "") -> Optional[BookRecord]:
         cover_url=cover,
         average_rating=info.get("averageRating"),
         isbn_13=isbn_13,
+        isbn_10=isbn_10,
         google_volume_id=best.get("id"),
     )
 
@@ -174,6 +200,10 @@ def _query_open_library(title: str, author: str = "") -> Optional[BookRecord]:
 
     isbns = best.get("isbn", [])
     isbn_13 = next((i for i in isbns if len(i) == 13), None)
+    isbn_10 = next((i for i in isbns if len(i) == 10), None)
+
+    if isbn_13 and not isbn_10:
+        isbn_10 = isbn13_to_isbn10(isbn_13)
 
     return BookRecord(
         found=True,
@@ -187,6 +217,7 @@ def _query_open_library(title: str, author: str = "") -> Optional[BookRecord]:
         cover_url=cover_url,
         average_rating=None,  # not provided by Open Library search
         isbn_13=isbn_13,
+        isbn_10=isbn_10,
         open_library_work_key=best.get("key"),
     )
 

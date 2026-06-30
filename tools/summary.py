@@ -165,6 +165,15 @@ def summary(req: SummaryRequest):
             chapters = []
         cache.set(chapters, *chapters_cache_key)
 
+    import os
+    import urllib.parse
+    tag = os.environ.get("AMAZON_TAG", "oceansidehair-20")
+    if record.isbn_10:
+        amazon_url = f"https://www.amazon.com/dp/{record.isbn_10}?tag={tag}"
+    else:
+        q = urllib.parse.quote(record.title)
+        amazon_url = f"https://www.amazon.com/s?k={q}&tag={tag}"
+
     result = {
         "found": True,
         "source": record.source,
@@ -178,6 +187,8 @@ def summary(req: SummaryRequest):
         "cover_url": record.cover_url,
         "average_rating": record.average_rating,
         "isbn_13": record.isbn_13,
+        "isbn_10": record.isbn_10,
+        "amazon_url": amazon_url,
         "similar_books": similar,
         "chapters": chapters,
     }
