@@ -14,4 +14,10 @@ services:
         sync: false
       - key: ALLOWED_ORIGINS
         sync: false
+      - key: AMAZON_CREDENTIAL_ID
+        sync: false
+      - key: AMAZON_CREDENTIAL_SECRET
+        sync: false
+      - key: AMAZON_PARTNER_TAG
+        sync: false
     healthCheckPath: /health

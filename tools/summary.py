@@ -115,6 +115,36 @@ RULES:
 - Maximum 25 chapters. If the book has parts AND chapters, prefix with the part, e.g. "Part One: Chapter title"."""
 
 
+def _get_amazon_url_from_api(title: str, author: str = "") -> Optional[str]:
+    import os
+    credential_id = os.environ.get("AMAZON_CREDENTIAL_ID")
+    credential_secret = os.environ.get("AMAZON_CREDENTIAL_SECRET")
+    partner_tag = os.environ.get("AMAZON_PARTNER_TAG") or os.environ.get("AMAZON_TAG") or "oceansidehair-20"
+
+    if not credential_id or not credential_secret:
+        return None
+
+    try:
+        from amazon_creatorsapi import AmazonCreatorsApi, Country
+        api = AmazonCreatorsApi(
+            credential_id=credential_id,
+            credential_secret=credential_secret,
+            version="3.1",
+            tag=partner_tag,
+            country=Country.US,
+        )
+        q = f"{title} {author}".strip()
+        res = api.search_items(keywords=q, search_index="Books", item_count=1)
+        if res and res.items:
+            return res.items[0].detail_page_url
+    except Exception as e:
+        log.warning(f"Amazon API query failed for '{title}': {e}")
+
+    return None
+
+
+from typing import Optional
+
 # ── Route ───────────────────────────────────────────────────
 @router.post("/summary")
 def summary(req: SummaryRequest):
@@ -124,19 +154,21 @@ def summary(req: SummaryRequest):
         if isinstance(cached, dict) and cached.get("found") and "amazon_url" not in cached:
             import os
             import urllib.parse
-            tag = os.environ.get("AMAZON_TAG", "oceansidehair-20")
-            isbn_10 = cached.get("isbn_10")
-            if not isbn_10 and cached.get("isbn_13"):
-                from book_data import isbn13_to_isbn10
-                isbn_10 = isbn13_to_isbn10(cached["isbn_13"])
-                cached["isbn_10"] = isbn_10
-            
-            if isbn_10:
-                cached["amazon_url"] = f"https://www.amazon.com/dp/{isbn_10}?tag={tag}"
-            else:
-                q = urllib.parse.quote(cached.get("title", req.title))
-                cached["amazon_url"] = f"https://www.amazon.com/s?k={q}&tag={tag}"
-            
+            amazon_url = _get_amazon_url_from_api(cached.get("title", req.title), cached.get("author", req.author))
+            if not amazon_url:
+                tag = os.environ.get("AMAZON_TAG", "oceansidehair-20")
+                isbn_10 = cached.get("isbn_10")
+                if not isbn_10 and cached.get("isbn_13"):
+                    from book_data import isbn13_to_isbn10
+                    isbn_10 = isbn13_to_isbn10(cached["isbn_13"])
+                    cached["isbn_10"] = isbn_10
+                
+                if isbn_10:
+                    amazon_url = f"https://www.amazon.com/dp/{isbn_10}?tag={tag}"
+                else:
+                    q = urllib.parse.quote(cached.get("title", req.title))
+                    amazon_url = f"https://www.amazon.com/s?k={q}&tag={tag}"
+            cached["amazon_url"] = amazon_url
             cache.set(cached, *cache_key)
         return cached
 
@@ -152,9 +184,6 @@ def summary(req: SummaryRequest):
                 f"or Open Library). Please check the spelling, or try adding the author's name."
             ),
         }
-        # Cache "not found" too, but briefly (1 hour) — avoids hammering both
-        # APIs for the same typo repeatedly within a session, while letting
-        # a corrected/retried query through quickly rather than waiting 30 days.
         cache.set(result, *cache_key, ttl=3600)
         return result
 
@@ -165,9 +194,6 @@ def summary(req: SummaryRequest):
         record.primary_category, exclude_title=record.title, limit=4
     )
 
-    # Chapters are best-effort and cached separately by (title, author) only
-    # — independent of depth — since the chapter list never changes with
-    # summary depth, no need to regenerate it per depth variant.
     chapters_cache_key = ("chapters", record.title, record.author)
     chapters_cached = cache.get(*chapters_cache_key)
     if chapters_cached is not None:
@@ -184,12 +210,17 @@ def summary(req: SummaryRequest):
 
     import os
     import urllib.parse
-    tag = os.environ.get("AMAZON_TAG", "oceansidehair-20")
-    if record.isbn_10:
-        amazon_url = f"https://www.amazon.com/dp/{record.isbn_10}?tag={tag}"
-    else:
-        q = urllib.parse.quote(record.title)
-        amazon_url = f"https://www.amazon.com/s?k={q}&tag={tag}"
+    
+    # Try using the Amazon Creators API first
+    amazon_url = _get_amazon_url_from_api(record.title, record.author)
+    
+    if not amazon_url:
+        tag = os.environ.get("AMAZON_TAG", "oceansidehair-20")
+        if record.isbn_10:
+            amazon_url = f"https://www.amazon.com/dp/{record.isbn_10}?tag={tag}"
+        else:
+            q = urllib.parse.quote(record.title)
+            amazon_url = f"https://www.amazon.com/s?k={q}&tag={tag}"
 
     result = {
         "found": True,

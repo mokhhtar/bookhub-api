@@ -238,8 +238,15 @@ def _query_open_library(title: str, author: str = "") -> Optional[BookRecord]:
     description = first_sentence or ""
 
     isbns = best.get("isbn", [])
-    isbn_13 = next((i for i in isbns if len(i) == 13), None)
-    isbn_10 = next((i for i in isbns if len(i) == 10), None)
+    # Prioritize English ISBNs (ISBN-10 starting with 0 or 1, and ISBN-13 starting with 9780 or 9781)
+    isbn_13 = next((i for i in isbns if len(i) == 13 and (i.startswith("9780") or i.startswith("9781"))), None)
+    isbn_10 = next((i for i in isbns if len(i) == 10 and (i.startswith("0") or i.startswith("1"))), None)
+
+    # Fallback to any ISBN if no English one was found
+    if not isbn_13:
+        isbn_13 = next((i for i in isbns if len(i) == 13), None)
+    if not isbn_10:
+        isbn_10 = next((i for i in isbns if len(i) == 10), None)
 
     if isbn_13 and not isbn_10:
         isbn_10 = isbn13_to_isbn10(isbn_13)
