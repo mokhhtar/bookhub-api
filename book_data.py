@@ -109,16 +109,31 @@ def _query_google_books(title: str, author: str = "") -> Optional[BookRecord]:
     if not items:
         return None
 
-    # Prioritize English ("en") editions to avoid selecting translated ones (e.g. Italian, Turkish)
+    # Find the best English item (longest description)
     english_items = [it for it in items if it.get("volumeInfo", {}).get("language", "").lower() == "en"]
-    candidates = english_items if english_items else items
+    english_best = max(english_items, key=lambda it: len(it.get("volumeInfo", {}).get("description", ""))) if english_items else None
 
-    # Prefer the item with the longest description among the candidates
-    best = max(candidates, key=lambda it: len(it.get("volumeInfo", {}).get("description", "")))
-    info = best.get("volumeInfo", {})
+    # Find the absolute best item overall (longest description, regardless of language)
+    overall_best = max(items, key=lambda it: len(it.get("volumeInfo", {}).get("description", "")))
 
-    if not info.get("description"):
-        # No description means we can't ground a summary reliably from this hit.
+    # Determine which item to use for metadata vs description
+    if english_best:
+        info = english_best.get("volumeInfo", {})
+        best_item = english_best
+        
+        # Decide description: if overall best is significantly richer than the English one, use it
+        desc_en = info.get("description", "")
+        desc_overall = overall_best.get("volumeInfo", {}).get("description", "")
+        if len(desc_overall) > len(desc_en) * 1.5 and len(desc_overall) > 200:
+            description = desc_overall
+        else:
+            description = desc_en
+    else:
+        info = overall_best.get("volumeInfo", {})
+        best_item = overall_best
+        description = info.get("description", "")
+
+    if not description:
         return None
 
     isbn_13 = None
@@ -142,7 +157,7 @@ def _query_google_books(title: str, author: str = "") -> Optional[BookRecord]:
         source="google_books",
         title=info.get("title", title),
         author=", ".join(info.get("authors", [])) or author,
-        description=info.get("description", ""),
+        description=description,
         categories=info.get("categories", []),
         page_count=info.get("pageCount"),
         published_year=(info.get("publishedDate") or "")[:4] or None,
@@ -150,7 +165,7 @@ def _query_google_books(title: str, author: str = "") -> Optional[BookRecord]:
         average_rating=info.get("averageRating"),
         isbn_13=isbn_13,
         isbn_10=isbn_10,
-        google_volume_id=best.get("id"),
+        google_volume_id=best_item.get("id"),
     )
 
 
