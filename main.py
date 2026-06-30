@@ -228,10 +228,21 @@ def compare(req: CompareRequest):
     return parsed
 
 
+@app.get("/models")
+def list_models():
+    if not _client:
+        return {"error": "Client not initialized"}
+    try:
+        models = [m.name for m in _client.models.list()]
+        return {"models": models}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.get("/")
 def root():
     return {
         "name": "BookHub API",
-        "endpoints": ["/summary", "/questions", "/recommend", "/similar", "/compare", "/health"],
+        "endpoints": ["/summary", "/questions", "/recommend", "/similar", "/compare", "/health", "/models"],
         "docs": "/docs",
     }
