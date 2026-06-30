@@ -93,7 +93,7 @@ def _query_google_books(title: str, author: str = "") -> Optional[BookRecord]:
         q_parts.append(f'inauthor:{author}')
     query = " ".join(q_parts)
 
-    params = {"q": query, "maxResults": 5, "printType": "books"}
+    params = {"q": query, "maxResults": 5, "printType": "books", "langRestrict": "en"}
     if GOOGLE_BOOKS_API_KEY:
         params["key"] = GOOGLE_BOOKS_API_KEY
 
@@ -106,6 +106,18 @@ def _query_google_books(title: str, author: str = "") -> Optional[BookRecord]:
         return None
 
     items = data.get("items", [])
+    if not items:
+        # Retry without langRestrict in case it's a foreign book only
+        params.pop("langRestrict", None)
+        try:
+            resp = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=8.0)
+            resp.raise_for_status()
+            data = resp.json()
+            items = data.get("items", [])
+        except Exception as e:
+            log.warning(f"Google Books fallback query failed: {e}")
+            return None
+
     if not items:
         return None
 
@@ -183,7 +195,7 @@ def _query_open_library(title: str, author: str = "") -> Optional[BookRecord]:
     params = {
         "title": title,
         "fields": "title,author_name,first_publish_year,subject,"
-                   "cover_i,isbn,key,number_of_pages_median,first_sentence",
+                   "cover_i,isbn,key,number_of_pages_median,first_sentence,language",
         "limit": 5,
     }
     if author:
@@ -201,8 +213,17 @@ def _query_open_library(title: str, author: str = "") -> Optional[BookRecord]:
     if not docs:
         return None
 
+    # Prioritize English ("eng" / "en") documents in Open Library
+    english_docs = []
+    for d in docs:
+        langs = d.get("language", [])
+        if any(l.lower() in ("eng", "en") for l in langs):
+            english_docs.append(d)
+            
+    candidates = english_docs if english_docs else docs
+
     # Prefer the doc with the most subjects (richer record) as a quality proxy.
-    best = max(docs, key=lambda d: len(d.get("subject", [])))
+    best = max(candidates, key=lambda d: len(d.get("subject", [])))
 
     cover_id = best.get("cover_i")
     cover_url = f"{OPEN_LIBRARY_COVERS_API}/id/{cover_id}-L.jpg" if cover_id else None
