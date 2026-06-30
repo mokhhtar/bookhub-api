@@ -16,7 +16,7 @@ CACHE_DIR = Path("/tmp/bookhub_cache")
 CACHE_DIR.mkdir(exist_ok=True)
 
 # In-memory layer (fastest, cleared on restart)
-_mem_cache: dict[str, tuple[float, dict]] = {}
+_mem_cache: dict[str, tuple[float, any, float]] = {}
 
 # TTL: 30 days — book summaries don't change
 TTL_SECONDS = 60 * 60 * 24 * 30
@@ -27,13 +27,12 @@ def _key(*parts: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:24]
 
 
-def get(*parts: str) -> Optional[dict]:
+def get(*parts: str) -> Optional[any]:
     key = _key(*parts)
 
     # 1. memory
     if key in _mem_cache:
-        ts, data = _mem_cache[key]
-        ttl = data.get("_ttl", TTL_SECONDS) if isinstance(data, dict) else TTL_SECONDS
+        ts, data, ttl = _mem_cache[key]
         if time.time() - ts < ttl:
             return data
         del _mem_cache[key]
@@ -44,9 +43,9 @@ def get(*parts: str) -> Optional[dict]:
         try:
             payload = json.loads(file.read_text())
             data = payload["data"]
-            ttl = data.get("_ttl", TTL_SECONDS) if isinstance(data, dict) else TTL_SECONDS
+            ttl = payload.get("ttl", TTL_SECONDS)
             if time.time() - payload["ts"] < ttl:
-                _mem_cache[key] = (payload["ts"], data)
+                _mem_cache[key] = (payload["ts"], data, ttl)
                 return data
         except Exception:
             pass
@@ -54,16 +53,15 @@ def get(*parts: str) -> Optional[dict]:
     return None
 
 
-def set(data: dict, *parts: str, ttl: Optional[int] = None) -> None:
-    """ttl: override the default 30-day TTL for this entry (e.g. shorter TTL for 'not found' results)."""
+def set(data: any, *parts: str, ttl: Optional[int] = None) -> None:
+    """ttl: override the default 30-day TTL for this entry (e.g. shorter TTL for search or 'not found' results)."""
     key = _key(*parts)
     ts = time.time()
-    if ttl is not None and isinstance(data, dict):
-        data = {**data, "_ttl": ttl}
-    _mem_cache[key] = (ts, data)
+    actual_ttl = ttl if ttl is not None else TTL_SECONDS
+    _mem_cache[key] = (ts, data, actual_ttl)
     try:
         file = CACHE_DIR / f"{key}.json"
-        file.write_text(json.dumps({"ts": ts, "data": data}))
+        file.write_text(json.dumps({"ts": ts, "data": data, "ttl": actual_ttl}))
     except Exception:
         pass  # disk cache is best-effort only
 
