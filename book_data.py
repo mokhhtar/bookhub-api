@@ -109,9 +109,12 @@ def _query_google_books(title: str, author: str = "") -> Optional[BookRecord]:
     if not items:
         return None
 
-    # Prefer the item with the longest description — usually the most
-    # complete edition (avoids picking a stub/audiobook-only entry).
-    best = max(items, key=lambda it: len(it.get("volumeInfo", {}).get("description", "")))
+    # Prioritize English ("en") editions to avoid selecting translated ones (e.g. Italian, Turkish)
+    english_items = [it for it in items if it.get("volumeInfo", {}).get("language", "").lower() == "en"]
+    candidates = english_items if english_items else items
+
+    # Prefer the item with the longest description among the candidates
+    best = max(candidates, key=lambda it: len(it.get("volumeInfo", {}).get("description", "")))
     info = best.get("volumeInfo", {})
 
     if not info.get("description"):
