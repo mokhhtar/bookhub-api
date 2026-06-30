@@ -104,7 +104,7 @@ def _call_gemini(prompt: str) -> str:
         return response.text.strip()
     except Exception as e:
         log.error(f"Gemini call failed: {e}")
-        raise HTTPException(status_code=502, detail="AI generation failed. Please try again.")
+        raise HTTPException(status_code=502, detail=f"AI generation failed: {str(e)}")
 
 
 def _parse_json_response(text: str):
