@@ -150,7 +150,24 @@ def summary(req: SummaryRequest):
     cache_key = ("summary", req.title, req.author, req.depth)
     cached = cache.get(*cache_key)
     if cached:
-        if isinstance(cached, dict) and cached.get("found") and "amazon_url" not in cached:
+        # Self-healing cache migration: verify if the cached amazon_url is valid and English,
+        # or if we can upgrade it now using the Amazon Creators API.
+        amazon_url = cached.get("amazon_url", "")
+        is_bad_url = False
+        if "/dp/" in amazon_url:
+            parts = amazon_url.split("/dp/")
+            if len(parts) > 1:
+                asin = parts[1].split("?")[0]
+                # If ASIN doesn't start with 0, 1, or B, it's a foreign/bad print ISBN that will 404 on Amazon US
+                if not (asin.startswith("0") or asin.startswith("1") or asin.startswith("B")):
+                    is_bad_url = True
+        else:
+            # Upgrade search fallback URLs to direct product URLs if Amazon API is now configured
+            import os
+            if not amazon_url or ("s?k=" in amazon_url and os.environ.get("AMAZON_CREDENTIAL_ID")):
+                is_bad_url = True
+
+        if isinstance(cached, dict) and cached.get("found") and ("amazon_url" not in cached or is_bad_url):
             import os
             import urllib.parse
             amazon_url = _get_amazon_url_from_api(cached.get("title", req.title), cached.get("author", req.author))
