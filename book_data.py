@@ -355,7 +355,7 @@ def find_similar_by_category(category: str, exclude_title: str = "", limit: int 
     return results
 
 
-def search_books_list(query: str, limit: int = 8) -> list[dict]:
+def search_books_list(query: str, limit: int = 20) -> list[dict]:
     """
     Search books from Google Books (or Open Library fallback) returning a list of matched records.
     """

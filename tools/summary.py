@@ -57,7 +57,7 @@ def search_books(q: str):
     cached = cache.get(*cache_key)
     if cached is not None:
         return cached
-    results = book_data.search_books_list(q, limit=8)
+    results = book_data.search_books_list(q, limit=20)
     if results:
         cache.set(results, *cache_key, ttl=86400 * 7) # Cache search results for 7 days
     return results
