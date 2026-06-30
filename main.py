@@ -47,14 +47,19 @@ GENERATION_CONFIG = genai_types.GenerateContentConfig(
 app = FastAPI(title="BookHub API", version="1.0.0")
 
 # CORS — allow your GitHub Pages origin (and localhost for dev).
-# Replace "*" with your real domain once live, e.g. "https://yourusername.github.io"
-ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "*").split(",")
+raw_origins = os.environ.get("ALLOWED_ORIGINS", "*")
+if not raw_origins or raw_origins.strip() in ("", "*"):
+    ALLOWED_ORIGINS = ["*"]
+else:
+    ALLOWED_ORIGINS = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+
+log.info(f"CORS Allowed Origins: {ALLOWED_ORIGINS}")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
