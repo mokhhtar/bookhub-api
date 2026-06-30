@@ -35,7 +35,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     log.warning("GEMINI_API_KEY is not set — requests will fail until configured on Render.")
 
-MODEL_NAME = "gemini-1.5-flash"
+MODEL_NAME = "gemini-3.1-flash-lite"
 _client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 GENERATION_CONFIG = genai_types.GenerateContentConfig(
