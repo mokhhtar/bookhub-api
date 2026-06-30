@@ -33,7 +33,8 @@ def get(*parts: str) -> Optional[dict]:
     # 1. memory
     if key in _mem_cache:
         ts, data = _mem_cache[key]
-        if time.time() - ts < TTL_SECONDS:
+        ttl = data.get("_ttl", TTL_SECONDS) if isinstance(data, dict) else TTL_SECONDS
+        if time.time() - ts < ttl:
             return data
         del _mem_cache[key]
 
@@ -42,18 +43,23 @@ def get(*parts: str) -> Optional[dict]:
     if file.exists():
         try:
             payload = json.loads(file.read_text())
-            if time.time() - payload["ts"] < TTL_SECONDS:
-                _mem_cache[key] = (payload["ts"], payload["data"])
-                return payload["data"]
+            data = payload["data"]
+            ttl = data.get("_ttl", TTL_SECONDS) if isinstance(data, dict) else TTL_SECONDS
+            if time.time() - payload["ts"] < ttl:
+                _mem_cache[key] = (payload["ts"], data)
+                return data
         except Exception:
             pass
 
     return None
 
 
-def set(data: dict, *parts: str) -> None:
+def set(data: dict, *parts: str, ttl: Optional[int] = None) -> None:
+    """ttl: override the default 30-day TTL for this entry (e.g. shorter TTL for 'not found' results)."""
     key = _key(*parts)
     ts = time.time()
+    if ttl is not None and isinstance(data, dict):
+        data = {**data, "_ttl": ttl}
     _mem_cache[key] = (ts, data)
     try:
         file = CACHE_DIR / f"{key}.json"

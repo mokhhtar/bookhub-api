@@ -8,10 +8,10 @@ services:
     envVars:
       - key: GEMINI_API_KEY
         sync: false        # set manually in Render dashboard — never commit secrets
+      - key: GOOGLE_BOOKS_API_KEY
+        sync: false        # optional — works without one at low volume, raises rate limits if set
       - key: AMAZON_TAG
         sync: false
       - key: ALLOWED_ORIGINS
         sync: false
-      - key: PYTHON_VERSION
-        value: 3.12.3
     healthCheckPath: /health
