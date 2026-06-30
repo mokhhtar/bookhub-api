@@ -60,6 +60,7 @@ def health():
         "status": "ok",
         "model": gemini_client.MODEL_NAME,
         "configured": gemini_client.is_configured(),
+        "amazon_api_configured": bool(os.environ.get("AMAZON_CREDENTIAL_ID") and os.environ.get("AMAZON_CREDENTIAL_SECRET")),
     }
 
 

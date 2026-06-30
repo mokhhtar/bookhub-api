@@ -162,10 +162,10 @@ def summary(req: SummaryRequest):
                     isbn_10 = isbn13_to_isbn10(cached["isbn_13"])
                     cached["isbn_10"] = isbn_10
                 
-                if isbn_10:
+                if isbn_10 and (isbn_10.startswith("0") or isbn_10.startswith("1")):
                     amazon_url = f"https://www.amazon.com/dp/{isbn_10}?tag={tag}"
                 else:
-                    q = urllib.parse.quote(cached.get("title", req.title))
+                    q = urllib.parse.quote(f"{cached.get('title', req.title)} {cached.get('author', req.author)}".strip())
                     amazon_url = f"https://www.amazon.com/s?k={q}&tag={tag}"
             cached["amazon_url"] = amazon_url
             cache.set(cached, *cache_key)
@@ -215,10 +215,10 @@ def summary(req: SummaryRequest):
     
     if not amazon_url:
         tag = os.environ.get("AMAZON_TAG", "oceansidehair-20")
-        if record.isbn_10:
+        if record.isbn_10 and (record.isbn_10.startswith("0") or record.isbn_10.startswith("1")):
             amazon_url = f"https://www.amazon.com/dp/{record.isbn_10}?tag={tag}"
         else:
-            q = urllib.parse.quote(record.title)
+            q = urllib.parse.quote(f"{record.title} {record.author}".strip())
             amazon_url = f"https://www.amazon.com/s?k={q}&tag={tag}"
 
     result = {
