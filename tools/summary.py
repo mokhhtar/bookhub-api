@@ -39,6 +39,20 @@ class SummaryRequest(BaseModel):
     depth: str = Field(default="quick", pattern="^(quick|medium|deep)$")
 
 
+class SearchResponseItem(BaseModel):
+    title: str
+    author: str
+    cover_url: Optional[str] = None
+    isbn_10: Optional[str] = None
+    isbn_13: Optional[str] = None
+    published_year: Optional[str] = None
+
+
+@router.get("/search", response_model=list[SearchResponseItem])
+def search_books(q: str):
+    return book_data.search_books_list(q, limit=8)
+
+
 # ── Prompt (kept local to this tool — not shared) ──────────
 DEPTH_INSTRUCTIONS = {
     "quick": "Write ONE concise paragraph (70-100 words) covering the core premise and main takeaway.",

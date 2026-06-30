@@ -353,3 +353,102 @@ def find_similar_by_category(category: str, exclude_title: str = "", limit: int 
         log.warning(f"Open Library subject search failed: {e}")
 
     return results
+
+
+def search_books_list(query: str, limit: int = 8) -> list[dict]:
+    """
+    Search books from Google Books (or Open Library fallback) returning a list of matched records.
+    """
+    import urllib.parse
+    params = {"q": query, "maxResults": limit, "printType": "books", "langRestrict": "en"}
+    if GOOGLE_BOOKS_API_KEY:
+        params["key"] = GOOGLE_BOOKS_API_KEY
+
+    items = []
+    try:
+        resp = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=8.0)
+        resp.raise_for_status()
+        data = resp.json()
+        items = data.get("items", [])
+    except Exception as e:
+        log.warning(f"Google Books search query failed: {e}")
+
+    # Fallback to Open Library if Google Books fails or returns empty
+    if not items:
+        # Try without langRestrict first
+        params.pop("langRestrict", None)
+        try:
+            resp = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=8.0)
+            resp.raise_for_status()
+            items = resp.json().get("items", [])
+        except Exception as e:
+            log.warning(f"Google Books fallback search failed: {e}")
+
+    results = []
+    
+    if items:
+        for it in items:
+            info = it.get("volumeInfo", {})
+            title = info.get("title", "")
+            authors = info.get("authors", [])
+            author = ", ".join(authors) if authors else ""
+            
+            # Extract cover
+            image_links = info.get("imageLinks", {})
+            cover_url = image_links.get("thumbnail") or image_links.get("smallThumbnail")
+            if cover_url and cover_url.startswith("http:"):
+                cover_url = cover_url.replace("http:", "https:")
+                
+            # Extract ISBNs
+            isbn_10 = None
+            isbn_13 = None
+            for ident in info.get("industryIdentifiers", []):
+                val = ident.get("identifier", "").replace(" ", "")
+                if ident.get("type") == "ISBN_10" and len(val) == 10:
+                    isbn_10 = val
+                elif ident.get("type") == "ISBN_13" and len(val) == 13:
+                    isbn_13 = val
+
+            results.append({
+                "title": title,
+                "author": author,
+                "cover_url": cover_url,
+                "isbn_10": isbn_10,
+                "isbn_13": isbn_13,
+                "published_year": info.get("publishedDate", "")[:4] or None
+            })
+            
+    # Open Library fallback search if still no results
+    if not results:
+        try:
+            resp = httpx.get(f"{OPEN_LIBRARY_SEARCH_API}?q={urllib.parse.quote(query)}&limit={limit}", timeout=10.0)
+            resp.raise_for_status()
+            docs = resp.json().get("docs", [])
+            for d in docs:
+                title = d.get("title", "")
+                authors = d.get("author_name", [])
+                author = ", ".join(authors) if authors else ""
+                
+                cover_id = d.get("cover_i")
+                cover_url = f"https://covers.openlibrary.org/b/id/{cover_id}-M.jpg" if cover_id else None
+                
+                isbns = d.get("isbn", [])
+                isbn_13 = next((i for i in isbns if len(i) == 13 and (i.startswith("9780") or i.startswith("9781"))), None)
+                isbn_10 = next((i for i in isbns if len(i) == 10 and (i.startswith("0") or i.startswith("1"))), None)
+                if not isbn_13:
+                    isbn_13 = next((i for i in isbns if len(i) == 13), None)
+                if not isbn_10:
+                    isbn_10 = next((i for i in isbns if len(i) == 10), None)
+                
+                results.append({
+                    "title": title,
+                    "author": author,
+                    "cover_url": cover_url,
+                    "isbn_10": isbn_10,
+                    "isbn_13": isbn_13,
+                    "published_year": str(d.get("first_publish_year", "")) or None
+                })
+        except Exception as e:
+            log.warning(f"Open Library search fallback failed: {e}")
+            
+    return results
