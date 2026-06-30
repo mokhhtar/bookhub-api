@@ -281,3 +281,38 @@ def summary(req: SummaryRequest):
     }
     cache.set(result, *cache_key)
     return result
+
+
+class ChatRequest(BaseModel):
+    title: str
+    author: str
+    summary: str
+    question: str
+    history: list[dict] = []
+
+
+@router.post("/summary/chat")
+def chat_with_book(req: ChatRequest):
+    history_formatted = []
+    for h in req.history:
+        role = "User" if h.get("role") == "user" else "Assistant"
+        history_formatted.append(f"{role}: {h.get('content')}")
+    history_str = "\n".join(history_formatted)
+
+    prompt = f"""You are an expert tutor and AI assistant answering questions about the book "{req.title}" by "{req.author}".
+Here is the book's verified summary:
+---
+{req.summary}
+---
+
+Answer the user's question as accurately and insightfully as possible. If the question is not related to this book or general knowledge, gently remind them that you are here to discuss "{req.title}".
+Format your response using clean markdown. Keep it conversational but concise.
+
+Conversation History:
+{history_str}
+
+User Question: {req.question}
+Assistant:"""
+    
+    response = gemini_client.generate(prompt)
+    return {"answer": response}
