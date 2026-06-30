@@ -386,8 +386,6 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
             if not chunk_items:
                 break
             items.extend(chunk_items)
-            if len(chunk_items) < chunk_size:
-                break  # No more results
             current_offset += len(chunk_items)
             remaining -= len(chunk_items)
         except Exception as e:
@@ -415,8 +413,6 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
                 if not chunk_items:
                     break
                 items.extend(chunk_items)
-                if len(chunk_items) < chunk_size:
-                    break
                 current_offset += len(chunk_items)
                 remaining -= len(chunk_items)
             except Exception as e:
