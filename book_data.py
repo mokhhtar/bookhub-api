@@ -922,4 +922,21 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
         published_year = str(d.get("first_publish_year", "")) or None
         add_item(title, author, cover_url, isbn_10, isbn_13, published_year, openlibrary_id=d.get("key"))
 
+    # Sort results by keyword match score in descending order to prioritize exact/volume matches
+    def get_match_score(item):
+        t = item.get("title", "")
+        def clean_text(text: str) -> list[str]:
+            return [w for w in re.findall(r'[a-z0-9]+', text.lower()) if w]
+        
+        q_words = clean_text(query_clean)
+        t_words = set(clean_text(t))
+        
+        meaningful_q = [w for w in q_words if w not in STOP_WORDS]
+        comparison_q = meaningful_q if meaningful_q else q_words
+        
+        if not comparison_q:
+            return 0
+        return sum(1 for w in comparison_q if w in t_words)
+
+    results.sort(key=get_match_score, reverse=True)
     return results[:limit]
