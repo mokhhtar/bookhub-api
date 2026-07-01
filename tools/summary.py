@@ -64,28 +64,12 @@ def search_books(q: str, offset: int = 0):
 
 
 # ── Prompt (kept local to this tool — not shared) ──────────
-DEPTH_INSTRUCTIONS = {
-    "quick": "Write ONE concise paragraph (70-100 words) covering the core premise and main takeaway.",
-    "medium": (
-        "Write 3 short sections using markdown bold headers: **Premise**, **Key Ideas**, **Takeaway**. "
-        "Each section 2-4 sentences."
-    ),
-    "deep": (
-        "Write a detailed summary with these markdown sections: **Overview** (2-3 sentences), "
-        "**Main Arguments** (4-6 bullet points using markdown -), **Who Should Read This** (1-2 sentences), "
-        "**Critical Takeaway** (1-2 sentences). 250-400 words total."
-    ),
-}
-
-
-def _build_prompt(record: book_data.BookRecord, depth: str) -> str:
+def _build_prompt(record: book_data.BookRecord, depth: str = "deep") -> str:
     """
     The prompt embeds VERIFIED data as mandatory context and explicitly
     forbids the model from adding plot details, quotes, or facts that
     are not present in — or directly inferable from — that context.
     """
-    instruction = DEPTH_INSTRUCTIONS.get(depth, DEPTH_INSTRUCTIONS["quick"])
-
     description_block = (
         record.description
         if len(record.description) > 200
@@ -94,7 +78,9 @@ def _build_prompt(record: book_data.BookRecord, depth: str) -> str:
              f"quotes that are not implied by this excerpt or the category below.)"
     )
 
-    return f"""You are a literary analyst. Summarize the following book using ONLY the verified information given below. Do not use outside knowledge to add plot points, character names, statistics, or quotes that are not present in or directly implied by this context.
+    return f"""You are a senior literary analyst and book researcher. Write a comprehensive, detailed, and high-quality study guide and summary for the following book.
+
+Your goal is to produce a rich, informative, and engaging guide of approximately 500-800 words. It must be highly structured with clear sections to make it extremely valuable for readers and optimized for search engine indexing.
 
 VERIFIED BOOK DATA (source: {record.source}):
 Title: {record.title}
@@ -106,15 +92,21 @@ Official description / excerpt:
 \"\"\"
 
 TASK:
-{instruction}
+Write a comprehensive study guide using the following structured sections:
+1. **Core Premise & Overview**: A detailed 150-200 word introduction of the book's main theme, its central thesis, and the problem it attempts to solve.
+2. **Key Concepts & Core Ideas**: Detailed explanations (3-5 sentences each) of the 3-4 most important concepts, frameworks, or philosophies introduced in the book. Use bold headers for each concept.
+3. **Key Takeaways & Lessons**: 5-7 detailed, actionable bullet points outlining the main lessons, rules, or practical applications from the book.
+4. **Who Should Read This**: 2-3 sentences explaining the target audience and who would benefit most from reading the book.
+5. **Critical Evaluation & Conclusion**: A concluding analysis of the book's impact, style, and its ultimate contribution to its field.
 
 RULES:
 - Base your summary strictly on the verified data above.
 - Do not contradict the description.
 - Do not invent named characters, events, or statistics absent from the description.
-- No preamble like "Here is a summary" — start directly with the content.
-- Use markdown **bold** for section headers if the depth requires them. No # headers.
-- Sentence case, clear prose, no filler phrases."""
+- No preamble like "Here is a summary" — start directly with the content of Section 1.
+- Use markdown **bold** for section headers. No # headers.
+- Sentence case, clear prose, no filler phrases.
+- Ensure the output is detailed, substantial, and reads like a premium-quality study guide."""
 
 
 def _build_chapters_prompt(record: book_data.BookRecord) -> str:
