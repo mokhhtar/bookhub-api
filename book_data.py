@@ -439,6 +439,105 @@ def _query_open_library(title: str, author: str = "") -> Optional[BookRecord]:
     )
 
 
+def _query_google_books_by_id(google_id: str) -> Optional[BookRecord]:
+    url = f"{GOOGLE_BOOKS_API}/{google_id}"
+    params = {}
+    if GOOGLE_BOOKS_API_KEY:
+        params["key"] = GOOGLE_BOOKS_API_KEY
+    try:
+        resp = httpx.get(url, params=params, headers=HEADERS, timeout=8.0)
+        resp.raise_for_status()
+        item = resp.json()
+        info = item.get("volumeInfo", {})
+        description = info.get("description", "")
+        
+        isbn_13 = None
+        isbn_10 = None
+        for ident in info.get("industryIdentifiers", []):
+            if ident.get("type") == "ISBN_13":
+                isbn_13 = ident.get("identifier")
+            elif ident.get("type") == "ISBN_10":
+                isbn_10 = ident.get("identifier")
+
+        if isbn_13 and not isbn_10:
+            isbn_10 = isbn13_to_isbn10(isbn_13)
+
+        image_links = info.get("imageLinks", {})
+        cover = image_links.get("thumbnail") or image_links.get("smallThumbnail")
+        if cover:
+            cover = cover.replace("http://", "https://")
+
+        return BookRecord(
+            found=True,
+            source="google_books",
+            title=info.get("title", ""),
+            author=", ".join(info.get("authors", [])) if info.get("authors") else "",
+            description=description,
+            categories=info.get("categories", []),
+            page_count=info.get("pageCount"),
+            published_year=(info.get("publishedDate") or "")[:4] or None,
+            cover_url=cover,
+            average_rating=info.get("averageRating"),
+            isbn_13=isbn_13,
+            isbn_10=isbn_10,
+            google_volume_id=item.get("id"),
+        )
+    except Exception as e:
+        log.warning(f"Google Books ID query failed for '{google_id}': {e}")
+    return None
+
+
+def _query_open_library_by_id(openlibrary_id: str) -> Optional[BookRecord]:
+    if not openlibrary_id.startswith("/"):
+        openlibrary_id = "/" + openlibrary_id
+    url = f"https://openlibrary.org{openlibrary_id}.json"
+    try:
+        resp = httpx.get(url, headers=HEADERS, timeout=8.0)
+        resp.raise_for_status()
+        item = resp.json()
+        
+        title = item.get("title", "")
+        authors = []
+        for auth_ref in item.get("authors", []):
+            auth_key = auth_ref.get("author", {}).get("key") if isinstance(auth_ref, dict) else auth_ref.get("key")
+            if auth_key:
+                try:
+                    auth_resp = httpx.get(f"https://openlibrary.org{auth_key}.json", headers=HEADERS, timeout=5.0)
+                    if auth_resp.status_code == 200:
+                        authors.append(auth_resp.json().get("name", ""))
+                except Exception:
+                    pass
+        author = ", ".join(authors) if authors else ""
+        
+        desc_data = item.get("description", "")
+        description = desc_data.get("value", "") if isinstance(desc_data, dict) else desc_data
+        
+        cover_id = None
+        covers = item.get("covers", [])
+        if covers:
+            cover_id = covers[0]
+        cover_url = f"https://covers.openlibrary.org/b/id/{cover_id}-L.jpg" if cover_id else None
+        
+        return BookRecord(
+            found=True,
+            source="open_library",
+            title=title,
+            author=author,
+            description=description,
+            categories=(item.get("subjects", []) or [])[:8],
+            page_count=item.get("number_of_pages"),
+            published_year=(item.get("created", {}).get("value") or "")[:4] or None,
+            cover_url=cover_url,
+            average_rating=None,
+            isbn_13=None,
+            isbn_10=None,
+            open_library_work_key=openlibrary_id,
+        )
+    except Exception as e:
+        log.warning(f"Open Library ID query failed for '{openlibrary_id}': {e}")
+    return None
+
+
 def _query_google_books_by_isbn(isbn: str) -> Optional[BookRecord]:
     clean_isbn = "".join(c for c in isbn if c.isalnum())
     if not clean_isbn:
@@ -544,15 +643,41 @@ def _query_open_library_by_isbn(isbn: str) -> Optional[BookRecord]:
     return None
 
 
-def resolve_book(title: str, author: str = "", isbn: Optional[str] = None) -> BookRecord:
+def resolve_book(title: str, author: str = "", isbn: Optional[str] = None, google_id: Optional[str] = None, openlibrary_id: Optional[str] = None) -> BookRecord:
     """
-    Main entry point. Tries by ISBN first if provided.
+    Main entry point. Tries direct IDs (google_id, openlibrary_id) or ISBN first if provided.
     Otherwise, queries Google Books first, falling back to Open Library.
     """
     title = (title or "").strip()
     author = (author or "").strip()
     isbn = (isbn or "").strip()
+    google_id = (google_id or "").strip()
+    openlibrary_id = (openlibrary_id or "").strip()
     
+    if google_id:
+        record = _query_google_books_by_id(google_id)
+        if record:
+            log.info(f"Resolved Google Volume ID '{google_id}'")
+            if not record.description and title:
+                fallback = _query_google_books(title, author)
+                if fallback and fallback.description:
+                    record.description = fallback.description
+                    if not record.categories:
+                        record.categories = fallback.categories
+            return record
+
+    if openlibrary_id:
+        record = _query_open_library_by_id(openlibrary_id)
+        if record:
+            log.info(f"Resolved Open Library Key '{openlibrary_id}'")
+            if not record.description and title:
+                fallback = _query_google_books(title, author)
+                if fallback and fallback.description:
+                    record.description = fallback.description
+                    if not record.categories:
+                        record.categories = fallback.categories
+            return record
+
     if isbn:
         # Try resolving via Google Books by ISBN
         record = _query_google_books_by_isbn(isbn)
@@ -731,7 +856,7 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
     seen = set()
     results = []
 
-    def add_item(title, author, cover_url, isbn_10, isbn_13, published_year):
+    def add_item(title, author, cover_url, isbn_10, isbn_13, published_year, google_id=None, openlibrary_id=None):
         if not title:
             return
         if not has_word_overlap(title):
@@ -748,7 +873,9 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
                 "cover_url": cover_url,
                 "isbn_10": isbn_10,
                 "isbn_13": isbn_13,
-                "published_year": published_year
+                "published_year": published_year,
+                "google_id": google_id,
+                "openlibrary_id": openlibrary_id
             })
 
     # Add Google Books items first
@@ -773,7 +900,7 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
                 isbn_13 = val
 
         published_year = info.get("publishedDate", "")[:4] or None
-        add_item(title, author, cover_url, isbn_10, isbn_13, published_year)
+        add_item(title, author, cover_url, isbn_10, isbn_13, published_year, google_id=it.get("id"))
 
     # Add Open Library items next
     for d in ol_items:
@@ -793,6 +920,6 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
             isbn_10 = next((i for i in isbns if len(i) == 10), None)
             
         published_year = str(d.get("first_publish_year", "")) or None
-        add_item(title, author, cover_url, isbn_10, isbn_13, published_year)
+        add_item(title, author, cover_url, isbn_10, isbn_13, published_year, openlibrary_id=d.get("key"))
 
     return results[:limit]

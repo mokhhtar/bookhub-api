@@ -38,6 +38,8 @@ class SummaryRequest(BaseModel):
     author: str = Field(default="", max_length=200)
     depth: str = Field(default="quick", pattern="^(quick|medium|deep)$")
     isbn: Optional[str] = Field(default=None, max_length=50)
+    google_id: Optional[str] = Field(default=None, max_length=50)
+    openlibrary_id: Optional[str] = Field(default=None, max_length=100)
 
 
 class SearchResponseItem(BaseModel):
@@ -164,7 +166,7 @@ def _get_amazon_url_from_api(title: str, author: str = "") -> Optional[str]:
 # ── Route ───────────────────────────────────────────────────
 @router.post("/summary")
 def summary(req: SummaryRequest):
-    cache_key = ("summary_v3", req.title, req.author, req.depth, req.isbn)
+    cache_key = ("summary_v3", req.title, req.author, req.depth, req.isbn, req.google_id, req.openlibrary_id)
     cached = cache.get(*cache_key)
     if cached:
         # Self-healing cache migration: verify if the cached amazon_url is valid and English,
@@ -205,7 +207,7 @@ def summary(req: SummaryRequest):
             cache.set(cached, *cache_key)
         return cached
 
-    record = book_data.resolve_book(req.title, req.author, req.isbn)
+    record = book_data.resolve_book(req.title, req.author, req.isbn, req.google_id, req.openlibrary_id)
 
     if not record.found:
         result = {
