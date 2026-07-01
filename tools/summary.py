@@ -100,15 +100,24 @@ Write a comprehensive study guide structured with the following HTML sections:
 - A main section header `<h2>2. Key Concepts & Core Ideas</h2>` followed by 3-4 subheadings using `<h3>` tags for each concept (e.g. `<h3>The Power of Habit</h3>`) and a detailed paragraph (`<p>`) of 3-5 sentences explaining it.
 - A main section header `<h2>3. Key Takeaways & Lessons</h2>` followed by a `<ul>` list containing 5-7 detailed, actionable `<li>` bullet points outlining the main lessons, rules, or practical applications. Use `<strong>` inside the list item for the lesson title (e.g. `<li><strong>Start Small:</strong> ...</li>`).
 - A main section header `<h2>4. Who Should Read This</h2>` followed by a paragraph (`<p>`) of 2-3 sentences explaining the target audience.
-- A main section header `<h2>5. Critical Evaluation & Conclusion</h2>` followed by a concluding analysis paragraph (`<p>`) of the book's impact, style, and contribution.
+- A main section header `<h2>5. Awards & Recognitions</h2>` followed by a `<p>` paragraph describing any awards, honors, best-seller lists, or notable critical milestones won by this book. If the book doesn't have formal awards, describe its public reception and popularity achievements.
+- A main section header `<h2>6. Reader Reviews & Reception</h2>` followed by 3 realistic, synthesized reader reviews based on common Goodreads/BookWyrm critical consensus. Each review must be wrapped EXACTLY in:
+  <div class="user-review">
+    <div class="user-review-header">
+      <span class="user-review-author">Reviewer: [Username/Alias]</span>
+      <span class="user-review-stars">★★★★★ [or rating matching sentiment]</span>
+    </div>
+    <p class="user-review-text">"[Review text content summarizing a key reader praise or critique]"</p>
+  </div>
+- A main section header `<h2>7. Critical Evaluation & Conclusion</h2>` followed by a concluding analysis paragraph (`<p>`) of the book's impact, style, and contribution.
 
 RULES:
-- Base your summary strictly on the verified data above.
+- Base the core summary sections (1, 2, 3, 4, 7) strictly on the verified data above.
+- For sections 5 (Awards) and 6 (Reviews), you may draw on your broad training knowledge of this specific, verified book's real-world history, honors, and reader consensus (e.g. from Wikipedia, Goodreads, BookWyrm).
 - Do not contradict the description.
-- Do not invent named characters, events, or statistics absent from the description.
 - No preamble like "Here is a summary" — start directly with the HTML content of the first section.
 - Output clean, valid, semantic HTML tags ONLY. Do NOT wrap the output in markdown code blocks like ```html ```. Start directly with `<h2>1. Core Premise & Overview</h2>`.
-- Do not use markdown syntax (like #, ** or *). Use HTML tags (`<h2>`, `<h3>`, `<p>`, `<ul>`, `<li>`, `<strong>`).
+- Do not use markdown syntax (like #, ** or *). Use HTML tags (`<h2>`, `<h3>`, `<p>`, `<ul>`, `<li>`, `<strong>`, `<div>`, `<span>`).
 - Ensure the output is detailed, substantial, and reads like a premium-quality study guide."""
 
 
