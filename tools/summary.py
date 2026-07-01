@@ -80,7 +80,7 @@ def _build_prompt(record: book_data.BookRecord, depth: str = "deep") -> str:
 
     return f"""You are a senior literary analyst and book researcher. Write a comprehensive, detailed, and high-quality study guide and summary for the following book.
 
-Your goal is to produce a rich, informative, and engaging guide of approximately 500-800 words. It must be highly structured with clear sections to make it extremely valuable for readers and optimized for search engine indexing.
+Your goal is to produce a rich, informative, and engaging guide of approximately 500-800 words. It must be highly structured with clear HTML sections (using h2, h3, p, ul, li) to make it extremely valuable for readers and optimized for search engine indexing (SEO).
 
 VERIFIED BOOK DATA (source: {record.source}):
 Title: {record.title}
@@ -92,20 +92,20 @@ Official description / excerpt:
 \"\"\"
 
 TASK:
-Write a comprehensive study guide using the following structured sections:
-1. **Core Premise & Overview**: A detailed 150-200 word introduction of the book's main theme, its central thesis, and the problem it attempts to solve.
-2. **Key Concepts & Core Ideas**: Detailed explanations (3-5 sentences each) of the 3-4 most important concepts, frameworks, or philosophies introduced in the book. Use bold headers for each concept.
-3. **Key Takeaways & Lessons**: 5-7 detailed, actionable bullet points outlining the main lessons, rules, or practical applications from the book.
-4. **Who Should Read This**: 2-3 sentences explaining the target audience and who would benefit most from reading the book.
-5. **Critical Evaluation & Conclusion**: A concluding analysis of the book's impact, style, and its ultimate contribution to its field.
+Write a comprehensive study guide structured with the following HTML sections:
+- A main section header `<h2>1. Core Premise & Overview</h2>` followed by a detailed 150-200 word introduction of the book's main theme, its central thesis, and the problem it attempts to solve inside `<p>` paragraph tags.
+- A main section header `<h2>2. Key Concepts & Core Ideas</h2>` followed by 3-4 subheadings using `<h3>` tags for each concept (e.g. `<h3>The Power of Habit</h3>`) and a detailed paragraph (`<p>`) of 3-5 sentences explaining it.
+- A main section header `<h2>3. Key Takeaways & Lessons</h2>` followed by a `<ul>` list containing 5-7 detailed, actionable `<li>` bullet points outlining the main lessons, rules, or practical applications. Use `<strong>` inside the list item for the lesson title (e.g. `<li><strong>Start Small:</strong> ...</li>`).
+- A main section header `<h2>4. Who Should Read This</h2>` followed by a paragraph (`<p>`) of 2-3 sentences explaining the target audience.
+- A main section header `<h2>5. Critical Evaluation & Conclusion</h2>` followed by a concluding analysis paragraph (`<p>`) of the book's impact, style, and contribution.
 
 RULES:
 - Base your summary strictly on the verified data above.
 - Do not contradict the description.
 - Do not invent named characters, events, or statistics absent from the description.
-- No preamble like "Here is a summary" — start directly with the content of Section 1.
-- Use markdown **bold** for section headers. No # headers.
-- Sentence case, clear prose, no filler phrases.
+- No preamble like "Here is a summary" — start directly with the HTML content of the first section.
+- Output clean, valid, semantic HTML tags ONLY. Do NOT wrap the output in markdown code blocks like ```html ```. Start directly with `<h2>1. Core Premise & Overview</h2>`.
+- Do not use markdown syntax (like #, ** or *). Use HTML tags (`<h2>`, `<h3>`, `<p>`, `<ul>`, `<li>`, `<strong>`).
 - Ensure the output is detailed, substantial, and reads like a premium-quality study guide."""
 
 
@@ -163,7 +163,7 @@ def _get_amazon_url_from_api(title: str, author: str = "") -> Optional[str]:
 # ── Route ───────────────────────────────────────────────────
 @router.post("/summary")
 def summary(req: SummaryRequest):
-    cache_key = ("summary", req.title, req.author, req.depth)
+    cache_key = ("summary_v3", req.title, req.author, req.depth)
     cached = cache.get(*cache_key)
     if cached:
         # Self-healing cache migration: verify if the cached amazon_url is valid and English,
