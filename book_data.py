@@ -439,14 +439,146 @@ def _query_open_library(title: str, author: str = "") -> Optional[BookRecord]:
     )
 
 
-def resolve_book(title: str, author: str = "") -> BookRecord:
+def _query_google_books_by_isbn(isbn: str) -> Optional[BookRecord]:
+    clean_isbn = "".join(c for c in isbn if c.isalnum())
+    if not clean_isbn:
+        return None
+    
+    query = f"isbn:{clean_isbn}"
+    params = {"q": query, "maxResults": 1}
+    if GOOGLE_BOOKS_API_KEY:
+        params["key"] = GOOGLE_BOOKS_API_KEY
+
+    try:
+        resp = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=8.0)
+        resp.raise_for_status()
+        items = resp.json().get("items", [])
+        if items:
+            item = items[0]
+            info = item.get("volumeInfo", {})
+            description = info.get("description", "")
+            
+            isbn_13 = None
+            isbn_10 = None
+            for ident in info.get("industryIdentifiers", []):
+                if ident.get("type") == "ISBN_13":
+                    isbn_13 = ident.get("identifier")
+                elif ident.get("type") == "ISBN_10":
+                    isbn_10 = ident.get("identifier")
+
+            if isbn_13 and not isbn_10:
+                isbn_10 = isbn13_to_isbn10(isbn_13)
+
+            image_links = info.get("imageLinks", {})
+            cover = image_links.get("thumbnail") or image_links.get("smallThumbnail")
+            if cover:
+                cover = cover.replace("http://", "https://").replace("zoom=1", "zoom=2")
+
+            return BookRecord(
+                found=True,
+                source="google_books",
+                title=info.get("title", ""),
+                author=", ".join(info.get("authors", [])) if info.get("authors") else "",
+                description=description,
+                categories=info.get("categories", []),
+                page_count=info.get("pageCount"),
+                published_year=(info.get("publishedDate") or "")[:4] or None,
+                cover_url=cover,
+                average_rating=info.get("averageRating"),
+                isbn_13=isbn_13 or isbn,
+                isbn_10=isbn_10,
+                google_volume_id=item.get("id"),
+            )
+    except Exception as e:
+        log.warning(f"Google Books ISBN query failed for '{isbn}': {e}")
+    
+    return None
+
+
+def _query_open_library_by_isbn(isbn: str) -> Optional[BookRecord]:
+    clean_isbn = "".join(c for c in isbn if c.isalnum())
+    if not clean_isbn:
+        return None
+    
+    url = f"{OPEN_LIBRARY_SEARCH_API}?isbn={clean_isbn}"
+    try:
+        resp = httpx.get(url, headers=HEADERS, timeout=8.0)
+        resp.raise_for_status()
+        docs = resp.json().get("docs", [])
+        if docs:
+            best = docs[0]
+            cover_id = best.get("cover_i")
+            cover_url = f"https://covers.openlibrary.org/b/id/{cover_id}-L.jpg" if cover_id else None
+
+            first_sentence = best.get("first_sentence")
+            if isinstance(first_sentence, list):
+                first_sentence = first_sentence[0] if first_sentence else ""
+            description = first_sentence or ""
+
+            isbns = best.get("isbn", [])
+            isbn_13 = next((i for i in isbns if len(i) == 13 and (i.startswith("9780") or i.startswith("9781"))), None)
+            isbn_10 = next((i for i in isbns if len(i) == 10 and (i.startswith("0") or i.startswith("1"))), None)
+            if not isbn_13:
+                isbn_13 = next((i for i in isbns if len(i) == 13), None)
+            if not isbn_10:
+                isbn_10 = next((i for i in isbns if len(i) == 10), None)
+
+            return BookRecord(
+                found=True,
+                source="open_library",
+                title=best.get("title", ""),
+                author=", ".join(best.get("author_name", [])) if best.get("author_name") else "",
+                description=description,
+                categories=(best.get("subject", []) or [])[:8],
+                page_count=best.get("number_of_pages_median"),
+                published_year=str(best.get("first_publish_year", "")) or None,
+                cover_url=cover_url,
+                average_rating=None,
+                isbn_13=isbn_13 or isbn,
+                isbn_10=isbn_10,
+                open_library_work_key=best.get("key"),
+            )
+    except Exception as e:
+        log.warning(f"Open Library ISBN query failed for '{isbn}': {e}")
+    
+    return None
+
+
+def resolve_book(title: str, author: str = "", isbn: Optional[str] = None) -> BookRecord:
     """
-    Main entry point. Tries Google Books first, falls back to Open Library.
-    Returns BookRecord(found=False) if neither source has a confident match —
-    callers must NOT proceed to AI generation in that case.
+    Main entry point. Tries by ISBN first if provided.
+    Otherwise, queries Google Books first, falling back to Open Library.
     """
     title = (title or "").strip()
     author = (author or "").strip()
+    isbn = (isbn or "").strip()
+    
+    if isbn:
+        # Try resolving via Google Books by ISBN
+        record = _query_google_books_by_isbn(isbn)
+        if record:
+            log.info(f"Resolved ISBN '{isbn}' via google_books")
+            # If description is missing, fill it from title/author search
+            if not record.description and title:
+                fallback = _query_google_books(title, author)
+                if fallback and fallback.description:
+                    record.description = fallback.description
+                    if not record.categories:
+                        record.categories = fallback.categories
+            return record
+
+        # Try resolving via Open Library by ISBN
+        record = _query_open_library_by_isbn(isbn)
+        if record:
+            log.info(f"Resolved ISBN '{isbn}' via open_library")
+            if not record.description and title:
+                fallback = _query_google_books(title, author)
+                if fallback and fallback.description:
+                    record.description = fallback.description
+                    if not record.categories:
+                        record.categories = fallback.categories
+            return record
+
     if not title:
         return _empty_record()
 
