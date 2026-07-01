@@ -100,8 +100,7 @@ Write a comprehensive study guide structured with the following HTML sections:
 - A main section header `<h2>2. Key Concepts & Core Ideas</h2>` followed by 3-4 subheadings using `<h3>` tags for each concept (e.g. `<h3>The Power of Habit</h3>`) and a detailed paragraph (`<p>`) of 3-5 sentences explaining it.
 - A main section header `<h2>3. Key Takeaways & Lessons</h2>` followed by a `<ul>` list containing 5-7 detailed, actionable `<li>` bullet points outlining the main lessons, rules, or practical applications. Use `<strong>` inside the list item for the lesson title (e.g. `<li><strong>Start Small:</strong> ...</li>`).
 - A main section header `<h2>4. Who Should Read This</h2>` followed by a paragraph (`<p>`) of 2-3 sentences explaining the target audience.
-- A main section header `<h2>5. Awards & Recognitions</h2>` followed by a `<p>` paragraph describing any awards, honors, best-seller lists, or notable critical milestones won by this book. If the book doesn't have formal awards, describe its public reception and popularity achievements.
-- A main section header `<h2>6. Reader Reviews & Reception</h2>` followed by 3 realistic, synthesized reader reviews based on common Goodreads/BookWyrm critical consensus. Each review must be wrapped EXACTLY in:
+- A main section header `<h2>5. Reader Reviews & Reception</h2>` followed by 3 realistic, synthesized reader reviews based on common Goodreads/BookWyrm critical consensus. Each review must be wrapped EXACTLY in:
   <div class="user-review">
     <div class="user-review-header">
       <span class="user-review-author">Reviewer: [Username/Alias]</span>
@@ -109,11 +108,11 @@ Write a comprehensive study guide structured with the following HTML sections:
     </div>
     <p class="user-review-text">"[Review text content summarizing a key reader praise or critique]"</p>
   </div>
-- A main section header `<h2>7. Critical Evaluation & Conclusion</h2>` followed by a concluding analysis paragraph (`<p>`) of the book's impact, style, and contribution.
+- A main section header `<h2>6. Critical Evaluation & Conclusion</h2>` followed by a concluding analysis paragraph (`<p>`) of the book's impact, style, and contribution.
 
 RULES:
-- Base the core summary sections (1, 2, 3, 4, 7) strictly on the verified data above.
-- For sections 5 (Awards) and 6 (Reviews), you may draw on your broad training knowledge of this specific, verified book's real-world history, honors, and reader consensus (e.g. from Wikipedia, Goodreads, BookWyrm).
+- Base the core summary sections (1, 2, 3, 4, 6) strictly on the verified data above.
+- For section 5 (Reviews), you may draw on your broad training knowledge of this specific, verified book's real-world reader consensus (e.g. from Goodreads, BookWyrm).
 - Do not contradict the description.
 - No preamble like "Here is a summary" — start directly with the HTML content of the first section.
 - Output clean, valid, semantic HTML tags ONLY. Do NOT wrap the output in markdown code blocks like ```html ```. Start directly with `<h2>1. Core Premise & Overview</h2>`.
@@ -142,6 +141,28 @@ RULES:
 - Return ONLY a JSON object, nothing else. No markdown, no preamble.
 - Format: {{"confident": true_or_false, "chapters": ["Chapter title 1", "Chapter title 2", ...]}}
 - Maximum 25 chapters. If the book has parts AND chapters, prefix with the part, e.g. "Part One: Chapter title"."""
+
+
+def _build_awards_prompt(record: book_data.BookRecord) -> str:
+    """
+    Like chapters, awards are not available from book APIs as structured data.
+    We let Gemini use its training knowledge to return a structured JSON list
+    of real awards won by this specific, verified book. It must return empty
+    rather than fabricating awards it is not confident about.
+    """
+    return f"""You are a literary reference assistant.
+
+The book "{record.title}" by {record.author} has been verified to exist via {record.source}.
+
+TASK: List any real awards, prizes, or major honors this book has won, if you reliably know them from your training knowledge (e.g. Wikipedia, official award databases).
+
+RULES:
+- Only list awards you are CONFIDENT this book has actually won — do not guess or fabricate.
+- Include the year the award was won if you know it, otherwise use null.
+- If you have no reliable knowledge of this book winning any formal awards, return an empty list — do not invent any.
+- Return ONLY a JSON object, nothing else. No markdown, no preamble.
+- Format: {{"confident": true_or_false, "awards": [{{"name": "Award Name", "year": "2001"}}, ...]}}
+- Maximum 6 awards."""
 
 
 def _get_amazon_url_from_api(title: str, author: str = "") -> Optional[str]:
@@ -252,6 +273,20 @@ def summary(req: SummaryRequest):
             chapters = []
         cache.set(chapters, *chapters_cache_key)
 
+    awards_cache_key = ("awards", record.title, record.author)
+    awards_cached = cache.get(*awards_cache_key)
+    if awards_cached is not None:
+        awards = awards_cached
+    else:
+        try:
+            awards_raw = gemini_client.generate(_build_awards_prompt(record))
+            awards_data = gemini_client.parse_json_response(awards_raw)
+            awards = awards_data.get("awards", []) if awards_data.get("confident") else []
+        except Exception as e:
+            log.warning(f"Awards extraction failed for '{record.title}': {e}")
+            awards = []
+        cache.set(awards, *awards_cache_key)
+
     import os
     import urllib.parse
     
@@ -283,6 +318,9 @@ def summary(req: SummaryRequest):
         "amazon_url": amazon_url,
         "similar_books": similar,
         "chapters": chapters,
+        "awards": awards,
+        "google_volume_id": record.google_volume_id,
+        "open_library_work_key": record.open_library_work_key,
     }
     cache.set(result, *cache_key)
     return result
