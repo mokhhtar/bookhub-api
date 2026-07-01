@@ -162,7 +162,7 @@ def _query_google_books(title: str, author: str = "") -> Optional[BookRecord]:
     image_links = info.get("imageLinks", {})
     cover = image_links.get("thumbnail") or image_links.get("smallThumbnail")
     if cover:
-        cover = cover.replace("http://", "https://").replace("zoom=1", "zoom=2")
+        cover = cover.replace("http://", "https://")
 
     return BookRecord(
         found=True,
@@ -472,7 +472,7 @@ def _query_google_books_by_isbn(isbn: str) -> Optional[BookRecord]:
             image_links = info.get("imageLinks", {})
             cover = image_links.get("thumbnail") or image_links.get("smallThumbnail")
             if cover:
-                cover = cover.replace("http://", "https://").replace("zoom=1", "zoom=2")
+                cover = cover.replace("http://", "https://")
 
             return BookRecord(
                 found=True,
@@ -660,135 +660,139 @@ def find_similar_by_category(category: str, exclude_title: str = "", limit: int 
 
 def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict]:
     """
-    Search books from Google Books (or Open Library fallback) returning a list of matched records.
-    Supports offset-based pagination and chunked requests for limit > 40.
+    Search books from Google Books and Open Library, returning a combined,
+    deduplicated, and filtered list of matched records.
     """
     import urllib.parse
+    import re
     
-    items = []
-    current_offset = offset
-    remaining = limit
+    # Clean query
+    query_clean = query.strip()
+    if not query_clean:
+        return []
     
-    # 1. Primary Source: Google Books
-    while remaining > 0:
-        chunk_size = min(remaining, 40)
-        params = {
-            "q": query,
-            "maxResults": chunk_size,
-            "startIndex": current_offset,
-            "printType": "books",
-            "langRestrict": "en"
-        }
-        if GOOGLE_BOOKS_API_KEY:
-            params["key"] = GOOGLE_BOOKS_API_KEY
-            
+    gb_offset = offset
+    ol_page = (offset // 40) + 1
+    
+    gb_items = []
+    # Query Google Books
+    params = {
+        "q": query_clean,
+        "maxResults": 40,
+        "startIndex": gb_offset,
+        "printType": "books",
+        "langRestrict": "en"
+    }
+    if GOOGLE_BOOKS_API_KEY:
+        params["key"] = GOOGLE_BOOKS_API_KEY
+        
+    try:
+        resp = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=8.0)
+        resp.raise_for_status()
+        gb_items = resp.json().get("items", [])
+    except Exception as e:
+        log.warning(f"Google Books search failed: {e}")
+        
+    # Fallback to Google Books without langRestrict if nothing returned
+    if not gb_items and gb_offset == 0:
+        params.pop("langRestrict", None)
         try:
             resp = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=8.0)
             resp.raise_for_status()
-            chunk_items = resp.json().get("items", [])
-            if not chunk_items:
-                break
-            items.extend(chunk_items)
-            current_offset += len(chunk_items)
-            remaining -= len(chunk_items)
+            gb_items = resp.json().get("items", [])
         except Exception as e:
-            log.warning(f"Google Books search query failed at offset {current_offset}: {e}")
-            break
+            log.warning(f"Google Books fallback search failed: {e}")
 
-    # Fallback to Google Books without langRestrict if first attempt returned nothing and offset is 0
-    if not items and offset == 0:
-        current_offset = offset
-        remaining = limit
-        while remaining > 0:
-            chunk_size = min(remaining, 40)
-            params = {
-                "q": query,
-                "maxResults": chunk_size,
-                "startIndex": current_offset,
-                "printType": "books"
-            }
-            if GOOGLE_BOOKS_API_KEY:
-                params["key"] = GOOGLE_BOOKS_API_KEY
-            try:
-                resp = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=8.0)
-                resp.raise_for_status()
-                chunk_items = resp.json().get("items", [])
-                if not chunk_items:
-                    break
-                items.extend(chunk_items)
-                current_offset += len(chunk_items)
-                remaining -= len(chunk_items)
-            except Exception as e:
-                log.warning(f"Google Books fallback search failed at offset {current_offset}: {e}")
-                break
+    # Query Open Library
+    ol_items = []
+    try:
+        resp = httpx.get(f"{OPEN_LIBRARY_SEARCH_API}?q={urllib.parse.quote(query_clean)}&page={ol_page}&limit=40", headers=HEADERS, timeout=10.0)
+        resp.raise_for_status()
+        ol_items = resp.json().get("docs", [])
+    except Exception as e:
+        log.warning(f"Open Library search failed: {e}")
 
+    # Helper function for word overlap validation
+    STOP_WORDS = {"the", "of", "a", "an", "in", "on", "and", "or", "to", "for", "with", "by", "at", "de", "la", "el"}
+    def has_word_overlap(title: str) -> bool:
+        def clean_text(t: str) -> list[str]:
+            return [w for w in re.findall(r'[a-z0-9]+', t.lower()) if w]
+        
+        q_words = clean_text(query_clean)
+        t_words = set(clean_text(title))
+        
+        meaningful_q = [w for w in q_words if w not in STOP_WORDS]
+        comparison_q = meaningful_q if meaningful_q else q_words
+        
+        if not comparison_q:
+            return True
+        return any(w in t_words for w in comparison_q)
+
+    seen = set()
     results = []
-    
-    if items:
-        for it in items:
-            info = it.get("volumeInfo", {})
-            title = info.get("title", "")
-            authors = info.get("authors", [])
-            author = ", ".join(authors) if authors else ""
-            
-            # Extract cover
-            image_links = info.get("imageLinks", {})
-            cover_url = image_links.get("thumbnail") or image_links.get("smallThumbnail")
-            if cover_url and cover_url.startswith("http:"):
-                cover_url = cover_url.replace("http:", "https:")
-                
-            # Extract ISBNs
-            isbn_10 = None
-            isbn_13 = None
-            for ident in info.get("industryIdentifiers", []):
-                val = ident.get("identifier", "").replace(" ", "")
-                if ident.get("type") == "ISBN_10" and len(val) == 10:
-                    isbn_10 = val
-                elif ident.get("type") == "ISBN_13" and len(val) == 13:
-                    isbn_13 = val
 
+    def add_item(title, author, cover_url, isbn_10, isbn_13, published_year):
+        if not title:
+            return
+        if not has_word_overlap(title):
+            return
+            
+        title_norm = re.sub(r'[^a-z0-9]', '', title.lower())
+        author_norm = re.sub(r'[^a-z0-9]', '', author.lower()) if author else ""
+        key = f"{title_norm}|{author_norm}"
+        if key not in seen:
+            seen.add(key)
             results.append({
                 "title": title,
                 "author": author,
                 "cover_url": cover_url,
                 "isbn_10": isbn_10,
                 "isbn_13": isbn_13,
-                "published_year": info.get("publishedDate", "")[:4] or None
+                "published_year": published_year
             })
+
+    # Add Google Books items first
+    for it in gb_items:
+        info = it.get("volumeInfo", {})
+        title = info.get("title", "")
+        authors = info.get("authors", [])
+        author = ", ".join(authors) if authors else ""
+        
+        image_links = info.get("imageLinks", {})
+        cover_url = image_links.get("thumbnail") or image_links.get("smallThumbnail")
+        if cover_url and cover_url.startswith("http:"):
+            cover_url = cover_url.replace("http:", "https:")
             
-    # 2. Fallback Source: Open Library
-    if not results:
-        try:
-            # Map offset and limit to Open Library page number (1-based index)
-            page = (offset // limit) + 1
-            resp = httpx.get(f"{OPEN_LIBRARY_SEARCH_API}?q={urllib.parse.quote(query)}&page={page}&limit={limit}", timeout=10.0)
-            resp.raise_for_status()
-            docs = resp.json().get("docs", [])
-            for d in docs:
-                title = d.get("title", "")
-                authors = d.get("author_name", [])
-                author = ", ".join(authors) if authors else ""
-                
-                cover_id = d.get("cover_i")
-                cover_url = f"https://covers.openlibrary.org/b/id/{cover_id}-M.jpg" if cover_id else None
-                
-                isbns = d.get("isbn", [])
-                isbn_13 = next((i for i in isbns if len(i) == 13 and (i.startswith("9780") or i.startswith("9781"))), None)
-                isbn_10 = next((i for i in isbns if len(i) == 10 and (i.startswith("0") or i.startswith("1"))), None)
-                if not isbn_13:
-                    isbn_13 = next((i for i in isbns if len(i) == 13), None)
-                if not isbn_10:
-                    isbn_10 = next((i for i in isbns if len(i) == 10), None)
-                
-                results.append({
-                    "title": title,
-                    "author": author,
-                    "cover_url": cover_url,
-                    "isbn_10": isbn_10,
-                    "isbn_13": isbn_13,
-                    "published_year": str(d.get("first_publish_year", "")) or None
-                })
-        except Exception as e:
-            log.warning(f"Open Library search fallback failed: {e}")
+        isbn_10 = None
+        isbn_13 = None
+        for ident in info.get("industryIdentifiers", []):
+            val = ident.get("identifier", "").replace(" ", "")
+            if ident.get("type") == "ISBN_10" and len(val) == 10:
+                isbn_10 = val
+            elif ident.get("type") == "ISBN_13" and len(val) == 13:
+                isbn_13 = val
+
+        published_year = info.get("publishedDate", "")[:4] or None
+        add_item(title, author, cover_url, isbn_10, isbn_13, published_year)
+
+    # Add Open Library items next
+    for d in ol_items:
+        title = d.get("title", "")
+        authors = d.get("author_name", [])
+        author = ", ".join(authors) if authors else ""
+        
+        cover_id = d.get("cover_i")
+        cover_url = f"https://covers.openlibrary.org/b/id/{cover_id}-M.jpg" if cover_id else None
+        
+        isbns = d.get("isbn", [])
+        isbn_13 = next((i for i in isbns if len(i) == 13 and (i.startswith("9780") or i.startswith("9781"))), None)
+        isbn_10 = next((i for i in isbns if len(i) == 10 and (i.startswith("0") or i.startswith("1"))), None)
+        if not isbn_13:
+            isbn_13 = next((i for i in isbns if len(i) == 13), None)
+        if not isbn_10:
+            isbn_10 = next((i for i in isbns if len(i) == 10), None)
             
-    return results
+        published_year = str(d.get("first_publish_year", "")) or None
+        add_item(title, author, cover_url, isbn_10, isbn_13, published_year)
+
+    return results[:limit]
