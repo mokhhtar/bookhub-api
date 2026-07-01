@@ -181,35 +181,206 @@ def _query_google_books(title: str, author: str = "") -> Optional[BookRecord]:
     )
 
 
+def sanitize_book_query(text: str) -> str:
+    """
+    Removes query operators and punctuation (like - : ( ) [ ] + " , ;)
+    that can break search syntax in Google Books and Open Library search engines.
+    """
+    if not text:
+        return ""
+    for char in ['-', ':', '(', ')', '[', ']', '+', '"', ',', ';', '/', '\\', '#', '@', '*']:
+        text = text.replace(char, ' ')
+    return " ".join(text.split())
+
+
+def _query_google_books(title: str, author: str = "") -> Optional[BookRecord]:
+    """
+    Query Google Books. This is the PRIMARY source because it returns the
+    official publisher/jacket description — the single most important
+    grounding signal for the summarizer prompt.
+    """
+    clean_title = sanitize_book_query(title)
+    clean_author = sanitize_book_query(author)
+    if not clean_title:
+        return None
+
+    # Cascade strategy:
+    # 1. Cleaned intitle/inauthor query (most precise)
+    # 2. Raw query with clean_title and clean_author (fuzzier search)
+    queries = []
+    
+    q_strict = f'intitle:{clean_title}'
+    if clean_author:
+        q_strict += f' inauthor:{clean_author}'
+    queries.append(q_strict)
+    
+    q_raw = f'{clean_title}'
+    if clean_author:
+        q_raw += f' {clean_author}'
+    queries.append(q_raw)
+
+    items = []
+    for query in queries:
+        params = {"q": query, "maxResults": 5, "printType": "books", "langRestrict": "en"}
+        if GOOGLE_BOOKS_API_KEY:
+            params["key"] = GOOGLE_BOOKS_API_KEY
+
+        try:
+            resp = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=8.0)
+            resp.raise_for_status()
+            data = resp.json()
+            items = data.get("items", [])
+            if items:
+                break
+        except Exception as e:
+            log.warning(f"Google Books query failed for '{query}': {e}")
+
+        # Try fallback without langRestrict
+        params.pop("langRestrict", None)
+        try:
+            resp = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=8.0)
+            resp.raise_for_status()
+            data = resp.json()
+            items = data.get("items", [])
+            if items:
+                break
+        except Exception as e:
+            log.warning(f"Google Books fallback query failed for '{query}': {e}")
+
+    if not items:
+        return None
+
+    # Score candidates to find the one matching the target title/author best
+    best_item = None
+    best_score = -1
+    
+    def norm_str(s):
+        return "".join(c.lower() for c in s if c.isalnum())
+        
+    target_title_norm = norm_str(title)
+    
+    for it in items:
+        info = it.get("volumeInfo", {})
+        item_title = info.get("title", "")
+        item_desc = info.get("description", "")
+        
+        # Prioritize candidates that actually have a description
+        if not item_desc:
+            continue
+            
+        item_title_norm = norm_str(item_title)
+        
+        if item_title_norm == target_title_norm:
+            score = 100
+        elif item_title_norm in target_title_norm or target_title_norm in item_title_norm:
+            score = 50
+        elif len(item_title_norm) > 10 and len(target_title_norm) > 10 and (item_title_norm[:15] in target_title_norm or target_title_norm[:15] in item_title_norm):
+            score = 30
+        else:
+            score = 10
+            
+        if score > best_score:
+            best_score = score
+            best_item = it
+
+    # If no item with a description was a match, pick the first candidate
+    if not best_item:
+        best_item = items[0]
+
+    info = best_item.get("volumeInfo", {})
+    description = info.get("description", "")
+    
+    # If our chosen candidate has no description, grab the first available from other candidates
+    if not description:
+        for it in items:
+            desc = it.get("volumeInfo", {}).get("description", "")
+            if desc:
+                description = desc
+                break
+
+    if not description:
+        return None
+
+    isbn_13 = None
+    isbn_10 = None
+    for ident in info.get("industryIdentifiers", []):
+        if ident.get("type") == "ISBN_13":
+            isbn_13 = ident.get("identifier")
+        elif ident.get("type") == "ISBN_10":
+            isbn_10 = ident.get("identifier")
+
+    if isbn_13 and not isbn_10:
+        isbn_10 = isbn13_to_isbn10(isbn_13)
+
+    image_links = info.get("imageLinks", {})
+    cover = image_links.get("thumbnail") or image_links.get("smallThumbnail")
+    if cover:
+        cover = cover.replace("http://", "https://").replace("zoom=1", "zoom=2")
+
+    return BookRecord(
+        found=True,
+        source="google_books",
+        title=info.get("title", title),
+        author=", ".join(info.get("authors", [])) or author,
+        description=description,
+        categories=info.get("categories", []),
+        page_count=info.get("pageCount"),
+        published_year=(info.get("publishedDate") or "")[:4] or None,
+        cover_url=cover,
+        average_rating=info.get("averageRating"),
+        isbn_13=isbn_13,
+        isbn_10=isbn_10,
+        google_volume_id=best_item.get("id"),
+    )
+
+
 def _query_open_library(title: str, author: str = "") -> Optional[BookRecord]:
     """
     Fallback source. Open Library's catalog is enormous (backed by the
     Internet Archive) and frequently has titles Google Books misses —
     older books, small-press, non-English, academic texts.
-
-    Trade-off: it rarely has a rich synopsis, so a record sourced from
-    here is grounded on title/author/subjects/first-line only — the
-    summarizer prompt is told explicitly to lean on general knowledge
-    of the WORK (not invent plot specifics) when description is thin.
     """
+    clean_title = sanitize_book_query(title)
+    clean_author = sanitize_book_query(author)
+    if not clean_title:
+        return None
+
+    # Strategy 1: Search using title and author parameter
     params = {
-        "title": title,
+        "title": clean_title,
         "fields": "title,author_name,first_publish_year,subject,"
                    "cover_i,isbn,key,number_of_pages_median,first_sentence,language",
         "limit": 5,
     }
-    if author:
-        params["author"] = author
+    if clean_author:
+        params["author"] = clean_author
 
+    docs = []
     try:
         resp = httpx.get(OPEN_LIBRARY_SEARCH_API, params=params, headers=HEADERS, timeout=8.0)
         resp.raise_for_status()
-        data = resp.json()
+        docs = resp.json().get("docs", [])
     except Exception as e:
         log.warning(f"Open Library query failed: {e}")
-        return None
 
-    docs = data.get("docs", [])
+    # Strategy 2: Fallback to broad search (q) parameter
+    if not docs:
+        broad_q = f"{clean_title}"
+        if clean_author:
+            broad_q += f" {clean_author}"
+        broad_params = {
+            "q": broad_q,
+            "fields": "title,author_name,first_publish_year,subject,"
+                       "cover_i,isbn,key,number_of_pages_median,first_sentence,language",
+            "limit": 5,
+        }
+        try:
+            resp = httpx.get(OPEN_LIBRARY_SEARCH_API, params=broad_params, headers=HEADERS, timeout=8.0)
+            resp.raise_for_status()
+            docs = resp.json().get("docs", [])
+        except Exception as e:
+            log.warning(f"Open Library broad fallback query failed: {e}")
+
     if not docs:
         return None
 
