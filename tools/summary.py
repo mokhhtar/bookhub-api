@@ -420,7 +420,7 @@ def summary(req: SummaryRequest):
             if subdomain:
                 chapters = extract_chapters_from_fandom(subdomain, record.title)
                 if chapters:
-                    return chapters[:50]
+                    return chapters
         except Exception as e:
             log.warning(f"Error fetching Fandom chapters for '{record.title}': {e}")
         return []
