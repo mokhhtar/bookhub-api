@@ -49,6 +49,8 @@ class SearchResponseItem(BaseModel):
     isbn_10: Optional[str] = None
     isbn_13: Optional[str] = None
     published_year: Optional[str] = None
+    google_id: Optional[str] = None
+    openlibrary_id: Optional[str] = None
 
 
 @router.get("/search", response_model=list[SearchResponseItem])
