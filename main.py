@@ -50,6 +50,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── Startup event to clear cache ───────────────────────────
+@app.on_event("startup")
+def clear_cache_on_startup():
+    try:
+        import shutil
+        from cache import CACHE_DIR
+        if CACHE_DIR.exists():
+            shutil.rmtree(CACHE_DIR)
+            CACHE_DIR.mkdir(exist_ok=True)
+            log.info("Disk cache cleared successfully on startup.")
+    except Exception as e:
+        log.warning(f"Failed to clear cache on startup: {e}")
+
+
 # ── Mount each tool's router independently ─────────────────
 app.include_router(summary_tool.router, tags=["summary"])
 app.include_router(fandom_tool.router, tags=["fandom"])
