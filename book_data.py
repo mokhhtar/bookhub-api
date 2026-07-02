@@ -1127,6 +1127,29 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
             
             if base_title == ex_base and vol_num == ex_vol and authors_match(author, ex_author):
                 is_duplicate = True
+                
+                # Merge source identifiers
+                if item.get("google_id") and not existing.get("google_id"):
+                    existing["google_id"] = item["google_id"]
+                if item.get("openlibrary_id") and not existing.get("openlibrary_id"):
+                    existing["openlibrary_id"] = item["openlibrary_id"]
+                if item.get("bookwyrm_id") and not existing.get("bookwyrm_id"):
+                    existing["bookwyrm_id"] = item["bookwyrm_id"]
+                    
+                # Merge ISBNs
+                if item.get("isbn_10") and not existing.get("isbn_10"):
+                    existing["isbn_10"] = item["isbn_10"]
+                if item.get("isbn_13") and not existing.get("isbn_13"):
+                    existing["isbn_13"] = item["isbn_13"]
+                    
+                # Merge cover URLs
+                if not existing.get("cover_url") and item.get("cover_url"):
+                    existing["cover_url"] = item["cover_url"]
+                    
+                # Prefer longer/more detailed title representation
+                if len(title) > len(ex_title):
+                    existing["title"] = title
+                    
                 break
                 
         if not is_duplicate:
