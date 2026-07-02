@@ -115,8 +115,8 @@ Write a comprehensive study guide structured with the following HTML sections:
 - A main section header `<h2>6. Critical Evaluation & Conclusion</h2>` followed by a concluding analysis paragraph (`<p>`) of the book's impact, style, and contribution.
 
 RULES:
-- Base the core summary sections (1, 2, 3, 4, 6) strictly on the verified data above.
-- For section 5 (Reviews), you may draw on your broad training knowledge of this specific, verified book's real-world reader consensus (e.g. from Goodreads, BookWyrm).
+- Base ALL sections (1–6) strictly on the verified data above. Do NOT use your own training knowledge about this book or series — only what is stated in the description block.
+- For section 5 (Reviews), synthesize realistic reader reactions based ONLY on the events and themes described in the synopsis above. Do not invent praise or critique that refers to plot points not mentioned in the provided description.
 - Do not contradict the description.
 - No preamble like "Here is a summary" — start directly with the HTML content of the first section.
 - Output clean, valid, semantic HTML tags ONLY. Do NOT wrap the output in markdown code blocks like ```html ```. Start directly with `<h2>1. Core Premise & Overview</h2>`.

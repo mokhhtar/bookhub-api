@@ -317,6 +317,15 @@ def _query_google_books(title: str, author: str = "") -> Optional[BookRecord]:
     if not best_item:
         best_item = items[0]
 
+    # Volume guard: if the request has a specific volume number, reject any
+    # best_item whose title has a DIFFERENT volume number (e.g. Vol 3 when Vol 8 was requested).
+    req_vol = extract_volume_number(title)
+    if req_vol:
+        best_vol = extract_volume_number(best_item.get("volumeInfo", {}).get("title", ""))
+        if best_vol and best_vol != req_vol:
+            log.info(f"_query_google_books: volume mismatch (wanted {req_vol}, got {best_vol}) for '{title}' — returning None")
+            return None
+
     info = best_item.get("volumeInfo", {})
     description = info.get("description", "")
     
@@ -831,15 +840,22 @@ def resolve_book(title: str, author: str = "", isbn: Optional[str] = None, googl
     if not title:
         return _empty_record()
 
-    record = _query_google_books(title, author)
-    if record:
-        log.info(f"Resolved '{title}' via google_books")
-        return record
+    # For volume-specific titles (e.g. "Lord of Mysteries, Volume 8: Fool"):
+    # Skip the generic title search entirely — Google Books/OL catalogs only have
+    # the first few volumes and will always return a wrong-volume match.
+    # Go straight to the Fandom series fallback which fetches the correct synopsis.
+    req_vol_check = extract_volume_number(title)
+    if not req_vol_check:
+        # No volume number — normal search path
+        record = _query_google_books(title, author)
+        if record:
+            log.info(f"Resolved '{title}' via google_books")
+            return record
 
-    record = _query_open_library(title, author)
-    if record:
-        log.info(f"Resolved '{title}' via open_library (fallback)")
-        return record
+        record = _query_open_library(title, author)
+        if record:
+            log.info(f"Resolved '{title}' via open_library (fallback)")
+            return record
 
     # Fallback for synthetic/Fandom volume titles (e.g. "Lord of Mysteries, Volume 8: Fool")
     req_vol = extract_volume_number(title)
