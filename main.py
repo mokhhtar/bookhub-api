@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import gemini_client
 from tools import summary as summary_tool
+from tools import fandom as fandom_tool
 # from tools import recommend as recommend_tool   # pending rebuild
 # from tools import questions as questions_tool   # pending rebuild
 # from tools import compare as compare_tool       # pending rebuild
@@ -51,6 +52,7 @@ app.add_middleware(
 
 # ── Mount each tool's router independently ─────────────────
 app.include_router(summary_tool.router, tags=["summary"])
+app.include_router(fandom_tool.router, tags=["fandom"])
 
 
 @app.get("/health")
@@ -80,7 +82,7 @@ def root():
     return {
         "name": "BookHub API",
         "version": "2.0.0",
-        "active_endpoints": ["/summary", "/health", "/models"],
+        "active_endpoints": ["/summary", "/fandom/resolve", "/fandom/universe", "/health", "/models"],
         "note": "Other tools (recommend, questions, compare) are being rebuilt "
                 "with the same grounding pipeline as /summary before re-enabling.",
         "docs": "/docs",
