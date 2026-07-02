@@ -180,14 +180,27 @@ def _ping_fandom_subdomain(subdomain: str) -> bool:
     except Exception:
         return False
 
-def resolve_fandom_subdomain(title: str, wikidata_id: Optional[str] = None) -> Optional[str]:
+def get_series_title_candidates(title: str) -> list[str]:
+    candidates = [title.strip(":,.- ")]
+    cleaned = title
+    cleaned = re.sub(r'\s*,\s*(vol\.|volume|vol|part|pt\.|book|bk\.)\s*\d+\b.*', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\s+\b(vol\.|volume|vol|part|pt\.|book|bk\.)\s*\d+\b.*', '', cleaned, flags=re.IGNORECASE)
+    cleaned = cleaned.strip(":,.- ")
+    if cleaned and cleaned not in candidates:
+        candidates.append(cleaned)
+        
+    for sep in (":", ","):
+        if sep in title:
+            first_part = title.split(sep)[0].strip()
+            first_part_clean = re.sub(r'\s+\b(vol\.|volume|vol|part|pt\.|book|bk\.)\s*\d+\b.*', '', first_part, flags=re.IGNORECASE)
+            first_part_clean = first_part_clean.strip(":,.- ")
+            if first_part_clean and first_part_clean not in candidates:
+                candidates.append(first_part_clean)
+    return candidates
+
+def _resolve_fandom_subdomain_single(title: str, wikidata_id: Optional[str] = None) -> Optional[str]:
     """
-    Highly robust 5-tier subdomain resolver cascade:
-      1. Wikidata ID check (claims/P6262) if provided.
-      2. Title search on Wikidata for QID.
-      3. Google Custom Search (site:fandom.com) if API keys configured.
-      4. DuckDuckGo search fallback.
-      5. Normalization ping check.
+    Highly robust 5-tier subdomain resolver cascade for a single title string.
     """
     # Tier 1: QID provided
     if wikidata_id:
@@ -221,6 +234,18 @@ def resolve_fandom_subdomain(title: str, wikidata_id: Optional[str] = None) -> O
         return normalized
         
     return None
+
+def resolve_fandom_subdomain(title: str, wikidata_id: Optional[str] = None) -> Optional[str]:
+    """
+    Resolves Fandom subdomain by trying the full title and various normalized series name candidates.
+    """
+    candidates = get_series_title_candidates(title)
+    for cand in candidates:
+        sub = _resolve_fandom_subdomain_single(cand, wikidata_id)
+        if sub:
+            return sub
+    return None
+
 
 # ── Content Scraping & Cleaning ─────────────────────────────
 

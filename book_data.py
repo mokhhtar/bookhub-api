@@ -1044,18 +1044,41 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
             return [w for w in re.findall(r'[a-z0-9]+', text.lower()) if w]
         
         q_words = clean_text(query_clean)
-        t_words = set(clean_text(t))
+        t_words = clean_text(t)
+        t_words_set = set(t_words)
         
         meaningful_q = [w for w in q_words if w not in STOP_WORDS]
         comparison_q = meaningful_q if meaningful_q else q_words
         
         if not comparison_q:
             return 0
-        score = sum(1 for w in comparison_q if w in t_words)
+            
+        # 1. Base score: number of query words found in title
+        matched_words = sum(1 for w in comparison_q if w in t_words_set)
+        if matched_words == 0:
+            return 0
+            
+        # 2. Perfect exact match or prefix boost
+        q_clean_joined = "".join(q_words)
+        t_clean_joined = "".join(t_words)
         
-        # Tie-breaker boost for novel sources (BookWyrm)
+        score = matched_words * 10.0
+        
+        if q_clean_joined == t_clean_joined:
+            score += 100.0
+        elif t_clean_joined.startswith(q_clean_joined):
+            score += 50.0
+        elif q_clean_joined in t_clean_joined:
+            score += 30.0
+            
+        # 3. Density reward (ratio of query length to title length)
+        density = len(comparison_q) / max(len(t_words), 1)
+        score += density * 10.0
+        
+        # 4. Tie-breaker boost for BookWyrm (fiction-first)
         if item.get("bookwyrm_id"):
-            score += 0.1
+            score += 0.5
+            
         return score
 
     results.sort(key=get_match_score, reverse=True)
