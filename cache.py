@@ -28,6 +28,9 @@ def _key(*parts: str) -> str:
 
 
 def get(*parts: str) -> Optional[any]:
+    if os.environ.get("DISABLE_CACHE", "true").lower() == "true":
+        return None
+
     key = _key(*parts)
 
     # 1. memory
@@ -55,6 +58,9 @@ def get(*parts: str) -> Optional[any]:
 
 def set(data: any, *parts: str, ttl: Optional[int] = None) -> None:
     """ttl: override the default 30-day TTL for this entry (e.g. shorter TTL for search or 'not found' results)."""
+    if os.environ.get("DISABLE_CACHE", "true").lower() == "true":
+        return
+
     key = _key(*parts)
     ts = time.time()
     actual_ttl = ttl if ttl is not None else TTL_SECONDS
