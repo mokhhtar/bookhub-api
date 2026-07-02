@@ -124,28 +124,6 @@ RULES:
 - Ensure the output is detailed, substantial, and reads like a premium-quality study guide."""
 
 
-def _build_chapters_prompt(record: book_data.BookRecord) -> str:
-    """
-    Chapter titles are NOT available as structured data from Google Books
-    or Open Library search responses — there is no reliable API field for
-    a table of contents. So this is the one place we let Gemini use its
-    own training knowledge of this SPECIFIC, already-verified book, with
-    an explicit instruction to admit uncertainty rather than invent a
-    plausible-looking but fake chapter list.
-    """
-    return f"""You are a literary reference assistant.
-
-The book "{record.title}" by {record.author} (category: {record.primary_category or "unspecified"}) has been verified to exist via {record.source}.
-
-TASK: List this book's actual chapter titles or part/section titles, if you reliably know them from your training knowledge of this specific, real book.
-
-RULES:
-- Only list titles you are confident are accurate for THIS book — do not guess or generate plausible-sounding generic chapter names.
-- If you do not have reliable knowledge of this book's actual chapter structure, return an empty list — do not fabricate one.
-- Return ONLY a JSON object, nothing else. No markdown, no preamble.
-- Format: {{"confident": true_or_false, "chapters": ["Chapter title 1", "Chapter title 2", ...]}}
-- Maximum 25 chapters. If the book has parts AND chapters, prefix with the part, e.g. "Part One: Chapter title"."""
-
 
 def _build_awards_prompt(record: book_data.BookRecord) -> str:
     """
@@ -436,19 +414,9 @@ def summary(req: SummaryRequest):
         return gemini_client.generate(prompt)
 
     def get_chapters():
-        chapters_cache_key = ("chapters", record.title, record.author)
-        chapters_cached = cache.get(*chapters_cache_key)
-        if chapters_cached is not None:
-            return chapters_cached
-        try:
-            chapters_raw = gemini_client.generate(_build_chapters_prompt(record))
-            chapters_data = gemini_client.parse_json_response(chapters_raw)
-            chapters = chapters_data.get("chapters", []) if chapters_data.get("confident") else []
-        except Exception as e:
-            log.warning(f"Chapter extraction failed for '{record.title}': {e}")
-            chapters = []
-        cache.set(chapters, *chapters_cache_key)
-        return chapters
+        # Chapter lists are not reliably available from metadata APIs.
+        # We return an empty list rather than generating potentially hallucinated lists using Gemini.
+        return []
 
     def get_awards():
         awards_cache_key = ("awards", record.title, record.author)
