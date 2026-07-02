@@ -156,14 +156,15 @@ def _build_awards_prompt(record: book_data.BookRecord) -> str:
 
 The book "{record.title}" by {record.author} has been verified to exist via {record.source}.
 
-TASK: List any real awards, prizes, or major honors this book has won, if you reliably know them from your training knowledge (e.g. Wikipedia, official award databases).
+TASK: List any real, verifiable literary awards, prizes, or major honors this book has won, if you reliably know them from your training knowledge (e.g. Pulitzer Prize, Hugo Award, Booker Prize, etc.).
 
 RULES:
-- Only list awards you are CONFIDENT this book has actually won — do not guess or fabricate.
+- Only list awards you are 100% CONFIDENT this book has actually won. Do not guess, do not invent, and do not include nominations (only winners).
 - Include the year the award was won if you know it, otherwise use null.
-- If you have no reliable knowledge of this book winning any formal awards, return an empty list — do not invent any.
+- Set "logo_url" to null for all items.
+- If you have no reliable, verifiable knowledge of this book winning any formal awards, return an empty list — do not invent any.
 - Return ONLY a JSON object, nothing else. No markdown, no preamble.
-- Format: {{"confident": true_or_false, "awards": [{{"name": "Award Name", "year": "2001"}}, ...]}}
+- Format: {{"confident": true_or_false, "awards": [{{"name": "Award Name", "year": "2001", "logo_url": null}}, ...]}}
 - Maximum 6 awards."""
 
 
@@ -193,6 +194,172 @@ def _get_amazon_url_from_api(title: str, author: str = "") -> Optional[str]:
         log.warning(f"Amazon API query failed for '{title}': {e}")
 
     return None
+
+
+def _fetch_wikidata_qid(record: book_data.BookRecord) -> Optional[str]:
+    import httpx
+    url = "https://www.wikidata.org/w/api.php"
+    headers = {
+        "User-Agent": "BookHubApp/1.0 (https://github.com/mokhhtar/bookhub; mokhhtar@gmail.com) httpx/0.24",
+        "Accept": "application/json"
+    }
+    
+    # 1. Try search by Open Library Work Key
+    if record.open_library_work_key:
+        ol_clean = record.open_library_work_key.replace("/works/", "").replace("/books/", "")
+        params = {
+            "action": "query",
+            "list": "search",
+            "srsearch": ol_clean,
+            "format": "json"
+        }
+        try:
+            r = httpx.get(url, params=params, headers=headers, timeout=5.0)
+            if r.status_code == 200:
+                search_results = r.json().get("query", {}).get("search", [])
+                if search_results:
+                    return search_results[0].get("title")
+        except Exception:
+            pass
+
+    # 2. Try search by ISBN-13
+    if record.isbn_13:
+        isbn_clean = record.isbn_13.replace("-", "").strip()
+        params = {
+            "action": "query",
+            "list": "search",
+            "srsearch": isbn_clean,
+            "format": "json"
+        }
+        try:
+            r = httpx.get(url, params=params, headers=headers, timeout=5.0)
+            if r.status_code == 200:
+                search_results = r.json().get("query", {}).get("search", [])
+                if search_results:
+                    return search_results[0].get("title")
+        except Exception:
+            pass
+
+    # 3. Try search by Title
+    params = {
+        "action": "wbsearchentities",
+        "search": record.title,
+        "language": "en",
+        "format": "json",
+        "limit": 8
+    }
+    try:
+        r = httpx.get(url, params=params, headers=headers, timeout=5.0)
+        if r.status_code == 200:
+            search_results = r.json().get("search", [])
+            book_keywords = {"novel", "book", "play", "story", "literary", "writing", "work", "poem", "biography", "memoir"}
+            for res in search_results:
+                desc = res.get("description", "").lower()
+                if any(kw in desc for kw in book_keywords):
+                    return res.get("id")
+            if search_results:
+                return search_results[0].get("id")
+    except Exception:
+        pass
+        
+    return None
+
+
+def _fetch_wikidata_awards(qid: str) -> list[dict]:
+    import httpx
+    import urllib.parse
+    url = "https://www.wikidata.org/w/api.php"
+    headers = {
+        "User-Agent": "BookHubApp/1.0 (https://github.com/mokhhtar/bookhub; mokhhtar@gmail.com) httpx/0.24",
+        "Accept": "application/json"
+    }
+    
+    params = {
+        "action": "wbgetentities",
+        "ids": qid,
+        "languages": "en",
+        "format": "json"
+    }
+    try:
+        r = httpx.get(url, params=params, headers=headers, timeout=5.0)
+        if r.status_code != 200:
+            return []
+            
+        entity = r.json().get("entities", {}).get(qid, {})
+        claims = entity.get("claims", {})
+        
+        # P166 is award received
+        awards_claims = claims.get("P166", [])
+        if not awards_claims:
+            return []
+            
+        award_ids = []
+        award_years = {}
+        
+        for c in awards_claims:
+            mainsnak = c.get("mainsnak", {})
+            datavalue = mainsnak.get("datavalue", {})
+            value = datavalue.get("value", {})
+            if isinstance(value, dict) and "id" in value:
+                aid = value["id"]
+                award_ids.append(aid)
+                
+                qualifiers = c.get("qualifiers", {})
+                date_claims = qualifiers.get("P585", [])
+                year = None
+                if date_claims:
+                    time_val = date_claims[0].get("datavalue", {}).get("value", {}).get("time")
+                    if time_val:
+                        year = time_val.lstrip("+").split("-")[0]
+                award_years[aid] = year
+                
+        if not award_ids:
+            return []
+            
+        award_ids = award_ids[:15]
+        params2 = {
+            "action": "wbgetentities",
+            "ids": "|".join(award_ids),
+            "props": "labels|claims",
+            "languages": "en",
+            "format": "json"
+        }
+        r2 = httpx.get(url, params=params2, headers=headers, timeout=5.0)
+        if r2.status_code != 200:
+            return []
+            
+        entities2 = r2.json().get("entities", {})
+        results = []
+        for aid in award_ids:
+            ent = entities2.get(aid, {})
+            label = ent.get("labels", {}).get("en", {}).get("value")
+            if not label:
+                continue
+                
+            claims2 = ent.get("claims", {})
+            logo_url = None
+            logo_claims = claims2.get("P154") or claims2.get("P18")
+            if logo_claims:
+                filename = logo_claims[0].get("mainsnak", {}).get("datavalue", {}).get("value")
+                if filename:
+                    logo_url = f"https://commons.wikimedia.org/wiki/Special:FilePath/{urllib.parse.quote(filename)}"
+                    
+            results.append({
+                "name": label,
+                "year": award_years.get(aid),
+                "logo_url": logo_url
+            })
+        return results
+    except Exception as e:
+        log.warning(f"Error fetching Wikidata awards for qid {qid}: {e}")
+        return []
+
+
+def resolve_factual_awards(record: book_data.BookRecord) -> list[dict]:
+    qid = _fetch_wikidata_qid(record)
+    if qid:
+        return _fetch_wikidata_awards(qid)
+    return []
 
 
 # ── Route ───────────────────────────────────────────────────
@@ -280,13 +447,22 @@ def summary(req: SummaryRequest):
     if awards_cached is not None:
         awards = awards_cached
     else:
+        # Try Wikidata first
         try:
-            awards_raw = gemini_client.generate(_build_awards_prompt(record))
-            awards_data = gemini_client.parse_json_response(awards_raw)
-            awards = awards_data.get("awards", []) if awards_data.get("confident") else []
+            awards = resolve_factual_awards(record)
         except Exception as e:
-            log.warning(f"Awards extraction failed for '{record.title}': {e}")
+            log.warning(f"Wikidata awards query failed for '{record.title}': {e}")
             awards = []
+
+        # Fallback to Gemini if no factual awards were found on Wikidata
+        if not awards:
+            try:
+                awards_raw = gemini_client.generate(_build_awards_prompt(record))
+                awards_data = gemini_client.parse_json_response(awards_raw)
+                awards = awards_data.get("awards", []) if awards_data.get("confident") else []
+            except Exception as e:
+                log.warning(f"Awards extraction fallback failed for '{record.title}': {e}")
+                awards = []
         cache.set(awards, *awards_cache_key)
 
     import os
