@@ -308,9 +308,12 @@ def _fetch_wikidata_awards(qid: str) -> list[dict]:
                 date_claims = qualifiers.get("P585", [])
                 year = None
                 if date_claims:
-                    time_val = date_claims[0].get("datavalue", {}).get("value", {}).get("time")
-                    if time_val:
-                        year = time_val.lstrip("+").split("-")[0]
+                    try:
+                        time_val = date_claims[0].get("datavalue", {}).get("value", {}).get("time")
+                        if time_val and isinstance(time_val, str):
+                            year = time_val.lstrip("+").split("-")[0]
+                    except Exception:
+                        year = None
                 award_years[aid] = year
                 
         if not award_ids:
@@ -340,9 +343,12 @@ def _fetch_wikidata_awards(qid: str) -> list[dict]:
             logo_url = None
             logo_claims = claims2.get("P154") or claims2.get("P18")
             if logo_claims:
-                filename = logo_claims[0].get("mainsnak", {}).get("datavalue", {}).get("value")
-                if filename:
-                    logo_url = f"https://commons.wikimedia.org/wiki/Special:FilePath/{urllib.parse.quote(filename)}"
+                try:
+                    filename = logo_claims[0].get("mainsnak", {}).get("datavalue", {}).get("value")
+                    if filename and isinstance(filename, str):
+                        logo_url = f"https://commons.wikimedia.org/wiki/Special:FilePath/{urllib.parse.quote(filename)}"
+                except Exception:
+                    logo_url = None
                     
             results.append({
                 "name": label,
@@ -421,18 +427,17 @@ def summary(req: SummaryRequest):
         cache.set(result, *cache_key, ttl=3600)
         return result
 
-    prompt = _build_prompt(record, req.depth)
-    summary_text = gemini_client.generate(prompt)
+    import concurrent.futures
 
-    similar = book_data.find_similar_by_category(
-        record.primary_category, exclude_title=record.title, limit=4
-    )
+    def get_summary_text():
+        prompt = _build_prompt(record, req.depth)
+        return gemini_client.generate(prompt)
 
-    chapters_cache_key = ("chapters", record.title, record.author)
-    chapters_cached = cache.get(*chapters_cache_key)
-    if chapters_cached is not None:
-        chapters = chapters_cached
-    else:
+    def get_chapters():
+        chapters_cache_key = ("chapters", record.title, record.author)
+        chapters_cached = cache.get(*chapters_cache_key)
+        if chapters_cached is not None:
+            return chapters_cached
         try:
             chapters_raw = gemini_client.generate(_build_chapters_prompt(record))
             chapters_data = gemini_client.parse_json_response(chapters_raw)
@@ -441,12 +446,14 @@ def summary(req: SummaryRequest):
             log.warning(f"Chapter extraction failed for '{record.title}': {e}")
             chapters = []
         cache.set(chapters, *chapters_cache_key)
+        return chapters
 
-    awards_cache_key = ("awards", record.title, record.author)
-    awards_cached = cache.get(*awards_cache_key)
-    if awards_cached is not None:
-        awards = awards_cached
-    else:
+    def get_awards():
+        awards_cache_key = ("awards", record.title, record.author)
+        awards_cached = cache.get(*awards_cache_key)
+        if awards_cached is not None:
+            return awards_cached
+        
         # Try Wikidata first
         try:
             awards = resolve_factual_awards(record)
@@ -464,20 +471,43 @@ def summary(req: SummaryRequest):
                 log.warning(f"Awards extraction fallback failed for '{record.title}': {e}")
                 awards = []
         cache.set(awards, *awards_cache_key)
+        return awards
 
-    import os
-    import urllib.parse
-    
-    # Try using the Amazon Creators API first
-    amazon_url = _get_amazon_url_from_api(record.title, record.author)
-    
-    if not amazon_url:
-        tag = os.environ.get("AMAZON_TAG", "oceansidehair-20")
-        if record.isbn_10 and (record.isbn_10.startswith("0") or record.isbn_10.startswith("1")):
-            amazon_url = f"https://www.amazon.com/dp/{record.isbn_10}?tag={tag}"
-        else:
-            q = urllib.parse.quote(f"{record.title} {record.author}".strip())
-            amazon_url = f"https://www.amazon.com/s?k={q}&tag={tag}"
+    def get_similar():
+        try:
+            return book_data.find_similar_by_category(
+                record.primary_category, exclude_title=record.title, limit=4
+            )
+        except Exception as e:
+            log.warning(f"Similar books search failed for '{record.title}': {e}")
+            return []
+
+    def get_amazon():
+        import os
+        import urllib.parse
+        amazon_url = _get_amazon_url_from_api(record.title, record.author)
+        if not amazon_url:
+            tag = os.environ.get("AMAZON_TAG", "oceansidehair-20")
+            if record.isbn_10 and (record.isbn_10.startswith("0") or record.isbn_10.startswith("1")):
+                amazon_url = f"https://www.amazon.com/dp/{record.isbn_10}?tag={tag}"
+            else:
+                q = urllib.parse.quote(f"{record.title} {record.author}".strip())
+                amazon_url = f"https://www.amazon.com/s?k={q}&tag={tag}"
+        return amazon_url
+
+    # Execute all 5 tasks concurrently
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        future_summary = executor.submit(get_summary_text)
+        future_chapters = executor.submit(get_chapters)
+        future_awards = executor.submit(get_awards)
+        future_similar = executor.submit(get_similar)
+        future_amazon = executor.submit(get_amazon)
+
+        summary_text = future_summary.result()
+        chapters = future_chapters.result()
+        awards = future_awards.result()
+        similar = future_similar.result()
+        amazon_url = future_amazon.result()
 
     result = {
         "found": True,
