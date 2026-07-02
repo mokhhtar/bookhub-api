@@ -381,17 +381,31 @@ def extract_chapters_from_fandom(subdomain: str, book_title: str) -> list[str]:
     
     def clean_name(name):
         return re.sub(r'\s+', ' ', name).strip().lower()
+        
+    req_vol = None
+    m = re.search(r'\b(vol\.|volume|vol|part|pt\.|book|bk\.)\s*(\d+)\b', book_title, flags=re.IGNORECASE)
+    if m:
+        req_vol = m.group(2)
 
     # 1. Search for matching pages
-    search_queries = [
-        f"List of chapters in the {book_title}",
-        f"{book_title} chapters",
-        "List of chapters",
-        "Chapters",
-        book_title,
-        f"{book_title} Volume 1",
-        "Volume 1"
-    ]
+    if req_vol:
+        search_queries = [
+            f"{book_title} chapters",
+            book_title,
+            f"Volume {req_vol}",
+            f"Vol. {req_vol}",
+            f"Vol {req_vol}"
+        ]
+    else:
+        search_queries = [
+            f"List of chapters in the {book_title}",
+            f"{book_title} chapters",
+            "List of chapters",
+            "Chapters",
+            book_title,
+            f"{book_title} Volume 1",
+            "Volume 1"
+        ]
     
     page_titles = []
     for q in search_queries:
@@ -413,20 +427,38 @@ def extract_chapters_from_fandom(subdomain: str, book_title: str) -> list[str]:
         except Exception:
             pass
             
+    # Filter page titles to exclude sequel volume pages if searching for the main series
+    clean_book_title = book_title.lower()
+    is_coi_query = "circle" in clean_book_title or "inevitability" in clean_book_title
+    filtered_page_titles = []
+    for t in page_titles:
+        t_low = t.lower()
+        if ("circle" in t_low or "inevitability" in t_low or "eternal aeon" in t_low) and not is_coi_query:
+            continue
+        filtered_page_titles.append(t)
+    page_titles = filtered_page_titles
+
     # Sort page_titles to prioritize main lists and volume 1, penalizing subpages (e.g. /Author's Note)
     def page_priority(t):
         t_low = t.lower()
         title_low = book_title.lower()
         penalty = 10 if "/" in t else 0
+        
+        # If we are looking for a specific volume, boost pages matching "Volume X" or "Vol X"
+        if req_vol:
+            vol_pat = rf'\b(volume|vol|bk|book)\s*{req_vol}\b'
+            if re.search(vol_pat, t_low):
+                return 0 + penalty
+                
         if "list of chapters" in t_low and title_low in t_low:
-            return 0 + penalty
-        if "volume 1" in t_low or "vol. 1" in t_low or "vol 1" in t_low:
             return 1 + penalty
-        if "list of chapters" in t_low or "chapter list" in t_low:
+        if "volume 1" in t_low or "vol. 1" in t_low or "vol 1" in t_low:
             return 2 + penalty
-        if title_low in t_low:
+        if "list of chapters" in t_low or "chapter list" in t_low:
             return 3 + penalty
-        return 4 + penalty
+        if title_low in t_low:
+            return 4 + penalty
+        return 5 + penalty
 
     page_titles.sort(key=page_priority)
     

@@ -17,6 +17,7 @@ If neither source finds the book, callers MUST surface an honest
 """
 
 import os
+import re
 import logging
 import urllib.parse
 from dataclasses import dataclass, field
@@ -78,6 +79,21 @@ def isbn13_to_isbn10(isbn13: str) -> Optional[str]:
     return digits + chk_str
 
 
+def extract_volume_number(title_str: str) -> Optional[str]:
+    match = re.search(r'\b(vol\.|volume|vol|part|pt\.|book|bk\.)\s*(\d+)\b', title_str, flags=re.IGNORECASE)
+    if match:
+        return match.group(2)
+    return None
+
+
+def get_base_title(title_str: str) -> str:
+    cleaned = title_str
+    cleaned = re.sub(r'\s*,\s*(vol\.|volume|vol|part|pt\.|book|bk\.)\s*\d+\b.*', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\s+\b(vol\.|volume|vol|part|pt\.|book|bk\.)\s*\d+\b.*', '', cleaned, flags=re.IGNORECASE)
+    return cleaned.strip(":,.- ").lower()
+
+
+
 def _empty_record() -> BookRecord:
     return BookRecord(found=False, source="none")
 
@@ -118,6 +134,20 @@ def _query_google_books(title: str, author: str = "") -> Optional[BookRecord]:
             log.warning(f"Google Books fallback query failed: {e}")
             return None
 
+    if not items:
+        return None
+
+    # Filter out items with mismatched volume numbers
+    req_vol = extract_volume_number(title)
+    filtered_items = []
+    for it in items:
+        it_title = it.get("volumeInfo", {}).get("title", "")
+        cand_vol = extract_volume_number(it_title)
+        if req_vol and cand_vol and req_vol != cand_vol:
+            continue
+        filtered_items.append(it)
+    
+    items = filtered_items
     if not items:
         return None
 
@@ -392,6 +422,20 @@ def _query_open_library(title: str, author: str = "") -> Optional[BookRecord]:
             english_docs.append(d)
             
     candidates = english_docs if english_docs else docs
+
+    # Filter out candidates with mismatched volume numbers
+    req_vol = extract_volume_number(title)
+    filtered_candidates = []
+    for d in candidates:
+        d_title = d.get("title", "")
+        cand_vol = extract_volume_number(d_title)
+        if req_vol and cand_vol and req_vol != cand_vol:
+            continue
+        filtered_candidates.append(d)
+        
+    candidates = filtered_candidates
+    if not candidates:
+        return None
 
     # Prefer the doc with the most subjects (richer record) as a quality proxy.
     best = max(candidates, key=lambda d: len(d.get("subject", [])))
@@ -797,6 +841,32 @@ def resolve_book(title: str, author: str = "", isbn: Optional[str] = None, googl
         log.info(f"Resolved '{title}' via open_library (fallback)")
         return record
 
+    # Fallback for synthetic/Fandom volume titles (e.g. "Lord of Mysteries, Volume 8: Fool")
+    req_vol = extract_volume_number(title)
+    if req_vol:
+        base_title = get_base_title(title)
+        if base_title and base_title.lower() != title.lower():
+            log.info(f"Attempting series fallback resolution for base title: '{base_title}'")
+            series_record = _query_google_books(base_title, author) or _query_open_library(base_title, author)
+            if series_record and series_record.found:
+                log.info(f"Successfully resolved series base title '{base_title}' for '{title}'")
+                return BookRecord(
+                    found=True,
+                    source="fandom_series",
+                    title=title,
+                    author=series_record.author or author,
+                    description=series_record.description,
+                    categories=series_record.categories,
+                    page_count=series_record.page_count,
+                    published_year=series_record.published_year,
+                    cover_url=series_record.cover_url,
+                    average_rating=series_record.average_rating,
+                    isbn_13=None,
+                    isbn_10=None,
+                    google_volume_id=None,
+                    open_library_work_key=None,
+                )
+
     log.info(f"Could not resolve '{title}' in any source")
     return _empty_record()
 
@@ -1066,18 +1136,7 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
     except Exception as e:
         log.warning(f"Error injecting Fandom volumes: {e}")
 
-    # Deduplication functions
-    def extract_volume_number(title_str: str) -> Optional[str]:
-        match = re.search(r'\b(vol\.|volume|vol|part|pt\.|book|bk\.)\s*(\d+)\b', title_str, flags=re.IGNORECASE)
-        if match:
-            return match.group(2)
-        return None
-
-    def get_base_title(title_str: str) -> str:
-        cleaned = title_str
-        cleaned = re.sub(r'\s*,\s*(vol\.|volume|vol|part|pt\.|book|bk\.)\s*\d+\b.*', '', cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r'\s+\b(vol\.|volume|vol|part|pt\.|book|bk\.)\s*\d+\b.*', '', cleaned, flags=re.IGNORECASE)
-        return cleaned.strip(":,.- ").lower()
+    # Deduplication uses global functions extract_volume_number and get_base_title
 
     def authors_match(a1: str, a2: str) -> bool:
         if not a1 or not a2:

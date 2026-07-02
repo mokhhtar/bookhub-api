@@ -28,48 +28,13 @@ def _key(*parts: str) -> str:
 
 
 def get(*parts: str) -> Optional[any]:
-    if os.environ.get("DISABLE_CACHE", "true").lower() == "true":
-        return None
-
-    key = _key(*parts)
-
-    # 1. memory
-    if key in _mem_cache:
-        ts, data, ttl = _mem_cache[key]
-        if time.time() - ts < ttl:
-            return data
-        del _mem_cache[key]
-
-    # 2. disk (survives within the same container instance / cold start)
-    file = CACHE_DIR / f"{key}.json"
-    if file.exists():
-        try:
-            payload = json.loads(file.read_text())
-            data = payload["data"]
-            ttl = payload.get("ttl", TTL_SECONDS)
-            if time.time() - payload["ts"] < ttl:
-                _mem_cache[key] = (payload["ts"], data, ttl)
-                return data
-        except Exception:
-            pass
-
+    # Hard-disabled for now as requested
     return None
 
 
 def set(data: any, *parts: str, ttl: Optional[int] = None) -> None:
-    """ttl: override the default 30-day TTL for this entry (e.g. shorter TTL for search or 'not found' results)."""
-    if os.environ.get("DISABLE_CACHE", "true").lower() == "true":
-        return
-
-    key = _key(*parts)
-    ts = time.time()
-    actual_ttl = ttl if ttl is not None else TTL_SECONDS
-    _mem_cache[key] = (ts, data, actual_ttl)
-    try:
-        file = CACHE_DIR / f"{key}.json"
-        file.write_text(json.dumps({"ts": ts, "data": data, "ttl": actual_ttl}))
-    except Exception:
-        pass  # disk cache is best-effort only
+    # Hard-disabled for now as requested
+    return
 
 
 # ── OPTIONAL: Upstash Redis (uncomment when you want shared/persistent cache) ──
