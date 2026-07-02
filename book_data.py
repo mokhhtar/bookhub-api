@@ -850,12 +850,26 @@ def resolve_book(title: str, author: str = "", isbn: Optional[str] = None, googl
             series_record = _query_google_books(base_title, author) or _query_open_library(base_title, author)
             if series_record and series_record.found:
                 log.info(f"Successfully resolved series base title '{base_title}' for '{title}'")
+                
+                # Try to fetch volume-specific synopsis from Fandom wiki
+                volume_synopsis = ""
+                try:
+                    from tools.fandom import resolve_fandom_subdomain, fetch_volume_synopsis_from_fandom
+                    subdomain = resolve_fandom_subdomain(title)
+                    if subdomain:
+                        vol_part = title.split(",")[-1].strip() if "," in title else title
+                        volume_synopsis = fetch_volume_synopsis_from_fandom(subdomain, vol_part)
+                except Exception as e:
+                    log.warning(f"Failed to fetch volume synopsis from Fandom: {e}")
+
+                description = volume_synopsis if volume_synopsis else series_record.description
+                
                 return BookRecord(
                     found=True,
                     source="fandom_series",
                     title=title,
                     author=series_record.author or author,
-                    description=series_record.description,
+                    description=description,
                     categories=series_record.categories,
                     page_count=series_record.page_count,
                     published_year=series_record.published_year,

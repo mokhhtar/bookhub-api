@@ -682,3 +682,77 @@ def get_universe(title: str = Query(..., min_length=1), subdomain: Optional[str]
 
     cache.set(result, *cache_key)
     return result
+
+
+def fetch_volume_synopsis_from_fandom(subdomain: str, page_title: str) -> str:
+    """
+    Queries Fandom parse API for the given page_title, searches for a 'Synopsis' section,
+    and extracts all text/paragraphs under it until the next headline.
+    """
+    url = f"https://{subdomain}.fandom.com/api.php"
+    headers = {"User-Agent": "BookHub/1.0 (mokhhtar@github.com)"}
+    
+    # 1. Search to resolve the exact page title if it is a bit different (e.g. casing/punctuation)
+    search_params = {
+        "action": "query",
+        "list": "search",
+        "srsearch": page_title,
+        "format": "json",
+        "srlimit": 3
+    }
+    resolved_title = page_title
+    try:
+        r = httpx.get(url, params=search_params, headers=headers, timeout=3.0)
+        if r.status_code == 200:
+            search_results = r.json().get("query", {}).get("search", [])
+            if search_results:
+                # Prioritize a match that contains the volume name
+                resolved_title = search_results[0].get("title")
+    except Exception:
+        pass
+
+    parse_params = {
+        "action": "parse",
+        "page": resolved_title,
+        "prop": "text",
+        "format": "json"
+    }
+    try:
+        r = httpx.get(url, params=parse_params, headers=headers, timeout=4.0)
+        if r.status_code != 200:
+            return ""
+        html = r.json().get("parse", {}).get("text", {}).get("*", "")
+        soup = BeautifulSoup(html, 'html.parser')
+        
+        # Find Synopsis headline
+        synopsis_head = None
+        for hl in soup.find_all(class_="mw-headline"):
+            if "synopsis" in hl.get_text().lower():
+                synopsis_head = hl
+                break
+                
+        if synopsis_head:
+            paragraphs = []
+            current = synopsis_head.parent
+            for sibling in current.next_siblings:
+                if sibling.name in ("h2", "h3"):
+                    break
+                if sibling.name == "p":
+                    p_text = sibling.get_text().strip()
+                    if p_text:
+                        paragraphs.append(p_text)
+                elif sibling.name == "ul":
+                    for li in sibling.find_all("li"):
+                        li_text = li.get_text().strip()
+                        if li_text:
+                            paragraphs.append("- " + li_text)
+            
+            # Clean text (remove brackets/references like [1], [2])
+            text = "\n\n".join(paragraphs)
+            text = re.sub(r'\[\d+\]', '', text)
+            text = re.sub(r'&\#91;\d+&\#93;', '', text)
+            return text.strip()
+    except Exception as e:
+        log.warning(f"Failed to fetch volume synopsis for '{resolved_title}': {e}")
+    return ""
+
