@@ -14,6 +14,7 @@ from typing import Optional, List
 import html as html_lib
 
 import httpx
+from bs4 import BeautifulSoup
 from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel, Field
 
@@ -268,6 +269,154 @@ def fetch_wiki_category_content(subdomain: str, category_query: str) -> str:
     except Exception as e:
         log.warning(f"Failed fetching category '{category_query}' from wiki '{subdomain}': {e}")
     return ""
+
+def extract_chapters_from_fandom(subdomain: str, book_title: str) -> list[str]:
+    """
+    Scrapes a series' Fandom wiki to find the correct, official chapter names for a book.
+    Parses tables with headers like 'Chapter title' or 'Chapter Name' or list items.
+    """
+    url = f"https://{subdomain}.fandom.com/api.php"
+    headers = {"User-Agent": "BookHub/1.0 (mokhhtar@github.com)"}
+    
+    def clean_name(name):
+        return re.sub(r'\s+', ' ', name).strip().lower()
+
+    # 1. Search for matching pages
+    search_queries = [
+        f"List of chapters in the {book_title}",
+        f"{book_title} chapters",
+        "List of chapters",
+        "Chapters",
+        book_title,
+        f"{book_title} Volume 1",
+        "Volume 1"
+    ]
+    
+    page_titles = []
+    for q in search_queries:
+        params = {
+            "action": "query",
+            "list": "search",
+            "srsearch": q,
+            "format": "json",
+            "srlimit": 3
+        }
+        try:
+            r = httpx.get(url, params=params, headers=headers, timeout=3.0)
+            if r.status_code == 200:
+                search_results = r.json().get("query", {}).get("search", [])
+                for res in search_results:
+                    t = res.get("title")
+                    if t not in page_titles:
+                        page_titles.append(t)
+        except Exception:
+            pass
+            
+    # Sort page_titles to prioritize main lists and volume 1, penalizing subpages (e.g. /Author's Note)
+    def page_priority(t):
+        t_low = t.lower()
+        title_low = book_title.lower()
+        penalty = 10 if "/" in t else 0
+        if "list of chapters" in t_low and title_low in t_low:
+            return 0 + penalty
+        if "volume 1" in t_low or "vol. 1" in t_low or "vol 1" in t_low:
+            return 1 + penalty
+        if "list of chapters" in t_low or "chapter list" in t_low:
+            return 2 + penalty
+        if title_low in t_low:
+            return 3 + penalty
+        return 4 + penalty
+
+    page_titles.sort(key=page_priority)
+    
+    parsed_pages = []
+    
+    # Phase 1: Try to extract chapters from tables
+    for page_title in page_titles[:5]:
+        params = {
+            "action": "parse",
+            "page": page_title,
+            "prop": "text",
+            "format": "json"
+        }
+        try:
+            r = httpx.get(url, params=params, headers=headers, timeout=4.0)
+            if r.status_code != 200:
+                continue
+            html = r.json().get("parse", {}).get("text", {}).get("*", "")
+            soup = BeautifulSoup(html, 'html.parser')
+            parsed_pages.append((page_title, soup))
+            
+            headlines = soup.find_all(class_="mw-headline")
+            target_headline = None
+            book_title_clean = clean_name(book_title)
+            
+            for hl in headlines:
+                hl_text = clean_name(hl.get_text())
+                if book_title_clean in hl_text or hl_text in book_title_clean or "list of chapters" in hl_text or "chapters" in hl_text:
+                    target_headline = hl
+                    break
+            
+            tables = []
+            if target_headline:
+                current = target_headline.parent
+                for sibling in current.next_siblings:
+                    if sibling.name in ("h2", "h3"):
+                        break
+                    if sibling.name == "table":
+                        tables.append(sibling)
+            else:
+                tables = soup.find_all("table")
+                
+            for table in tables:
+                headers_list = [clean_name(th.get_text()) for th in table.find_all("th")]
+                name_col_idx = -1
+                for idx, h in enumerate(headers_list):
+                    # Check for title or name, but NOT just "chapter" to avoid "chapter#" number columns
+                    if "title" in h or "name" in h:
+                        name_col_idx = idx
+                        break
+                
+                # If no explicit header, guess by column count
+                if name_col_idx == -1 and len(headers_list) >= 2:
+                    if len(headers_list) == 3:
+                        name_col_idx = 1
+                    elif len(headers_list) == 4:
+                        name_col_idx = 2
+                        
+                if name_col_idx != -1:
+                    chapters = []
+                    rows = table.find_all("tr")
+                    for tr in rows[1:]:
+                        cells = tr.find_all("td")
+                        if len(cells) > name_col_idx:
+                            cell_text = cells[name_col_idx].get_text().strip()
+                            cell_text = re.sub(r'["\']', '', cell_text)
+                            cell_text = re.sub(r'\s+', ' ', cell_text)
+                            if cell_text and not cell_text.isdigit() and len(cell_text) < 100:
+                                chapters.append(cell_text)
+                                
+                    if len(chapters) >= 3:
+                        return chapters
+        except Exception as e:
+            log.warning(f"Failed parsing table chapter list on '{page_title}': {e}")
+            
+    # Phase 2: Fallback to list items (li) if no tables succeeded
+    for page_title, soup in parsed_pages:
+        if "chapters" in clean_name(page_title) or "list" in clean_name(page_title) or "volume" in clean_name(page_title):
+            chapters = []
+            for li in soup.find_all("li"):
+                txt = li.get_text().strip()
+                if "chapter" in txt.lower() or re.match(r'^\d+\.', txt) or (len(txt) < 80 and not txt.startswith("Category:")):
+                    clean_txt = re.sub(r'^(chapter\s+\d+|ch\.\s+\d+|\d+)\s*[:.-]\s*', '', txt, flags=re.IGNORECASE)
+                    clean_txt = clean_txt.strip()
+                    if clean_txt and len(clean_txt) < 80:
+                        chapters.append(clean_txt)
+            if len(chapters) >= 5:
+                return chapters[:100]
+                
+    return []
+
 
 # ── Prompts ──────────────────────────────────────────────────
 

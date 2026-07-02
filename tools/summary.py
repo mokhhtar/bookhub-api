@@ -351,7 +351,7 @@ def resolve_factual_awards(record: book_data.BookRecord) -> list[dict]:
 # ── Route ───────────────────────────────────────────────────
 @router.post("/summary")
 def summary(req: SummaryRequest):
-    cache_key = ("summary_v3", req.title, req.author, req.depth, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
+    cache_key = ("summary_v4", req.title, req.author, req.depth, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
     cached = cache.get(*cache_key)
     if cached:
         # Self-healing cache migration: verify if the cached amazon_url is valid and English,
@@ -414,8 +414,15 @@ def summary(req: SummaryRequest):
         return gemini_client.generate(prompt)
 
     def get_chapters():
-        # Chapter lists are not reliably available from metadata APIs.
-        # We return an empty list rather than generating potentially hallucinated lists using Gemini.
+        try:
+            from tools.fandom import resolve_fandom_subdomain, extract_chapters_from_fandom
+            subdomain = resolve_fandom_subdomain(record.title)
+            if subdomain:
+                chapters = extract_chapters_from_fandom(subdomain, record.title)
+                if chapters:
+                    return chapters[:50]
+        except Exception as e:
+            log.warning(f"Error fetching Fandom chapters for '{record.title}': {e}")
         return []
 
     def get_awards():
