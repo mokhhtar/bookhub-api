@@ -454,22 +454,12 @@ def summary(req: SummaryRequest):
         if awards_cached is not None:
             return awards_cached
         
-        # Try Wikidata first
         try:
             awards = resolve_factual_awards(record)
         except Exception as e:
             log.warning(f"Wikidata awards query failed for '{record.title}': {e}")
             awards = []
 
-        # Fallback to Gemini if no factual awards were found on Wikidata
-        if not awards:
-            try:
-                awards_raw = gemini_client.generate(_build_awards_prompt(record))
-                awards_data = gemini_client.parse_json_response(awards_raw)
-                awards = awards_data.get("awards", []) if awards_data.get("confident") else []
-            except Exception as e:
-                log.warning(f"Awards extraction fallback failed for '{record.title}': {e}")
-                awards = []
         cache.set(awards, *awards_cache_key)
         return awards
 
