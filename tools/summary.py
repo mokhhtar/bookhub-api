@@ -40,6 +40,7 @@ class SummaryRequest(BaseModel):
     isbn: Optional[str] = Field(default=None, max_length=50)
     google_id: Optional[str] = Field(default=None, max_length=50)
     openlibrary_id: Optional[str] = Field(default=None, max_length=100)
+    bookwyrm_id: Optional[str] = Field(default=None, max_length=255)
 
 
 class SearchResponseItem(BaseModel):
@@ -51,6 +52,7 @@ class SearchResponseItem(BaseModel):
     published_year: Optional[str] = None
     google_id: Optional[str] = None
     openlibrary_id: Optional[str] = None
+    bookwyrm_id: Optional[str] = None
 
 
 @router.get("/search", response_model=list[SearchResponseItem])
@@ -371,7 +373,7 @@ def resolve_factual_awards(record: book_data.BookRecord) -> list[dict]:
 # ── Route ───────────────────────────────────────────────────
 @router.post("/summary")
 def summary(req: SummaryRequest):
-    cache_key = ("summary_v3", req.title, req.author, req.depth, req.isbn, req.google_id, req.openlibrary_id)
+    cache_key = ("summary_v3", req.title, req.author, req.depth, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
     cached = cache.get(*cache_key)
     if cached:
         # Self-healing cache migration: verify if the cached amazon_url is valid and English,
@@ -412,7 +414,7 @@ def summary(req: SummaryRequest):
             cache.set(cached, *cache_key)
         return cached
 
-    record = book_data.resolve_book(req.title, req.author, req.isbn, req.google_id, req.openlibrary_id)
+    record = book_data.resolve_book(req.title, req.author, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
 
     if not record.found:
         result = {

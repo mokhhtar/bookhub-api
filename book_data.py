@@ -643,7 +643,47 @@ def _query_open_library_by_isbn(isbn: str) -> Optional[BookRecord]:
     return None
 
 
-def resolve_book(title: str, author: str = "", isbn: Optional[str] = None, google_id: Optional[str] = None, openlibrary_id: Optional[str] = None) -> BookRecord:
+def _resolve_via_bookwyrm(bookwyrm_id: str) -> Optional[dict]:
+    # bookwyrm_id can be a full URL, e.g. "https://bookwyrm.social/book/145232"
+    # or just "/book/145232"
+    url = bookwyrm_id
+    if not url.startswith("http"):
+        url = f"https://bookwyrm.social{url}"
+        
+    headers = {
+        "User-Agent": "BookHubApp/1.0 (https://github.com/mokhhtar/bookhub; mokhhtar@gmail.com) httpx/0.24",
+        "Accept": "application/json"
+    }
+    try:
+        resp = httpx.get(url, headers=headers, timeout=8.0)
+        if resp.status_code == 200:
+            data = resp.json()
+            ol_key = data.get("openlibraryKey")
+            if ol_key and isinstance(ol_key, str) and not ol_key.startswith("/"):
+                if ol_key.endswith("M"):
+                    ol_key = f"/books/{ol_key}"
+                else:
+                    ol_key = f"/works/{ol_key}"
+            
+            desc = data.get("description")
+            if isinstance(desc, dict):
+                desc = desc.get("text") or desc.get("html") or ""
+            
+            return {
+                "title": data.get("title"),
+                "description": desc or "",
+                "isbn_13": data.get("isbn13"),
+                "isbn_10": data.get("isbn10"),
+                "openlibrary_id": ol_key,
+                "published_year": data.get("publishedDate", "")[:4] or data.get("firstPublishedDate", "")[:4] or None,
+                "cover_url": data.get("cover") if isinstance(data.get("cover"), str) else (data.get("cover", {}).get("url") if isinstance(data.get("cover"), dict) else None)
+            }
+    except Exception as e:
+        log.warning(f"BookWyrm details query failed for '{bookwyrm_id}': {e}")
+    return None
+
+
+def resolve_book(title: str, author: str = "", isbn: Optional[str] = None, google_id: Optional[str] = None, openlibrary_id: Optional[str] = None, bookwyrm_id: Optional[str] = None) -> BookRecord:
     """
     Main entry point. Tries direct IDs (google_id, openlibrary_id) or ISBN first if provided.
     Otherwise, queries Google Books first, falling back to Open Library.
@@ -653,6 +693,46 @@ def resolve_book(title: str, author: str = "", isbn: Optional[str] = None, googl
     isbn = (isbn or "").strip()
     google_id = (google_id or "").strip()
     openlibrary_id = (openlibrary_id or "").strip()
+    bookwyrm_id = (bookwyrm_id or "").strip()
+    
+    if bookwyrm_id:
+        bw_record = _resolve_via_bookwyrm(bookwyrm_id)
+        if bw_record:
+            # Try to resolve using OpenLibrary key from BookWyrm first
+            if bw_record.get("openlibrary_id"):
+                record = _query_open_library_by_id(bw_record["openlibrary_id"])
+                if record:
+                    log.info(f"Resolved BookWyrm ID '{bookwyrm_id}' via OpenLibrary key '{bw_record['openlibrary_id']}'")
+                    return record
+            # Try resolving using ISBN-13
+            if bw_record.get("isbn_13"):
+                record = _query_google_books_by_isbn(bw_record["isbn_13"]) or _query_open_library_by_isbn(bw_record["isbn_13"])
+                if record:
+                    log.info(f"Resolved BookWyrm ID '{bookwyrm_id}' via ISBN-13 '{bw_record['isbn_13']}'")
+                    return record
+            # Try resolving using ISBN-10
+            if bw_record.get("isbn_10"):
+                record = _query_google_books_by_isbn(bw_record["isbn_10"]) or _query_open_library_by_isbn(bw_record["isbn_10"])
+                if record:
+                    log.info(f"Resolved BookWyrm ID '{bookwyrm_id}' via ISBN-10 '{bw_record['isbn_10']}'")
+                    return record
+            # Direct BookRecord fallback if Google Books / Open Library fail to resolve
+            log.info(f"Resolved BookWyrm ID '{bookwyrm_id}' directly (catalog fallback)")
+            return BookRecord(
+                found=True,
+                source="bookwyrm",
+                title=bw_record.get("title") or title,
+                author=bw_record.get("author") or author,
+                description=bw_record.get("description") or "",
+                categories=[],
+                page_count=None,
+                published_year=bw_record.get("published_year"),
+                cover_url=bw_record.get("cover_url"),
+                average_rating=None,
+                isbn_13=bw_record.get("isbn_13"),
+                isbn_10=bw_record.get("isbn_10"),
+                open_library_work_key=bw_record.get("openlibrary_id"),
+            )
     
     if google_id:
         record = _query_google_books_by_id(google_id)
@@ -785,11 +865,12 @@ def find_similar_by_category(category: str, exclude_title: str = "", limit: int 
 
 def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict]:
     """
-    Search books from Google Books and Open Library, returning a combined,
-    deduplicated, and filtered list of matched records.
+    Search books from BookWyrm (fiction-first), Google Books and Open Library,
+    returning a combined, deduplicated, and prioritized list of matched records.
     """
     import urllib.parse
     import re
+    import concurrent.futures
     
     # Clean query
     query_clean = query.strip()
@@ -799,43 +880,65 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
     gb_offset = offset
     ol_page = (offset // 40) + 1
     
-    gb_items = []
-    # Query Google Books
-    params = {
-        "q": query_clean,
-        "maxResults": 40,
-        "startIndex": gb_offset,
-        "printType": "books",
-        "langRestrict": "en"
-    }
-    if GOOGLE_BOOKS_API_KEY:
-        params["key"] = GOOGLE_BOOKS_API_KEY
-        
-    try:
-        resp = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=8.0)
-        resp.raise_for_status()
-        gb_items = resp.json().get("items", [])
-    except Exception as e:
-        log.warning(f"Google Books search failed: {e}")
-        
-    # Fallback to Google Books without langRestrict if nothing returned
-    if not gb_items and gb_offset == 0:
-        params.pop("langRestrict", None)
+    def get_google_books():
+        params = {
+            "q": query_clean,
+            "maxResults": 40,
+            "startIndex": gb_offset,
+            "printType": "books",
+            "langRestrict": "en"
+        }
+        if GOOGLE_BOOKS_API_KEY:
+            params["key"] = GOOGLE_BOOKS_API_KEY
+            
         try:
             resp = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=8.0)
             resp.raise_for_status()
-            gb_items = resp.json().get("items", [])
+            return resp.json().get("items", []) or []
         except Exception as e:
-            log.warning(f"Google Books fallback search failed: {e}")
+            log.warning(f"Google Books search failed: {e}")
+            if gb_offset == 0:
+                params.pop("langRestrict", None)
+                try:
+                    resp = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=8.0)
+                    resp.raise_for_status()
+                    return resp.json().get("items", []) or []
+                except Exception as ex:
+                    log.warning(f"Google Books fallback search failed: {ex}")
+        return []
 
-    # Query Open Library
-    ol_items = []
-    try:
-        resp = httpx.get(f"{OPEN_LIBRARY_SEARCH_API}?q={urllib.parse.quote(query_clean)}&page={ol_page}&limit=40", headers=HEADERS, timeout=10.0)
-        resp.raise_for_status()
-        ol_items = resp.json().get("docs", [])
-    except Exception as e:
-        log.warning(f"Open Library search failed: {e}")
+    def get_open_library():
+        try:
+            resp = httpx.get(f"{OPEN_LIBRARY_SEARCH_API}?q={urllib.parse.quote(query_clean)}&page={ol_page}&limit=40", headers=HEADERS, timeout=8.0)
+            resp.raise_for_status()
+            return resp.json().get("docs", []) or []
+        except Exception as e:
+            log.warning(f"Open Library search failed: {e}")
+        return []
+
+    def get_bookwyrm():
+        url = "https://bookwyrm.social/search"
+        headers = {**HEADERS, "Accept": "application/json"}
+        params = {"q": query_clean}
+        try:
+            resp = httpx.get(url, params=params, headers=headers, timeout=8.0)
+            resp.raise_for_status()
+            data = resp.json()
+            if isinstance(data, list):
+                return data or []
+            return data.get("results", []) or []
+        except Exception as e:
+            log.warning(f"BookWyrm search failed: {e}")
+        return []
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        f_gb = executor.submit(get_google_books)
+        f_ol = executor.submit(get_open_library)
+        f_bw = executor.submit(get_bookwyrm)
+
+        gb_items = f_gb.result()
+        ol_items = f_ol.result()
+        bw_items = f_bw.result()
 
     # Helper function for word overlap validation
     STOP_WORDS = {"the", "of", "a", "an", "in", "on", "and", "or", "to", "for", "with", "by", "at", "de", "la", "el"}
@@ -856,7 +959,7 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
     seen = set()
     results = []
 
-    def add_item(title, author, cover_url, isbn_10, isbn_13, published_year, google_id=None, openlibrary_id=None):
+    def add_item(title, author, cover_url, isbn_10, isbn_13, published_year, google_id=None, openlibrary_id=None, bookwyrm_id=None):
         if not title:
             return
         if not has_word_overlap(title):
@@ -875,10 +978,22 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
                 "isbn_13": isbn_13,
                 "published_year": published_year,
                 "google_id": google_id,
-                "openlibrary_id": openlibrary_id
+                "openlibrary_id": openlibrary_id,
+                "bookwyrm_id": bookwyrm_id
             })
 
-    # Add Google Books items first
+    # Add BookWyrm items first
+    for it in bw_items:
+        title = it.get("title", "")
+        author = it.get("author", "")
+        cover_url = it.get("cover")
+        if cover_url and cover_url.startswith("http:"):
+            cover_url = cover_url.replace("http:", "https:")
+            
+        published_year = str(it.get("year", "")) or None
+        add_item(title, author, cover_url, None, None, published_year, bookwyrm_id=it.get("key"))
+
+    # Add Google Books items next
     for it in gb_items:
         info = it.get("volumeInfo", {})
         title = info.get("title", "")
@@ -936,7 +1051,12 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
         
         if not comparison_q:
             return 0
-        return sum(1 for w in comparison_q if w in t_words)
+        score = sum(1 for w in comparison_q if w in t_words)
+        
+        # Tie-breaker boost for novel sources (BookWyrm)
+        if item.get("bookwyrm_id"):
+            score += 0.1
+        return score
 
     results.sort(key=get_match_score, reverse=True)
     return results[:limit]
