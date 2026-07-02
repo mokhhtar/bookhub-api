@@ -1037,6 +1037,32 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
         published_year = str(d.get("first_publish_year", "")) or None
         add_item(title, author, cover_url, isbn_10, isbn_13, published_year, openlibrary_id=d.get("key"))
 
+    # Deduplication functions
+    def extract_volume_number(title_str: str) -> Optional[str]:
+        match = re.search(r'\b(vol\.|volume|vol|part|pt\.|book|bk\.)\s*(\d+)\b', title_str, flags=re.IGNORECASE)
+        if match:
+            return match.group(2)
+        return None
+
+    def get_base_title(title_str: str) -> str:
+        cleaned = title_str
+        cleaned = re.sub(r'\s*,\s*(vol\.|volume|vol|part|pt\.|book|bk\.)\s*\d+\b.*', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\s+\b(vol\.|volume|vol|part|pt\.|book|bk\.)\s*\d+\b.*', '', cleaned, flags=re.IGNORECASE)
+        return cleaned.strip(":,.- ").lower()
+
+    def authors_match(a1: str, a2: str) -> bool:
+        if not a1 or not a2:
+            return True
+        a1_norm = re.sub(r'[^a-z0-9]', '', a1.lower())
+        a2_norm = re.sub(r'[^a-z0-9]', '', a2.lower())
+        if a1_norm == a2_norm or a1_norm in a2_norm or a2_norm in a1_norm:
+            return True
+        w1 = set(w for w in re.findall(r'[a-z]+', a1.lower()) if len(w) > 2)
+        w2 = set(w for w in re.findall(r'[a-z]+', a2.lower()) if len(w) > 2)
+        if w1 and w2 and len(w1.intersection(w2)) >= min(len(w1), len(w2)) - 1:
+            return True
+        return False
+
     # Sort results by keyword match score in descending order to prioritize exact/volume matches
     def get_match_score(item):
         t = item.get("title", "")
@@ -1081,5 +1107,32 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
             
         return score
 
-    results.sort(key=get_match_score, reverse=True)
-    return results[:limit]
+    # Sort results by title length in descending order first so that during deduplication,
+    # the longer/more descriptive title (e.g. including subtitle details) is preferred.
+    results.sort(key=lambda x: len(x.get("title", "")), reverse=True)
+    
+    deduped_results = []
+    for item in results:
+        title = item.get("title", "")
+        author = item.get("author", "")
+        base_title = get_base_title(title)
+        vol_num = extract_volume_number(title)
+        
+        is_duplicate = False
+        for existing in deduped_results:
+            ex_title = existing.get("title", "")
+            ex_author = existing.get("author", "")
+            ex_base = get_base_title(ex_title)
+            ex_vol = extract_volume_number(ex_title)
+            
+            if base_title == ex_base and vol_num == ex_vol and authors_match(author, ex_author):
+                is_duplicate = True
+                break
+                
+        if not is_duplicate:
+            deduped_results.append(item)
+            
+    # Sort the deduplicated results by match score in descending order
+    deduped_results.sort(key=get_match_score, reverse=True)
+    return deduped_results[:limit]
+
