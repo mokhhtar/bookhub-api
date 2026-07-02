@@ -1037,6 +1037,35 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
         published_year = str(d.get("first_publish_year", "")) or None
         add_item(title, author, cover_url, isbn_10, isbn_13, published_year, openlibrary_id=d.get("key"))
 
+    # 4. Inject Fandom Wiki series volumes if Fandom subdomain is resolved
+    try:
+        from tools.fandom import resolve_fandom_subdomain, fetch_volumes_from_fandom
+        subdomain = resolve_fandom_subdomain(query_clean)
+        if subdomain:
+            fandom_volumes = fetch_volumes_from_fandom(subdomain, query_clean)
+            default_author = ""
+            default_cover = ""
+            for item in results:
+                t_low = item.get("title", "").lower()
+                if all(w in t_low for w in query_clean.lower().split()):
+                    default_author = item.get("author", "")
+                    default_cover = item.get("cover_url", "")
+                    break
+            
+            for v_title in fandom_volumes:
+                q_title = query_clean.title()
+                synthetic_title = f"{q_title}, {v_title}"
+                add_item(
+                    title=synthetic_title,
+                    author=default_author or "Author",
+                    cover_url=default_cover,
+                    isbn_10=None,
+                    isbn_13=None,
+                    published_year=None,
+                )
+    except Exception as e:
+        log.warning(f"Error injecting Fandom volumes: {e}")
+
     # Deduplication functions
     def extract_volume_number(title_str: str) -> Optional[str]:
         match = re.search(r'\b(vol\.|volume|vol|part|pt\.|book|bk\.)\s*(\d+)\b', title_str, flags=re.IGNORECASE)

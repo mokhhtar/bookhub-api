@@ -234,7 +234,6 @@ def _resolve_fandom_subdomain_single(title: str, wikidata_id: Optional[str] = No
         return normalized
         
     return None
-
 def resolve_fandom_subdomain(title: str, wikidata_id: Optional[str] = None) -> Optional[str]:
     """
     Resolves Fandom subdomain by trying the full title and various normalized series name candidates.
@@ -245,6 +244,83 @@ def resolve_fandom_subdomain(title: str, wikidata_id: Optional[str] = None) -> O
         if sub:
             return sub
     return None
+
+def fetch_volumes_from_fandom(subdomain: str, book_title: str) -> list[str]:
+    """
+    Queries Fandom search for page titles containing 'Volume', fetches their wikitext content,
+    and returns volume titles that belong to the queried book/series.
+    """
+    url = f"https://{subdomain}.fandom.com/api.php"
+    headers = {"User-Agent": "BookHub/1.0 (mokhhtar@github.com)"}
+    
+    # 1. Search for pages matching 'Volume'
+    params = {
+        "action": "query",
+        "list": "search",
+        "srsearch": "Volume",
+        "format": "json",
+        "srlimit": 40
+    }
+    try:
+        r = httpx.get(url, params=params, headers=headers, timeout=5.0)
+        if r.status_code != 200:
+            return []
+        search_results = r.json().get("query", {}).get("search", [])
+    except Exception:
+        return []
+        
+    volume_pages = []
+    for res in search_results:
+        title = res.get("title", "")
+        if "/" not in title and re.match(r'^Volume\s+\d+[:\s]', title, flags=re.IGNORECASE):
+            volume_pages.append(title)
+            
+    if not volume_pages:
+        return []
+        
+    # 2. Batch fetch page contents to verify they belong to the series
+    verified_volumes = []
+    params_content = {
+        "action": "query",
+        "titles": "|".join(volume_pages),
+        "prop": "revisions",
+        "rvprop": "content",
+        "format": "json"
+    }
+    try:
+        r = httpx.get(url, params=params_content, headers=headers, timeout=5.0)
+        if r.status_code == 200:
+            pages_data = r.json().get("query", {}).get("pages", {}).values()
+            for p_info in pages_data:
+                title = p_info.get("title", "")
+                wikitext = p_info.get("revisions", [{}])[0].get("*", "")
+                
+                clean_q = re.sub(r'[^a-z0-9]', '', book_title.lower())
+                clean_wiki = re.sub(r'[^a-z0-9]', '', wikitext.lower()) if wikitext else ""
+                
+                # Exclude sequel volumes (Circle of Inevitability) if not searching for COI
+                is_coi_query = "circle" in clean_q or "inevitability" in clean_q
+                has_coi_in_wiki = "circleofinevitability" in clean_wiki
+                if has_coi_in_wiki and not is_coi_query:
+                    continue
+                    
+                if clean_q in clean_wiki:
+                    verified_volumes.append(title)
+    except Exception:
+        pass
+        
+    if not verified_volumes:
+        verified_volumes = volume_pages
+        
+    # Deduplicate and sort numerically by volume number
+    verified_volumes = list(set(verified_volumes))
+    def get_vol_num(v):
+        m = re.search(r'^Volume\s+(\d+)', v, flags=re.IGNORECASE)
+        return int(m.group(1)) if m else 999
+        
+    verified_volumes.sort(key=get_vol_num)
+    return verified_volumes
+
 
 
 # ── Content Scraping & Cleaning ─────────────────────────────
