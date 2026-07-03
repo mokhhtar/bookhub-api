@@ -846,15 +846,15 @@ def resolve_book(title: str, author: str = "", isbn: Optional[str] = None, googl
     # Go straight to the Fandom series fallback which fetches the correct synopsis.
     req_vol_check = extract_volume_number(title)
     if not req_vol_check:
-        # No volume number — normal search path
-        record = _query_google_books(title, author)
-        if record:
-            log.info(f"Resolved '{title}' via google_books")
+        # No volume number — normal search path (Open Library first, Google Books fallback)
+        record = _query_open_library(title, author)
+        if record and record.found:
+            log.info(f"Resolved '{title}' via open_library")
             return record
 
-        record = _query_open_library(title, author)
-        if record:
-            log.info(f"Resolved '{title}' via open_library (fallback)")
+        record = _query_google_books(title, author)
+        if record and record.found:
+            log.info(f"Resolved '{title}' via google_books (fallback)")
             return record
 
     # Fallback for synthetic/Fandom volume titles (e.g. "Lord of Mysteries, Volume 8: Fool")
@@ -965,8 +965,11 @@ def find_similar_by_category(category: str, exclude_title: str = "", limit: int 
 
 def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict]:
     """
-    Search books from BookWyrm (fiction-first), Google Books and Open Library,
-    returning a combined, deduplicated, and prioritized list of matched records.
+    Search books following a strict priority cascade:
+      1. If the book is found in Fandom Wiki, show ONLY the Fandom Wiki volumes.
+      2. If not found in Fandom, but found in Open Library, show ONLY the Open Library results
+         (picking the latest published year for each).
+      3. If not found in either, fall back to Google Books.
     """
     import urllib.parse
     import re
@@ -977,68 +980,8 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
     if not query_clean:
         return []
     
-    gb_offset = offset
-    ol_page = (offset // 40) + 1
-    
-    def get_google_books():
-        params = {
-            "q": query_clean,
-            "maxResults": 40,
-            "startIndex": gb_offset,
-            "printType": "books",
-            "langRestrict": "en"
-        }
-        if GOOGLE_BOOKS_API_KEY:
-            params["key"] = GOOGLE_BOOKS_API_KEY
-            
-        try:
-            resp = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=8.0)
-            resp.raise_for_status()
-            return resp.json().get("items", []) or []
-        except Exception as e:
-            log.warning(f"Google Books search failed: {e}")
-            if gb_offset == 0:
-                params.pop("langRestrict", None)
-                try:
-                    resp = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=8.0)
-                    resp.raise_for_status()
-                    return resp.json().get("items", []) or []
-                except Exception as ex:
-                    log.warning(f"Google Books fallback search failed: {ex}")
-        return []
-
-    def get_open_library():
-        try:
-            resp = httpx.get(f"{OPEN_LIBRARY_SEARCH_API}?q={urllib.parse.quote(query_clean)}&page={ol_page}&limit=40", headers=HEADERS, timeout=8.0)
-            resp.raise_for_status()
-            return resp.json().get("docs", []) or []
-        except Exception as e:
-            log.warning(f"Open Library search failed: {e}")
-        return []
-
-    def get_bookwyrm():
-        url = "https://bookwyrm.social/search"
-        headers = {**HEADERS, "Accept": "application/json"}
-        params = {"q": query_clean}
-        try:
-            resp = httpx.get(url, params=params, headers=headers, timeout=8.0)
-            resp.raise_for_status()
-            data = resp.json()
-            if isinstance(data, list):
-                return data or []
-            return data.get("results", []) or []
-        except Exception as e:
-            log.warning(f"BookWyrm search failed: {e}")
-        return []
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-        f_gb = executor.submit(get_google_books)
-        f_ol = executor.submit(get_open_library)
-        f_bw = executor.submit(get_bookwyrm)
-
-        gb_items = f_gb.result()
-        ol_items = f_ol.result()
-        bw_items = f_bw.result()
+    results = []
+    seen = set()
 
     # Helper function for word overlap validation
     STOP_WORDS = {"the", "of", "a", "an", "in", "on", "and", "or", "to", "for", "with", "by", "at", "de", "la", "el"}
@@ -1056,10 +999,7 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
             return True
         return any(w in t_words for w in comparison_q)
 
-    seen = set()
-    results = []
-
-    def add_item(title, author, cover_url, isbn_10, isbn_13, published_year, google_id=None, openlibrary_id=None, bookwyrm_id=None):
+    def add_item(title, author, cover_url, isbn_10, isbn_13, published_year, google_id=None, openlibrary_id=None, bookwyrm_id=None, source=None):
         if not title:
             return
         if not has_word_overlap(title):
@@ -1079,92 +1019,163 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
                 "published_year": published_year,
                 "google_id": google_id,
                 "openlibrary_id": openlibrary_id,
-                "bookwyrm_id": bookwyrm_id
+                "bookwyrm_id": bookwyrm_id,
+                "source": source
             })
 
-    # Add BookWyrm items first
-    for it in bw_items:
-        title = it.get("title", "")
-        author = it.get("author", "")
-        cover_url = it.get("cover")
-        if cover_url and cover_url.startswith("http:"):
-            cover_url = cover_url.replace("http:", "https:")
-            
-        published_year = str(it.get("year", "")) or None
-        add_item(title, author, cover_url, None, None, published_year, bookwyrm_id=it.get("key"))
-
-    # Add Google Books items next
-    for it in gb_items:
-        info = it.get("volumeInfo", {})
-        title = info.get("title", "")
-        authors = info.get("authors", [])
-        author = ", ".join(authors) if authors else ""
-        
-        image_links = info.get("imageLinks", {})
-        cover_url = image_links.get("thumbnail") or image_links.get("smallThumbnail")
-        if cover_url and cover_url.startswith("http:"):
-            cover_url = cover_url.replace("http:", "https:")
-            
-        isbn_10 = None
-        isbn_13 = None
-        for ident in info.get("industryIdentifiers", []):
-            val = ident.get("identifier", "").replace(" ", "")
-            if ident.get("type") == "ISBN_10" and len(val) == 10:
-                isbn_10 = val
-            elif ident.get("type") == "ISBN_13" and len(val) == 13:
-                isbn_13 = val
-
-        published_year = info.get("publishedDate", "")[:4] or None
-        add_item(title, author, cover_url, isbn_10, isbn_13, published_year, google_id=it.get("id"))
-
-    # Add Open Library items next
-    for d in ol_items:
-        title = d.get("title", "")
-        authors = d.get("author_name", [])
-        author = ", ".join(authors) if authors else ""
-        
-        cover_id = d.get("cover_i")
-        cover_url = f"https://covers.openlibrary.org/b/id/{cover_id}-M.jpg" if cover_id else None
-        
-        isbns = d.get("isbn", [])
-        isbn_13 = next((i for i in isbns if len(i) == 13 and (i.startswith("9780") or i.startswith("9781"))), None)
-        isbn_10 = next((i for i in isbns if len(i) == 10 and (i.startswith("0") or i.startswith("1"))), None)
-        if not isbn_13:
-            isbn_13 = next((i for i in isbns if len(i) == 13), None)
-        if not isbn_10:
-            isbn_10 = next((i for i in isbns if len(i) == 10), None)
-            
-        published_year = str(d.get("first_publish_year", "")) or None
-        add_item(title, author, cover_url, isbn_10, isbn_13, published_year, openlibrary_id=d.get("key"))
-
-    # 4. Inject Fandom Wiki series volumes if Fandom subdomain is resolved
+    # ── Tier 1: Fandom Wiki Search ──
     try:
         from tools.fandom import resolve_fandom_subdomain, fetch_volumes_from_fandom
         subdomain = resolve_fandom_subdomain(query_clean)
         if subdomain:
             fandom_volumes = fetch_volumes_from_fandom(subdomain, query_clean)
-            default_author = ""
-            default_cover = ""
-            for item in results:
-                t_low = item.get("title", "").lower()
-                if all(w in t_low for w in query_clean.lower().split()):
-                    default_author = item.get("author", "")
-                    default_cover = item.get("cover_url", "")
-                    break
-            
-            for v_title in fandom_volumes:
-                q_title = query_clean.title()
-                synthetic_title = f"{q_title}, {v_title}"
-                add_item(
-                    title=synthetic_title,
-                    author=default_author or "Author",
-                    cover_url=default_cover,
-                    isbn_10=None,
-                    isbn_13=None,
-                    published_year=None,
-                )
+            if fandom_volumes:
+                # Get a default author and cover for the synthetic cards from a quick API query
+                default_author = ""
+                default_cover = ""
+                # Try Google Books for default series metadata
+                try:
+                    params = {"q": query_clean, "maxResults": 3, "printType": "books", "langRestrict": "en"}
+                    if GOOGLE_BOOKS_API_KEY:
+                        params["key"] = GOOGLE_BOOKS_API_KEY
+                    r = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=4.0)
+                    if r.status_code == 200:
+                        items = r.json().get("items", [])
+                        if items:
+                            info = items[0].get("volumeInfo", {})
+                            default_author = ", ".join(info.get("authors", [])) if info.get("authors") else ""
+                            image_links = info.get("imageLinks", {})
+                            default_cover = image_links.get("thumbnail") or image_links.get("smallThumbnail")
+                            if default_cover and default_cover.startswith("http:"):
+                                default_cover = default_cover.replace("http:", "https:")
+                except Exception:
+                    pass
+
+                # Fallback to Open Library for default series metadata
+                if not default_author:
+                    try:
+                        r = httpx.get(f"{OPEN_LIBRARY_SEARCH_API}?q={urllib.parse.quote(query_clean)}&limit=3", headers=HEADERS, timeout=4.0)
+                        if r.status_code == 200:
+                            docs = r.json().get("docs", [])
+                            if docs:
+                                default_author = ", ".join(docs[0].get("author_name", [])) if docs[0].get("author_name") else ""
+                                cover_id = docs[0].get("cover_i")
+                                if cover_id:
+                                    default_cover = f"https://covers.openlibrary.org/b/id/{cover_id}-M.jpg"
+                    except Exception:
+                        pass
+
+                for v_title in fandom_volumes:
+                    q_title = query_clean.title()
+                    synthetic_title = f"{q_title}, {v_title}"
+                    add_item(
+                        title=synthetic_title,
+                        author=default_author or "Author",
+                        cover_url=default_cover,
+                        isbn_10=None,
+                        isbn_13=None,
+                        published_year=None,
+                        source="fandom"
+                    )
+                if results:
+                    # Return immediately for Fandom Wiki matched series
+                    return results
     except Exception as e:
-        log.warning(f"Error injecting Fandom volumes: {e}")
+        log.warning(f"Error resolving Fandom volumes in search: {e}")
+
+    # ── Tier 2: Open Library Search ──
+    ol_page = (offset // 40) + 1
+    ol_items = []
+    try:
+        resp = httpx.get(f"{OPEN_LIBRARY_SEARCH_API}?q={urllib.parse.quote(query_clean)}&page={ol_page}&limit=40", headers=HEADERS, timeout=8.0)
+        if resp.status_code == 200:
+            ol_items = resp.json().get("docs", []) or []
+    except Exception as e:
+        log.warning(f"Open Library search failed: {e}")
+
+    if ol_items:
+        for d in ol_items:
+            title = d.get("title", "")
+            authors = d.get("author_name", [])
+            author = ", ".join(authors) if authors else ""
+            
+            # Select the LATEST published year from all editions of this work
+            pub_years = d.get("publish_year", [])
+            published_year = None
+            if pub_years:
+                try:
+                    valid_years = [int(y) for y in pub_years if str(y).isdigit()]
+                    if valid_years:
+                        published_year = str(max(valid_years))
+                except Exception:
+                    pass
+            if not published_year:
+                published_year = str(d.get("first_publish_year", "")) or None
+                
+            cover_id = d.get("cover_i")
+            cover_url = f"https://covers.openlibrary.org/b/id/{cover_id}-M.jpg" if cover_id else None
+            
+            isbns = d.get("isbn", [])
+            isbn_13 = next((i for i in isbns if len(i) == 13 and (i.startswith("9780") or i.startswith("9781"))), None)
+            isbn_10 = next((i for i in isbns if len(i) == 10 and (i.startswith("0") or i.startswith("1"))), None)
+            if not isbn_13:
+                isbn_13 = next((i for i in isbns if len(i) == 13), None)
+            if not isbn_10:
+                isbn_10 = next((i for i in isbns if len(i) == 10), None)
+
+            add_item(title, author, cover_url, isbn_10, isbn_13, published_year, openlibrary_id=d.get("key"), source="open_library")
+
+    # ── Tier 3: Google Books Search (Fallback) ──
+    if not results:
+        gb_items = []
+        gb_offset = offset
+        params = {
+            "q": query_clean,
+            "maxResults": 40,
+            "startIndex": gb_offset,
+            "printType": "books",
+            "langRestrict": "en"
+        }
+        if GOOGLE_BOOKS_API_KEY:
+            params["key"] = GOOGLE_BOOKS_API_KEY
+            
+        try:
+            resp = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=8.0)
+            if resp.status_code == 200:
+                gb_items = resp.json().get("items", []) or []
+        except Exception as e:
+            log.warning(f"Google Books search failed: {e}")
+            if gb_offset == 0:
+                params.pop("langRestrict", None)
+                try:
+                    resp = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=8.0)
+                    if resp.status_code == 200:
+                        gb_items = resp.json().get("items", []) or []
+                except Exception as ex:
+                    log.warning(f"Google Books fallback search failed: {ex}")
+
+        for it in gb_items:
+            info = it.get("volumeInfo", {})
+            title = info.get("title", "")
+            authors = info.get("authors", [])
+            author = ", ".join(authors) if authors else ""
+            
+            image_links = info.get("imageLinks", {})
+            cover_url = image_links.get("thumbnail") or image_links.get("smallThumbnail")
+            if cover_url and cover_url.startswith("http:"):
+                cover_url = cover_url.replace("http:", "https:")
+                
+            isbn_10 = None
+            isbn_13 = None
+            for ident in info.get("industryIdentifiers", []):
+                val = ident.get("identifier", "").replace(" ", "")
+                if ident.get("type") == "ISBN_10" and len(val) == 10:
+                    isbn_10 = val
+                elif ident.get("type") == "ISBN_13" and len(val) == 13:
+                    isbn_13 = val
+
+            published_year = info.get("publishedDate", "")[:4] or None
+            add_item(title, author, cover_url, isbn_10, isbn_13, published_year, google_id=it.get("id"), source="google_books")
 
     # Deduplication uses global functions extract_volume_number and get_base_title
 
