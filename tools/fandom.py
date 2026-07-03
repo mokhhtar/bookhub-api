@@ -247,32 +247,32 @@ def resolve_fandom_subdomain(title: str, wikidata_id: Optional[str] = None) -> O
 
 def fetch_volumes_from_fandom(subdomain: str, book_title: str) -> list[str]:
     """
-    Queries Fandom search for page titles containing 'Volume', fetches their wikitext content,
+    Queries Fandom for all pages prefixing 'Volume', fetches their wikitext content,
     and returns volume titles that belong to the queried book/series.
     """
     url = f"https://{subdomain}.fandom.com/api.php"
     headers = {"User-Agent": "BookHub/1.0 (mokhhtar@github.com)"}
     
-    # 1. Search for pages matching 'Volume'
+    # 1. Search for pages starting with 'Volume'
     params = {
         "action": "query",
-        "list": "search",
-        "srsearch": "Volume",
+        "list": "allpages",
+        "apprefix": "Volume",
         "format": "json",
-        "srlimit": 40
+        "aplimit": 100
     }
     try:
         r = httpx.get(url, params=params, headers=headers, timeout=5.0)
         if r.status_code != 200:
             return []
-        search_results = r.json().get("query", {}).get("search", [])
+        search_results = r.json().get("query", {}).get("allpages", [])
     except Exception:
         return []
         
     volume_pages = []
     for res in search_results:
         title = res.get("title", "")
-        if "/" not in title and re.match(r'^Volume\s+\d+[:\s]', title, flags=re.IGNORECASE):
+        if "/" not in title and re.match(r'^Volume\s+\d+(:\s*|$)', title, flags=re.IGNORECASE):
             volume_pages.append(title)
             
     if not volume_pages:
@@ -536,17 +536,50 @@ def extract_chapters_from_fandom(subdomain: str, book_title: str) -> list[str]:
             
     # Phase 2: Fallback to list items (li) if no tables succeeded
     for page_title, soup in parsed_pages:
-        if "chapters" in clean_name(page_title) or "list" in clean_name(page_title) or "volume" in clean_name(page_title):
+        page_title_lower = page_title.lower()
+        if "chapters" in page_title_lower or "list" in page_title_lower or "volume" in page_title_lower:
+            is_volume_page = False
+            if req_vol:
+                vol_pat = rf'\b(volume|vol|bk|book)\s*{req_vol}\b'
+                if re.search(vol_pat, page_title_lower):
+                    is_volume_page = True
+                    
+            ignored_terms = {
+                "synopsis", "summary", "trivia", "site navigation", "gallery", "illustrations",
+                "fan arts", "official art", "songs", "videos", "characters", "references",
+                "general information", "main story", "others", "mini arcs", "navigation"
+            }
+            
             chapters = []
             for li in soup.find_all("li"):
                 txt = li.get_text().strip()
-                if "chapter" in txt.lower() or re.match(r'^\d+\.', txt) or (len(txt) < 80 and not txt.startswith("Category:")):
-                    clean_txt = re.sub(r'^(chapter\s+\d+|ch\.\s+\d+|\d+)\s*[:.-]\s*', '', txt, flags=re.IGNORECASE)
-                    clean_txt = clean_txt.strip()
-                    if clean_txt and len(clean_txt) < 80:
-                        chapters.append(clean_txt)
-            if len(chapters) >= 5:
-                return chapters[:100]
+                if not txt:
+                    continue
+                # Clean leading number/dot prefixes like "1. Synopsis" or "1 Synopsis" -> "Synopsis"
+                txt_clean = re.sub(r'^\d+[\s.:.-]+', '', txt).strip()
+                # Normalize whitespace
+                txt_clean = re.sub(r'\s+', ' ', txt_clean)
+                txt_clean_lower = txt_clean.lower()
+                
+                # Skip navigation links or ignored terms
+                if txt_clean_lower in ignored_terms:
+                    continue
+                if txt_clean_lower.startswith("category:"):
+                    continue
+                if re.match(r'^(vol\b|volume\b|part|pt\b|book|bk\b)\s*\d+', txt_clean_lower):
+                    continue
+                    
+                # Match chapter pattern or generic list item
+                if "chapter" in txt_clean_lower or re.match(r'^\d+\.', txt_clean) or (len(txt_clean) < 80):
+                    clean_txt = re.sub(r'^(chapter\s+\d+|ch\.\s+\d+|\d+)\s*[:.-]\s*', '', txt_clean, flags=re.IGNORECASE)
+                    clean_txt = re.sub(r'\s+', ' ', clean_txt).strip()
+                    if clean_txt and clean_txt.lower() not in ignored_terms and len(clean_txt) < 80:
+                        if clean_txt not in chapters:
+                            chapters.append(clean_txt)
+                            
+            min_chapters_threshold = 1 if is_volume_page else 5
+            if len(chapters) >= min_chapters_threshold:
+                return chapters[:150]
                 
     return []
 
