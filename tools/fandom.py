@@ -502,7 +502,18 @@ def extract_chapters_from_fandom(subdomain: str, book_title: str) -> list[str]:
                 tables = soup.find_all("table")
                 
             for table in tables:
-                headers_list = [clean_name(th.get_text()) for th in table.find_all("th")]
+                header_rows = []
+                for tr in table.find_all("tr"):
+                    ths = tr.find_all("th")
+                    if ths:
+                        header_rows.append(ths)
+                        
+                if not header_rows:
+                    continue
+                    
+                best_ths = max(header_rows, key=len)
+                headers_list = [clean_name(th.get_text()) for th in best_ths]
+                
                 name_col_idx = -1
                 for idx, h in enumerate(headers_list):
                     # Check for title or name, but NOT just "chapter" to avoid "chapter#" number columns
@@ -520,7 +531,7 @@ def extract_chapters_from_fandom(subdomain: str, book_title: str) -> list[str]:
                 if name_col_idx != -1:
                     chapters = []
                     rows = table.find_all("tr")
-                    for tr in rows[1:]:
+                    for tr in rows:
                         cells = tr.find_all("td")
                         if len(cells) > name_col_idx:
                             cell_text = cells[name_col_idx].get_text().strip()
