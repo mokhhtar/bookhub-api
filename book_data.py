@@ -855,9 +855,7 @@ def resolve_book(title: str, author: str = "", isbn: Optional[str] = None, googl
         record = _query_google_books(title, author)
         if record and record.found:
             log.info(f"Resolved '{title}' via google_books (fallback)")
-            return record
-
-    # Fallback for synthetic/Fandom volume titles (e.g. "Lord of Mysteries, Volume 8: Fool")
+       # Fallback for synthetic/Fandom volume titles (e.g. "Lord of Mysteries, Volume 8: Fool")
     req_vol = extract_volume_number(title)
     if req_vol:
         base_title = get_base_title(title)
@@ -869,27 +867,36 @@ def resolve_book(title: str, author: str = "", isbn: Optional[str] = None, googl
                 
                 # Try to fetch volume-specific synopsis from Fandom wiki
                 volume_synopsis = ""
+                custom_cover = None
+                custom_author = None
                 try:
-                    from tools.fandom import resolve_fandom_subdomain, fetch_volume_synopsis_from_fandom
+                    from tools.fandom import resolve_fandom_subdomain, fetch_volume_synopsis_from_fandom, FANDOM_SERIES_DETAILS
                     subdomain = resolve_fandom_subdomain(title)
                     if subdomain:
                         vol_part = title.split(",")[-1].strip() if "," in title else title
                         volume_synopsis = fetch_volume_synopsis_from_fandom(subdomain, vol_part)
+                        
+                        details = FANDOM_SERIES_DETAILS.get(subdomain)
+                        if details:
+                            custom_author = details.get("author")
+                            custom_cover = details.get("cover_url")
                 except Exception as e:
                     log.warning(f"Failed to fetch volume synopsis from Fandom: {e}")
-
+ 
                 description = volume_synopsis if volume_synopsis else series_record.description
+                author_val = custom_author if custom_author else (series_record.author or author)
+                cover_val = custom_cover if custom_cover else series_record.cover_url
                 
                 return BookRecord(
                     found=True,
                     source="fandom_series",
                     title=title,
-                    author=series_record.author or author,
+                    author=author_val,
                     description=description,
                     categories=series_record.categories,
                     page_count=series_record.page_count,
                     published_year=series_record.published_year,
-                    cover_url=series_record.cover_url,
+                    cover_url=cover_val,
                     average_rating=series_record.average_rating,
                     isbn_13=None,
                     isbn_10=None,

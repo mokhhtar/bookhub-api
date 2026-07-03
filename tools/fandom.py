@@ -258,11 +258,11 @@ FANDOM_SERIES_DETAILS = {
     },
     "lordofthemysteries": {
         "author": "Cuttlefish That Loves Diving",
-        "cover_url": "https://static.wikia.nocookie.net/lordofthemysteries/images/f/f6/Lotm_Volume_1_Cover.jpg"
+        "cover_url": "https://static.wikia.nocookie.net/lord-of-the-mystery/images/c/cd/LOM_Manhua_cover.png/revision/latest?cb=20200113124228"
     },
     "shadowslave": {
         "author": "Guiltythree",
-        "cover_url": "https://static.wikia.nocookie.net/shadowslave/images/e/e4/Shadow_Slave_Cover.jpg"
+        "cover_url": "https://covers.openlibrary.org/b/id/15173101-M.jpg"
     },
     "mother-of-learning": {
         "author": "nobody103 (Domagoj Kurmaic)",
@@ -270,15 +270,15 @@ FANDOM_SERIES_DETAILS = {
     },
     "reverend-insanity": {
         "author": "Gu Zhen Ren",
-        "cover_url": "https://static.wikia.nocookie.net/reverend-insanity/images/a/ab/Reverend_Insanity_Cover.jpg"
+        "cover_url": "https://static.wikia.nocookie.net/reverend-insanity/images/2/23/Fang_Yuan_2.png/revision/latest?cb=20260630200735"
     },
     "you-zitsu": {
         "author": "Shōgo Kinugasa",
-        "cover_url": "https://static.wikia.nocookie.net/you-koso-jitsuryoku-shijou-shugi-no-kyoushitsu-e/images/d/df/LN_Vol_01_Cover.png"
+        "cover_url": "https://covers.openlibrary.org/b/id/10166148-M.jpg"
     },
     "omniscient-readers-point-of-view": {
         "author": "sing N song",
-        "cover_url": "https://static.wikia.nocookie.net/omniscient-readers-viewpoint/images/5/52/Omniscient_Reader%27s_Viewpoint_Cover.jpg"
+        "cover_url": "https://covers.openlibrary.org/b/id/14321241-M.jpg"
     },
     "solo-leveling": {
         "author": "Chugong",
