@@ -1025,31 +1025,39 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
 
     # ── Tier 1: Fandom Wiki Search ──
     try:
-        from tools.fandom import resolve_fandom_subdomain, fetch_volumes_from_fandom
+        from tools.fandom import resolve_fandom_subdomain, fetch_volumes_from_fandom, FANDOM_SERIES_DETAILS
         subdomain = resolve_fandom_subdomain(query_clean)
         if subdomain:
             fandom_volumes = fetch_volumes_from_fandom(subdomain, query_clean)
             if fandom_volumes:
-                # Get a default author and cover for the synthetic cards from a quick API query
+                # Get a default author and cover for the synthetic cards
                 default_author = ""
                 default_cover = ""
-                # Try Google Books for default series metadata
-                try:
-                    params = {"q": query_clean, "maxResults": 3, "printType": "books", "langRestrict": "en"}
-                    if GOOGLE_BOOKS_API_KEY:
-                        params["key"] = GOOGLE_BOOKS_API_KEY
-                    r = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=4.0)
-                    if r.status_code == 200:
-                        items = r.json().get("items", [])
-                        if items:
-                            info = items[0].get("volumeInfo", {})
-                            default_author = ", ".join(info.get("authors", [])) if info.get("authors") else ""
-                            image_links = info.get("imageLinks", {})
-                            default_cover = image_links.get("thumbnail") or image_links.get("smallThumbnail")
-                            if default_cover and default_cover.startswith("http:"):
-                                default_cover = default_cover.replace("http:", "https:")
-                except Exception:
-                    pass
+                
+                # Check if we have static series details (fast and 100% correct)
+                details = FANDOM_SERIES_DETAILS.get(subdomain)
+                if details:
+                    default_author = details.get("author", "")
+                    default_cover = details.get("cover_url", "")
+                
+                # Try Google Books for default series metadata if not statically found
+                if not default_author:
+                    try:
+                        params = {"q": query_clean, "maxResults": 3, "printType": "books", "langRestrict": "en"}
+                        if GOOGLE_BOOKS_API_KEY:
+                            params["key"] = GOOGLE_BOOKS_API_KEY
+                        r = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=4.0)
+                        if r.status_code == 200:
+                            items = r.json().get("items", [])
+                            if items:
+                                info = items[0].get("volumeInfo", {})
+                                default_author = ", ".join(info.get("authors", [])) if info.get("authors") else ""
+                                image_links = info.get("imageLinks", {})
+                                default_cover = image_links.get("thumbnail") or image_links.get("smallThumbnail")
+                                if default_cover and default_cover.startswith("http:"):
+                                    default_cover = default_cover.replace("http:", "https:")
+                    except Exception:
+                        pass
 
                 # Fallback to Open Library for default series metadata
                 if not default_author:
