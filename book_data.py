@@ -870,18 +870,34 @@ def resolve_book(title: str, author: str = "", isbn: Optional[str] = None, googl
                 custom_cover = None
                 custom_author = None
                 try:
-                    from tools.fandom import resolve_fandom_subdomain, fetch_volume_synopsis_from_fandom, FANDOM_SERIES_DETAILS
+                    from tools.fandom import resolve_fandom_subdomain, fetch_volume_synopsis_from_fandom, FANDOM_SERIES_DETAILS, extract_fandom_infobox_metadata
+                    from tools.fandom_catalog import get_config_by_subdomain, find_volume_by_title, fetch_volume_synopsis
                     subdomain = resolve_fandom_subdomain(title)
                     if subdomain:
                         vol_part = title.split(",")[-1].strip() if "," in title else title
-                        volume_synopsis = fetch_volume_synopsis_from_fandom(subdomain, vol_part)
+                        catalog_cfg = get_config_by_subdomain(subdomain)
+                        catalog_vol = None
+                        if catalog_cfg:
+                            catalog_vol = find_volume_by_title(catalog_cfg, title)
+
+                        if catalog_vol and catalog_cfg:
+                            volume_synopsis = fetch_volume_synopsis(catalog_cfg, catalog_vol)
+                            if not volume_synopsis:
+                                volume_synopsis = fetch_volume_synopsis_from_fandom(subdomain, catalog_vol.wiki_page)
+                        else:
+                            volume_synopsis = fetch_volume_synopsis_from_fandom(subdomain, vol_part)
                         
                         details = FANDOM_SERIES_DETAILS.get(subdomain)
                         if details:
                             custom_author = details.get("author")
                             custom_cover = details.get("cover_url")
+                        else:
+                            try:
+                                custom_author, custom_cover = extract_fandom_infobox_metadata(subdomain, base_title)
+                            except Exception as e:
+                                log.warning(f"Failed to dynamically extract Fandom metadata in resolve_book: {e}")
                 except Exception as e:
-                    log.warning(f"Failed to fetch volume synopsis from Fandom: {e}")
+                    log.warning(f"Failed to fetch volume synopsis or metadata from Fandom: {e}")
  
                 description = volume_synopsis if volume_synopsis else series_record.description
                 author_val = custom_author if custom_author else (series_record.author or author)
@@ -1006,7 +1022,7 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
             return True
         return any(w in t_words for w in comparison_q)
 
-    def add_item(title, author, cover_url, isbn_10, isbn_13, published_year, google_id=None, openlibrary_id=None, bookwyrm_id=None, source=None):
+    def add_item(title, author, cover_url, isbn_10, isbn_13, published_year, google_id=None, openlibrary_id=None, bookwyrm_id=None, source=None, fandom_series_key=None, fandom_wiki_page=None, fandom_volume_number=None):
         if not title:
             return
         if not has_word_overlap(title):
@@ -1017,7 +1033,7 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
         key = f"{title_norm}|{author_norm}"
         if key not in seen:
             seen.add(key)
-            results.append({
+            entry = {
                 "title": title,
                 "author": author,
                 "cover_url": cover_url,
@@ -1027,27 +1043,49 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
                 "google_id": google_id,
                 "openlibrary_id": openlibrary_id,
                 "bookwyrm_id": bookwyrm_id,
-                "source": source
-            })
+                "source": source,
+            }
+            if fandom_series_key:
+                entry["fandom_series_key"] = fandom_series_key
+            if fandom_wiki_page:
+                entry["fandom_wiki_page"] = fandom_wiki_page
+            if fandom_volume_number is not None:
+                entry["fandom_volume_number"] = fandom_volume_number
+            results.append(entry)
 
     # ── Tier 1: Fandom Wiki Search ──
     try:
-        from tools.fandom import resolve_fandom_subdomain, fetch_volumes_from_fandom, FANDOM_SERIES_DETAILS
+        from tools.fandom import resolve_fandom_subdomain, fetch_volumes_from_fandom, FANDOM_SERIES_DETAILS, extract_fandom_infobox_metadata
+        from tools.fandom_catalog import fetch_volumes_for_search, resolve_series_config
         subdomain = resolve_fandom_subdomain(query_clean)
         if subdomain:
+            # Prefer structured catalog when available
+            catalog_volumes = fetch_volumes_for_search(subdomain, query_clean)
+            if catalog_volumes:
+                cfg = resolve_series_config(query_clean)
+                default_author = (cfg.author if cfg else "") or ""
+                default_cover = (cfg.cover_url if cfg else "") or ""
+                for vol in catalog_volumes:
+                    item = vol.to_search_dict(default_author or "Author", default_cover)
+                    add_item(**item)
+                if results:
+                    return results
+
             fandom_volumes = fetch_volumes_from_fandom(subdomain, query_clean)
             if fandom_volumes:
-                # Get a default author and cover for the synthetic cards
                 default_author = ""
                 default_cover = ""
-                
-                # Check if we have static series details (fast and 100% correct)
+
                 details = FANDOM_SERIES_DETAILS.get(subdomain)
                 if details:
                     default_author = details.get("author", "")
                     default_cover = details.get("cover_url", "")
-                
-                # Try Google Books for default series metadata if not statically found
+                else:
+                    try:
+                        default_author, default_cover = extract_fandom_infobox_metadata(subdomain, query_clean)
+                    except Exception as e:
+                        log.warning(f"Failed to dynamically extract Fandom metadata in search_books_list: {e}")
+
                 if not default_author:
                     try:
                         params = {"q": query_clean, "maxResults": 3, "printType": "books", "langRestrict": "en"}
@@ -1066,7 +1104,6 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
                     except Exception:
                         pass
 
-                # Fallback to Open Library for default series metadata
                 if not default_author:
                     try:
                         r = httpx.get(f"{OPEN_LIBRARY_SEARCH_API}?q={urllib.parse.quote(query_clean)}&limit=3", headers=HEADERS, timeout=4.0)
@@ -1080,11 +1117,12 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
                     except Exception:
                         pass
 
+                cfg = resolve_series_config(query_clean)
+                series_name = cfg.series_display_name if cfg else query_clean.strip()
                 for v_title in fandom_volumes:
-                    q_title = query_clean.title()
-                    synthetic_title = f"{q_title}, {v_title}"
+                    display_title = f"{series_name}, {v_title}"
                     add_item(
-                        title=synthetic_title,
+                        title=display_title,
                         author=default_author or "Author",
                         cover_url=default_cover,
                         isbn_10=None,
@@ -1093,7 +1131,6 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
                         source="fandom"
                     )
                 if results:
-                    # Return immediately for Fandom Wiki matched series
                     return results
     except Exception as e:
         log.warning(f"Error resolving Fandom volumes in search: {e}")

@@ -234,56 +234,70 @@ def _resolve_fandom_subdomain_single(title: str, wikidata_id: Optional[str] = No
         return normalized
         
     return None
-FANDOM_STATIC_MAP = {
-    "beginning after the end": "tbate",
-    "the beginning after the end": "tbate",
-    "tbate": "tbate",
-    "lord of the mysteries": "lordofthemysteries",
-    "shadow slave": "shadowslave",
-    "circle of inevitability": "lordofthemysteries",
-    "coi": "lordofthemysteries",
-    "mother of learning": "mother-of-learning",
-    "reverend insanity": "reverend-insanity",
-    "classroom of the elite": "you-zitsu",
-    "omniscient reader": "omniscient-readers-point-of-view",
-    "omniscient reader's viewpoint": "omniscient-readers-point-of-view",
-    "orvp": "omniscient-readers-point-of-view",
-    "solo leveling": "solo-leveling"
-}
-
-FANDOM_SERIES_DETAILS = {
+FANDOM_WIKIS = {
     "tbate": {
+        "subdomain": "tbate",
+        "aliases": ["beginning after the end", "the beginning after the end", "tbate"],
         "author": "TurtleMe",
         "cover_url": "https://covers.openlibrary.org/b/id/14815307-M.jpg"
     },
     "lordofthemysteries": {
+        "subdomain": "lordofthemysteries",
+        "aliases": ["lord of the mysteries", "circle of inevitability", "coi"],
         "author": "Cuttlefish That Loves Diving",
         "cover_url": "https://static.wikia.nocookie.net/lord-of-the-mystery/images/c/cd/LOM_Manhua_cover.png/revision/latest?cb=20200113124228"
     },
     "shadowslave": {
+        "subdomain": "shadowslave",
+        "aliases": ["shadow slave"],
         "author": "Guiltythree",
         "cover_url": "https://covers.openlibrary.org/b/id/15173101-M.jpg"
     },
     "mother-of-learning": {
+        "subdomain": "mother-of-learning",
+        "aliases": ["mother of learning"],
         "author": "nobody103 (Domagoj Kurmaic)",
         "cover_url": "https://covers.openlibrary.org/b/id/12836262-M.jpg"
     },
     "reverend-insanity": {
+        "subdomain": "reverend-insanity",
+        "aliases": ["reverend insanity"],
         "author": "Gu Zhen Ren",
         "cover_url": "https://static.wikia.nocookie.net/reverend-insanity/images/2/23/Fang_Yuan_2.png/revision/latest?cb=20260630200735"
     },
     "you-zitsu": {
+        "subdomain": "you-zitsu",
+        "aliases": ["classroom of the elite"],
         "author": "Shōgo Kinugasa",
         "cover_url": "https://covers.openlibrary.org/b/id/10166148-M.jpg"
     },
     "omniscient-readers-point-of-view": {
+        "subdomain": "omniscient-readers-point-of-view",
+        "aliases": ["omniscient reader", "omniscient reader's viewpoint", "orvp"],
         "author": "sing N song",
         "cover_url": "https://covers.openlibrary.org/b/id/14321241-M.jpg"
     },
     "solo-leveling": {
+        "subdomain": "solo-leveling",
+        "aliases": ["solo leveling"],
         "author": "Chugong",
         "cover_url": "https://covers.openlibrary.org/b/id/10582298-M.jpg"
     }
+}
+
+# Dynamically populate for backward compatibility
+FANDOM_STATIC_MAP = {}
+for k, cfg in FANDOM_WIKIS.items():
+    for alias in cfg.get("aliases", []):
+        FANDOM_STATIC_MAP[alias] = cfg["subdomain"]
+    FANDOM_STATIC_MAP[k] = cfg["subdomain"]
+
+FANDOM_SERIES_DETAILS = {
+    cfg["subdomain"]: {
+        "author": cfg.get("author"),
+        "cover_url": cfg.get("cover_url")
+    }
+    for cfg in FANDOM_WIKIS.values()
 }
 
 def resolve_fandom_subdomain(title: str, wikidata_id: Optional[str] = None) -> Optional[str]:
@@ -295,8 +309,9 @@ def resolve_fandom_subdomain(title: str, wikidata_id: Optional[str] = None) -> O
     # Tier 0: Static mapping lookup (fast and 100% reliable)
     for cand in candidates:
         cand_clean = re.sub(r'\s+', ' ', cand.lower()).strip()
-        if cand_clean in FANDOM_STATIC_MAP:
-            return FANDOM_STATIC_MAP[cand_clean]
+        for subdomain_key, config in FANDOM_WIKIS.items():
+            if cand_clean == subdomain_key or cand_clean in config.get("aliases", []):
+                return config["subdomain"]
             
     for cand in candidates:
         sub = _resolve_fandom_subdomain_single(cand, wikidata_id)
@@ -304,12 +319,184 @@ def resolve_fandom_subdomain(title: str, wikidata_id: Optional[str] = None) -> O
             return sub
     return None
 
+def extract_fandom_infobox_metadata(subdomain: str, novel_title: str) -> tuple[Optional[str], Optional[str]]:
+    """
+    Extracts author and cover image URL from a Fandom wiki.
+    First checks if the subdomain has configured details in FANDOM_WIKIS.
+    If not, queries the MediaWiki API to find the main novel page, and scrapes the infobox.
+    """
+    # 1. Check configuration first (fastest and most reliable)
+    for k, cfg in FANDOM_WIKIS.items():
+        if cfg["subdomain"] == subdomain:
+            return cfg.get("author"), cfg.get("cover_url")
+
+    url = f"https://{subdomain}.fandom.com/api.php"
+    headers = {"User-Agent": "BookHub/1.0 (mokhhtar@github.com)"}
+    
+    # 2. Query search API to find target page
+    search_params = {
+        "action": "query",
+        "list": "search",
+        "srsearch": f'"{novel_title}" novel',
+        "format": "json",
+        "srlimit": 5
+    }
+    
+    # 2. Get mainpage from siteinfo as a fallback/primary target
+    main_page = None
+    try:
+        r = httpx.get(url, params={"action": "query", "meta": "siteinfo", "siprop": "general", "format": "json"}, headers=headers, timeout=3.0)
+        if r.status_code == 200:
+            main_page = r.json().get("query", {}).get("general", {}).get("mainpage")
+    except Exception:
+        pass
+
+    # 3. Query search API to find target page
+    search_params = {
+        "action": "query",
+        "list": "search",
+        "srsearch": f'"{novel_title}" novel',
+        "format": "json",
+        "srlimit": 5
+    }
+    
+    target_pages = []
+    try:
+        r = httpx.get(url, params=search_params, headers=headers, timeout=5.0)
+        if r.status_code == 200:
+            results = r.json().get("query", {}).get("search", [])
+            for res in results:
+                t = res.get("title", "")
+                t_low = t.lower()
+                if "(novel)" in t_low or "(light novel)" in t_low or "(web novel)" in t_low:
+                    target_pages.append(t)
+            if not target_pages and results:
+                # Check if any page title is very close to novel_title
+                for res in results:
+                    t = res.get("title", "")
+                    if re.sub(r'[^a-z0-9]', '', t.lower()) == re.sub(r'[^a-z0-9]', '', novel_title.lower()):
+                        target_pages.append(t)
+                        break
+                if not target_pages:
+                    target_pages.append(results[0].get("title"))
+    except Exception as e:
+        log.warning(f"Fandom search failed for {novel_title} in subdomain {subdomain}: {e}")
+        
+    if main_page and main_page not in target_pages:
+        target_pages.append(main_page)
+    if novel_title not in target_pages:
+        target_pages.append(novel_title)
+
+    author = None
+    cover_url = None
+    
+    # Try parsing target pages in order of priority to extract author and cover
+    for page_name in target_pages:
+        if not page_name:
+            continue
+        parse_params = {
+            "action": "parse",
+            "page": page_name,
+            "prop": "text",
+            "format": "json"
+        }
+        try:
+            r = httpx.get(url, params=parse_params, headers=headers, timeout=5.0)
+            if r.status_code == 200:
+                html = r.json().get("parse", {}).get("text", {}).get("*", "")
+                soup = BeautifulSoup(html, 'html.parser')
+                
+                # A. Look for Portable Infobox
+                infobox = soup.find(class_=lambda x: x and ("infobox" in x or "portable-infobox" in x))
+                if infobox:
+                    # Extract author
+                    if not author:
+                        author_keys = ["author", "writer", "novelist", "creator", "original_writer", "original writer", "written_by", "written by"]
+                        for key in author_keys:
+                            author_item = infobox.find(class_=lambda x: x and "pi-data" in x, attrs={"data-source": key})
+                            if author_item:
+                                val_div = author_item.find(class_="pi-data-value")
+                                if val_div:
+                                    author = val_div.get_text().strip()
+                                    author = re.sub(r'\s+', ' ', author)
+                                    break
+                    
+                    # Extract image
+                    if not cover_url:
+                        img_container = infobox.find(class_=lambda x: x and "pi-image" in x)
+                        img = None
+                        if img_container:
+                            img = img_container.find("img")
+                        if not img:
+                            img = infobox.find("img")
+                        if img:
+                            cover_url = img.get("data-src") or img.get("src")
+                            if cover_url and cover_url.startswith("data:"):
+                                cover_url = img.get("data-src") or img.get("src") # re-extract if lazyloaded
+                                
+                # B. Fallback to standard tables
+                if not author:
+                    for table in soup.find_all("table"):
+                        headers_list = table.find_all(["th", "td"])
+                        for cell in headers_list:
+                            cell_txt = cell.get_text().strip().lower()
+                            if cell_txt in ["author", "author(s)", "novelist", "writer", "written by"]:
+                                sibling = cell.find_next_sibling(["td", "th"])
+                                if sibling:
+                                    author = sibling.get_text().strip()
+                                    break
+                        if author:
+                            break
+                            
+                # C. Extract cover from any decent image if still not found
+                if not cover_url:
+                    for img in soup.find_all("img"):
+                        src = img.get("data-src") or img.get("src")
+                        if src and not src.startswith("data:"):
+                            src_low = src.lower()
+                            if any(term in src_low for term in ["logo", "icon", "warning", "stub", "edit", "button", "social", "facebook", "twitter", "discord"]):
+                                continue
+                            cover_url = src
+                            break
+
+                # D. Plain text search for author (e.g. "written by Zogarth")
+                if not author:
+                    page_text = soup.get_text()
+                    m_auth = re.search(r'\b(?:written by|novel by|authored by)\s+([A-Z][a-zA-Z0-9_-]{1,30})\b', page_text, flags=re.IGNORECASE)
+                    if m_auth:
+                        author = m_auth.group(1).strip()
+                        
+                # If we have both, we can stop!
+                if author and cover_url:
+                    break
+        except Exception as e:
+            log.warning(f"Fandom parse/scraping failed for page {page_name} in subdomain {subdomain}: {e}")
+            
+    # Post-process cover URL
+    if cover_url:
+        if "/revision/latest" in cover_url:
+            cover_url = cover_url.split("/revision/latest")[0] + "/revision/latest"
+        if "?" in cover_url:
+            cover_url = cover_url.split("?")[0]
+            
+    return author, cover_url
+
+
 def fetch_volumes_from_fandom(subdomain: str, book_title: str) -> list[str]:
     """
     Queries Fandom for all volumes of a book/series.
-    Prioritizes querying a master list page (e.g. List of Volumes, Volumes and Chapters)
-    for completeness and correct ordering. Falls back to scanning pages prefixing 'Volume'.
+    Cataloged series (see fandom_catalog.py) use structured configs first;
+    all others fall back to legacy heuristic scraping below.
     """
+    try:
+        from tools.fandom_catalog import fetch_volumes_for_search
+        catalog_volumes = fetch_volumes_for_search(subdomain, book_title)
+        if catalog_volumes:
+            return [v.wiki_page for v in catalog_volumes]
+    except Exception as e:
+        log.warning(f"Fandom catalog volume fetch failed for '{book_title}': {e}")
+
+    # ── Legacy heuristic path (non-catalog series) ────────────
     url = f"https://{subdomain}.fandom.com/api.php"
     headers = {"User-Agent": "BookHub/1.0 (mokhhtar@github.com)"}
     
@@ -411,14 +598,30 @@ def fetch_volumes_from_fandom(subdomain: str, book_title: str) -> list[str]:
     # Deduplicate and sort numerically by volume number
     verified_volumes = list(set(verified_volumes))
     def get_vol_num(v):
-        m = re.search(r'\b(volume|vol)\s+(\d+(?:\.\d+)?)', v, flags=re.IGNORECASE)
-        val = float(m.group(2)) if m else 999.0
-        v_low = v.lower()
-        if "2nd year" in v_low or "year 2" in v_low:
-            val += 100.0
-        elif "3rd year" in v_low or "year 3" in v_low:
-            val += 200.0
-        return val
+        # 1. Extract major segment: Year/Arc/Season/Part/Act number
+        major_val = 0.0
+        # Try pattern like: "2nd Year", "3rd Arc", "1st Season"
+        m_major1 = re.search(r'\b(\d+)(?:st|nd|rd|th)?\s+(year|arc|season|part|act)\b', v, flags=re.IGNORECASE)
+        if m_major1:
+            num = int(m_major1.group(1))
+            major_val = (num - 1) * 100.0
+        else:
+            # Try pattern like: "Year 2", "Arc 3", "Season 1"
+            m_major2 = re.search(r'\b(year|arc|season|part|act)\s+(\d+)\b', v, flags=re.IGNORECASE)
+            if m_major2:
+                num = int(m_major2.group(2))
+                major_val = (num - 1) * 100.0
+
+        # 2. Extract minor segment: Volume/Vol/Book/Chapter number
+        m_minor = re.search(r'\b(?:volume|vol|v|book)\.?\s*(\d+(?:\.\d+)?)\b', v, flags=re.IGNORECASE)
+        if m_minor:
+            minor_val = float(m_minor.group(1))
+        else:
+            # Fallback to the first stand-alone number in the title
+            m_num = re.search(r'\b(\d+(?:\.\d+)?)\b', v)
+            minor_val = float(m_num.group(1)) if m_num else 999.0
+            
+        return major_val + minor_val
         
     verified_volumes.sort(key=get_vol_num)
     return verified_volumes
@@ -476,8 +679,17 @@ def fetch_wiki_category_content(subdomain: str, category_query: str) -> str:
 def extract_chapters_from_fandom(subdomain: str, book_title: str) -> list[str]:
     """
     Scrapes a series' Fandom wiki to find the correct, official chapter names for a book.
-    Parses tables with headers like 'Chapter title' or 'Chapter Name' or list items.
+    Cataloged series use fandom_catalog.py; others use legacy heuristics below.
     """
+    try:
+        from tools.fandom_catalog import fetch_chapters_for_title
+        catalog_chapters = fetch_chapters_for_title(subdomain, book_title)
+        if catalog_chapters:
+            return catalog_chapters
+    except Exception as e:
+        log.warning(f"Fandom catalog chapter fetch failed for '{book_title}': {e}")
+
+    # ── Legacy heuristic path (non-catalog series) ────────────
     url = f"https://{subdomain}.fandom.com/api.php"
     headers = {"User-Agent": "BookHub/1.0 (mokhhtar@github.com)"}
     
