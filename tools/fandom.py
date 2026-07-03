@@ -234,11 +234,35 @@ def _resolve_fandom_subdomain_single(title: str, wikidata_id: Optional[str] = No
         return normalized
         
     return None
+FANDOM_STATIC_MAP = {
+    "beginning after the end": "tbate",
+    "the beginning after the end": "tbate",
+    "tbate": "tbate",
+    "lord of the mysteries": "lordofthemysteries",
+    "shadow slave": "shadowslave",
+    "circle of inevitability": "lordofthemysteries",
+    "coi": "lordofthemysteries",
+    "mother of learning": "mother-of-learning",
+    "reverend insanity": "reverend-insanity",
+    "classroom of the elite": "you-zitsu",
+    "omniscient reader": "omniscient-readers-point-of-view",
+    "omniscient reader's viewpoint": "omniscient-readers-point-of-view",
+    "orvp": "omniscient-readers-point-of-view",
+    "solo leveling": "solo-leveling"
+}
+
 def resolve_fandom_subdomain(title: str, wikidata_id: Optional[str] = None) -> Optional[str]:
     """
-    Resolves Fandom subdomain by trying the full title and various normalized series name candidates.
+    Resolves Fandom subdomain by trying a static map first, and then various candidates.
     """
     candidates = get_series_title_candidates(title)
+    
+    # Tier 0: Static mapping lookup (fast and 100% reliable)
+    for cand in candidates:
+        cand_clean = re.sub(r'\s+', ' ', cand.lower()).strip()
+        if cand_clean in FANDOM_STATIC_MAP:
+            return FANDOM_STATIC_MAP[cand_clean]
+            
     for cand in candidates:
         sub = _resolve_fandom_subdomain_single(cand, wikidata_id)
         if sub:
@@ -249,6 +273,7 @@ def fetch_volumes_from_fandom(subdomain: str, book_title: str) -> list[str]:
     """
     Queries Fandom for all pages prefixing 'Volume', fetches their wikitext content,
     and returns volume titles that belong to the queried book/series.
+    If no individual volume pages are found, falls back to querying master pages (e.g., Volumes and Chapters).
     """
     url = f"https://{subdomain}.fandom.com/api.php"
     headers = {"User-Agent": "BookHub/1.0 (mokhhtar@github.com)"}
@@ -264,10 +289,11 @@ def fetch_volumes_from_fandom(subdomain: str, book_title: str) -> list[str]:
     try:
         r = httpx.get(url, params=params, headers=headers, timeout=5.0)
         if r.status_code != 200:
-            return []
-        search_results = r.json().get("query", {}).get("allpages", [])
+            search_results = []
+        else:
+            search_results = r.json().get("query", {}).get("allpages", [])
     except Exception:
-        return []
+        search_results = []
         
     volume_pages = []
     for res in search_results:
@@ -275,48 +301,77 @@ def fetch_volumes_from_fandom(subdomain: str, book_title: str) -> list[str]:
         if "/" not in title and re.match(r'^Volume\s+\d+(:\s*|$)', title, flags=re.IGNORECASE):
             volume_pages.append(title)
             
-    if not volume_pages:
-        return []
-        
-    # 2. Batch fetch page contents to verify they belong to the series
     verified_volumes = []
-    params_content = {
-        "action": "query",
-        "titles": "|".join(volume_pages),
-        "prop": "revisions",
-        "rvprop": "content",
-        "format": "json"
-    }
-    try:
-        r = httpx.get(url, params=params_content, headers=headers, timeout=5.0)
-        if r.status_code == 200:
-            pages_data = r.json().get("query", {}).get("pages", {}).values()
-            for p_info in pages_data:
-                title = p_info.get("title", "")
-                wikitext = p_info.get("revisions", [{}])[0].get("*", "")
-                
-                clean_q = re.sub(r'[^a-z0-9]', '', book_title.lower())
-                clean_wiki = re.sub(r'[^a-z0-9]', '', wikitext.lower()) if wikitext else ""
-                
-                # Exclude sequel volumes (Circle of Inevitability) if not searching for COI
-                is_coi_query = "circle" in clean_q or "inevitability" in clean_q
-                has_coi_in_wiki = "circleofinevitability" in clean_wiki
-                if has_coi_in_wiki and not is_coi_query:
-                    continue
+    if volume_pages:
+        # 2. Batch fetch page contents to verify they belong to the series
+        params_content = {
+            "action": "query",
+            "titles": "|".join(volume_pages),
+            "prop": "revisions",
+            "rvprop": "content",
+            "format": "json"
+        }
+        try:
+            r = httpx.get(url, params=params_content, headers=headers, timeout=5.0)
+            if r.status_code == 200:
+                pages_data = r.json().get("query", {}).get("pages", {}).values()
+                for p_info in pages_data:
+                    title = p_info.get("title", "")
+                    wikitext = p_info.get("revisions", [{}])[0].get("*", "")
                     
-                if clean_q in clean_wiki:
-                    verified_volumes.append(title)
-    except Exception:
-        pass
-        
+                    clean_q = re.sub(r'[^a-z0-9]', '', book_title.lower())
+                    clean_wiki = re.sub(r'[^a-z0-9]', '', wikitext.lower()) if wikitext else ""
+                    
+                    # Exclude sequel volumes (Circle of Inevitability) if not searching for COI
+                    is_coi_query = "circle" in clean_q or "inevitability" in clean_q
+                    has_coi_in_wiki = "circleofinevitability" in clean_wiki
+                    if has_coi_in_wiki and not is_coi_query:
+                        continue
+                        
+                    if clean_q in clean_wiki:
+                        verified_volumes.append(title)
+        except Exception:
+            pass
+            
+        if not verified_volumes:
+            verified_volumes = volume_pages
+
+    # Fallback to master volumes list page (e.g. Volumes and Chapters)
     if not verified_volumes:
-        verified_volumes = volume_pages
+        master_titles = ["Volumes and Chapters", "Volumes & Chapters", "List of Volumes", "Volumes"]
+        for m_title in master_titles:
+            params_master = {
+                "action": "query",
+                "titles": m_title,
+                "prop": "revisions",
+                "rvprop": "content",
+                "format": "json"
+            }
+            try:
+                r = httpx.get(url, params=params_master, headers=headers, timeout=5.0)
+                if r.status_code == 200:
+                    pages_data = r.json().get("query", {}).get("pages", {}).values()
+                    for p_info in pages_data:
+                        if "missing" in p_info:
+                            continue
+                        wikitext = p_info.get("revisions", [{}])[0].get("*", "")
+                        if wikitext:
+                            # Extract volume headers: e.g. == Volume 1: Early Years == or === Volume 1 ===
+                            vols = re.findall(r'==+\s*(Volume\s+\d+.*?)\s*==+', wikitext, flags=re.IGNORECASE)
+                            vols_clean = [v.strip() for v in vols if v.strip()]
+                            if len(vols_clean) >= 2:
+                                verified_volumes = vols_clean
+                                break
+                    if verified_volumes:
+                        break
+            except Exception:
+                pass
         
     # Deduplicate and sort numerically by volume number
     verified_volumes = list(set(verified_volumes))
     def get_vol_num(v):
-        m = re.search(r'^Volume\s+(\d+)', v, flags=re.IGNORECASE)
-        return int(m.group(1)) if m else 999
+        m = re.search(r'^Volume\s+(\d+(?:\.\d+)?)', v, flags=re.IGNORECASE)
+        return float(m.group(1)) if m else 999.0
         
     verified_volumes.sort(key=get_vol_num)
     return verified_volumes
@@ -383,7 +438,7 @@ def extract_chapters_from_fandom(subdomain: str, book_title: str) -> list[str]:
         return re.sub(r'\s+', ' ', name).strip().lower()
         
     req_vol = None
-    m = re.search(r'\b(vol\.|volume|vol|part|pt\.|book|bk\.)\s*(\d+)\b', book_title, flags=re.IGNORECASE)
+    m = re.search(r'\b(vol\.|volume|vol|part|pt\.|book|bk\.)\s*(\d+(?:\.\d+)?)\b', book_title, flags=re.IGNORECASE)
     if m:
         req_vol = m.group(2)
 
@@ -394,7 +449,11 @@ def extract_chapters_from_fandom(subdomain: str, book_title: str) -> list[str]:
             book_title,
             f"Volume {req_vol}",
             f"Vol. {req_vol}",
-            f"Vol {req_vol}"
+            f"Vol {req_vol}",
+            "Volumes and Chapters",
+            "Volumes & Chapters",
+            "List of Volumes",
+            "Volumes"
         ]
     else:
         search_queries = [
@@ -450,6 +509,8 @@ def extract_chapters_from_fandom(subdomain: str, book_title: str) -> list[str]:
             if re.search(vol_pat, t_low):
                 return 0 + penalty
                 
+        if any(m in t_low for m in ["volumes and chapters", "volumes & chapters", "list of volumes"]):
+            return 1 + penalty
         if "list of chapters" in t_low and title_low in t_low:
             return 1 + penalty
         if "volume 1" in t_low or "vol. 1" in t_low or "vol 1" in t_low:
@@ -480,6 +541,53 @@ def extract_chapters_from_fandom(subdomain: str, book_title: str) -> list[str]:
             soup = BeautifulSoup(html, 'html.parser')
             parsed_pages.append((page_title, soup))
             
+            # --- Check if this is a master page listing all volumes ---
+            page_title_clean = page_title.lower()
+            is_master_page = any(m in page_title_clean for m in ["volumes and chapters", "volumes & chapters", "list of volumes"]) or page_title_clean == "volumes"
+            
+            if is_master_page and req_vol:
+                # Extract chapters for this specific volume section only
+                headlines = soup.find_all(class_="mw-headline")
+                target_headline = None
+                for hl in headlines:
+                    hl_text = hl.get_text().strip()
+                    # Match "Volume X" or "Volume X: ..." where X = req_vol
+                    m_hl = re.search(r'\bVolume\s+(' + re.escape(str(req_vol)) + r')\b', hl_text, flags=re.IGNORECASE)
+                    if m_hl:
+                        target_headline = hl
+                        break
+                        
+                if target_headline:
+                    chapters = []
+                    current = target_headline.parent
+                    for sibling in current.next_siblings:
+                        if sibling.name in ("h2", "h3", "h4"):
+                            sib_text = sibling.get_text().strip()
+                            if re.search(r'\bVolume\s+\d+', sib_text, flags=re.IGNORECASE):
+                                break
+                        
+                        if sibling.name == "ul":
+                            for li in sibling.find_all("li"):
+                                txt = li.get_text().strip()
+                                if txt:
+                                    txt_clean = re.sub(r'^\d+[\s.:.-]+', '', txt).strip()
+                                    txt_clean = re.sub(r'\s+', ' ', txt_clean)
+                                    clean_txt = re.sub(r'^(chapter\s+\d+|ch\.\s+\d+|\d+)\s*[:.-]\s*', '', txt_clean, flags=re.IGNORECASE)
+                                    clean_txt = re.sub(r'\s+', ' ', clean_txt).strip()
+                                    if clean_txt and len(clean_txt) < 80:
+                                        chapters.append(clean_txt)
+                        elif sibling.name == "table":
+                            for tr in sibling.find_all("tr"):
+                                cells = tr.find_all("td")
+                                if cells:
+                                    for cell in cells:
+                                        ct = cell.get_text().strip()
+                                        if ct and not ct.isdigit() and len(ct) < 80:
+                                            chapters.append(ct)
+                                            break
+                    if len(chapters) >= 1:
+                        return chapters
+
             headlines = soup.find_all(class_="mw-headline")
             target_headline = None
             book_title_clean = clean_name(book_title)

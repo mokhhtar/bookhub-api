@@ -53,6 +53,7 @@ class SearchResponseItem(BaseModel):
     google_id: Optional[str] = None
     openlibrary_id: Optional[str] = None
     bookwyrm_id: Optional[str] = None
+    source: Optional[str] = None
 
 
 @router.get("/search", response_model=list[SearchResponseItem])
