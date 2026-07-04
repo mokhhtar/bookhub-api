@@ -887,15 +887,22 @@ def resolve_book(title: str, author: str = "", isbn: Optional[str] = None, googl
                         else:
                             volume_synopsis = fetch_volume_synopsis_from_fandom(subdomain, vol_part)
                         
-                        details = FANDOM_SERIES_DETAILS.get(subdomain)
-                        if details:
-                            custom_author = details.get("author")
-                            custom_cover = details.get("cover_url")
+                        # Prefer catalog-specific metadata when available (series share subdomains)
+                        if catalog_cfg:
+                            if catalog_cfg.author:
+                                custom_author = catalog_cfg.author
+                            if catalog_cfg.cover_url:
+                                custom_cover = catalog_cfg.cover_url
                         else:
-                            try:
-                                custom_author, custom_cover = extract_fandom_infobox_metadata(subdomain, base_title)
-                            except Exception as e:
-                                log.warning(f"Failed to dynamically extract Fandom metadata in resolve_book: {e}")
+                            details = FANDOM_SERIES_DETAILS.get(subdomain)
+                            if details:
+                                custom_author = details.get("author")
+                                custom_cover = details.get("cover_url")
+                            else:
+                                try:
+                                    custom_author, custom_cover = extract_fandom_infobox_metadata(subdomain, base_title)
+                                except Exception as e:
+                                    log.warning(f"Failed to dynamically extract Fandom metadata in resolve_book: {e}")
                 except Exception as e:
                     log.warning(f"Failed to fetch volume synopsis or metadata from Fandom: {e}")
  
