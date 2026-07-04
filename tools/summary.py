@@ -416,8 +416,20 @@ def summary(req: SummaryRequest):
 
     def get_chapters():
         try:
-            from tools.fandom import resolve_fandom_subdomain, extract_chapters_from_fandom
-            subdomain = resolve_fandom_subdomain(record.title)
+            from tools.fandom import (
+                resolve_series_config_first,
+                resolve_fandom_subdomain,
+                extract_chapters_from_fandom,
+            )
+            # Try the structured catalog FIRST — it disambiguates books that
+            # share one Fandom subdomain (e.g. "Lord of the Mysteries" vs
+            # "Circle of Inevitability", same wiki, different series) via
+            # series_filter/exclude_series_patterns. The older
+            # resolve_fandom_subdomain has no way to express that distinction
+            # and would silently merge them, which is what caused wrong
+            # volumes/covers to show up for the wrong title.
+            series_config = resolve_series_config_first(record.title)
+            subdomain = series_config.subdomain if series_config else resolve_fandom_subdomain(record.title)
             if subdomain:
                 chapters = extract_chapters_from_fandom(subdomain, record.title)
                 if chapters:
@@ -425,6 +437,23 @@ def summary(req: SummaryRequest):
         except Exception as e:
             log.warning(f"Error fetching Fandom chapters for '{record.title}': {e}")
         return []
+
+    def get_fandom_cover():
+        """
+        If this title resolves to a cataloged series, prefer its
+        hand-verified per-series cover over whatever book_data.py's
+        Google Books / Open Library lookup found — those general sources
+        often lack correct art for web novels, or (worse) return a cover
+        for the wrong edition/series entirely.
+        """
+        try:
+            from tools.fandom import resolve_series_config_first
+            series_config = resolve_series_config_first(record.title)
+            if series_config and series_config.cover_url:
+                return series_config.cover_url
+        except Exception as e:
+            log.warning(f"Error fetching Fandom cover for '{record.title}': {e}")
+        return None
 
     def get_awards():
         awards_cache_key = ("awards", record.title, record.author)
@@ -463,19 +492,21 @@ def summary(req: SummaryRequest):
                 amazon_url = f"https://www.amazon.com/s?k={q}&tag={tag}"
         return amazon_url
 
-    # Execute all 5 tasks concurrently
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+    # Execute all 6 tasks concurrently
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
         future_summary = executor.submit(get_summary_text)
         future_chapters = executor.submit(get_chapters)
         future_awards = executor.submit(get_awards)
         future_similar = executor.submit(get_similar)
         future_amazon = executor.submit(get_amazon)
+        future_fandom_cover = executor.submit(get_fandom_cover)
 
         summary_text = future_summary.result()
         chapters = future_chapters.result()
         awards = future_awards.result()
         similar = future_similar.result()
         amazon_url = future_amazon.result()
+        fandom_cover = future_fandom_cover.result()
 
     result = {
         "found": True,
@@ -487,7 +518,9 @@ def summary(req: SummaryRequest):
         "category": record.primary_category,
         "page_count": record.page_count,
         "published_year": record.published_year,
-        "cover_url": record.cover_url,
+        # Prefer the catalog's hand-verified per-series cover when this
+        # title resolved to one — see get_fandom_cover() for why.
+        "cover_url": fandom_cover or record.cover_url,
         "average_rating": record.average_rating,
         "isbn_13": record.isbn_13,
         "isbn_10": record.isbn_10,

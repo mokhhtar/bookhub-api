@@ -243,7 +243,12 @@ FANDOM_WIKIS = {
     },
     "lordofthemysteries": {
         "subdomain": "lordofthemysteries",
-        "aliases": ["lord of the mysteries", "circle of inevitability", "coi"],
+        # NOTE: "Circle of Inevitability" is a SEPARATE work by the same author
+        # on the same wiki, not an alias for this book — see CATALOG_SERIES
+        # in fandom_catalog.py ("lotm" vs "coi") for the correct disambiguation.
+        # Do not add it back here; this simple map has no way to express
+        # "same subdomain, different series" and will silently merge the two.
+        "aliases": ["lord of the mysteries"],
         "author": "Cuttlefish That Loves Diving",
         "cover_url": "https://static.wikia.nocookie.net/lord-of-the-mystery/images/c/cd/LOM_Manhua_cover.png/revision/latest?cb=20200113124228"
     },
@@ -319,22 +324,67 @@ def resolve_fandom_subdomain(title: str, wikidata_id: Optional[str] = None) -> O
             return sub
     return None
 
-def extract_fandom_infobox_metadata(subdomain: str, novel_title: str) -> tuple[Optional[str], Optional[str]]:
+
+def resolve_series_config_first(title: str):
+    """
+    Consults fandom_catalog.py's CATALOG_SERIES before anything else.
+
+    Why this has to run BEFORE resolve_fandom_subdomain / FANDOM_WIKIS: two
+    different real books can share one Fandom subdomain (e.g. "Lord of the
+    Mysteries" and "Circle of Inevitability" — same author, same wiki,
+    different series). FANDOM_WIKIS is a flat alias->subdomain map with no
+    way to express that distinction, so looking a title up there FIRST
+    (as this code used to) silently collapses both books into one entry —
+    which is exactly the "shows the wrong volumes/cover" bug this fixes.
+    CATALOG_SERIES's series_filter / exclude_series_patterns exist
+    specifically to keep such series apart on a shared subdomain, so it
+    must be the first thing consulted, not a fallback.
+
+    Returns the matching FandomSeriesConfig, or None if this title isn't
+    in the structured catalog yet (caller should fall back to
+    resolve_fandom_subdomain for those).
+    """
+    try:
+        from tools.fandom_catalog import resolve_series_config
+    except ImportError:
+        return None
+    try:
+        return resolve_series_config(title)
+    except Exception as e:
+        log.warning(f"resolve_series_config_first failed for '{title}': {e}")
+        return None
+
+def extract_fandom_infobox_metadata(
+    subdomain: str, novel_title: str, series_config=None
+) -> tuple[Optional[str], Optional[str]]:
     """
     Extracts author and cover image URL from a Fandom wiki.
-    First checks FANDOM_WIKIS static config (hand-verified, fastest, free).
-    Otherwise, finds the likely novel page and lets Gemini identify the
-    author from raw text and pick the correct cover from REAL candidate
-    image URLs — it never invents a URL it wasn't given.
 
-    Why not keep parsing the infobox HTML directly? Portable Infobox markup,
-    class names (pi-data / pi-image), and even whether an infobox exists at
-    all vary per wiki. A chain of "try infobox, then table, then regex on
-    plain text" fallbacks (as this used to do) is itself a hardcoded model of
-    what a wiki page looks like — it works for the wikis it was tested
-    against and silently returns nothing (or the wrong thing) for the shapes
-    it wasn't. Extraction from the actual page content generalizes instead.
+    Priority order:
+      1. series_config (a FandomSeriesConfig from fandom_catalog.py, if the
+         caller already resolved one via resolve_series_config_first) —
+         this is per-SERIES, not per-subdomain, so it correctly distinguishes
+         two books sharing one wiki (e.g. lotm vs coi).
+      2. FANDOM_WIKIS static config, matched by subdomain — fine for series
+         that are the ONLY book on their subdomain, ambiguous otherwise.
+      3. Gemini extraction from the actual page content (see below).
     """
+    if series_config is not None:
+        return series_config.author, series_config.cover_url
+
+    # 2. Otherwise, find the likely novel page and let Gemini identify the
+    # author from raw text and pick the correct cover from REAL candidate
+    # image URLs — it never invents a URL it wasn't given.
+    #
+    # Why not keep parsing the infobox HTML directly? Portable Infobox
+    # markup, class names (pi-data / pi-image), and even whether an infobox
+    # exists at all vary per wiki. A chain of "try infobox, then table, then
+    # regex on plain text" fallbacks (as this used to do) is itself a
+    # hardcoded model of what a wiki page looks like — it works for the
+    # wikis it was tested against and silently returns nothing (or the
+    # wrong thing) for the shapes it wasn't. Extraction from the actual
+    # page content generalizes instead.
+
     # 1. Check configuration first (fastest, most reliable, zero API calls)
     for k, cfg in FANDOM_WIKIS.items():
         if cfg["subdomain"] == subdomain:
