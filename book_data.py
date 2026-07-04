@@ -891,7 +891,9 @@ def resolve_book(title: str, author: str = "", isbn: Optional[str] = None, googl
                         if catalog_cfg:
                             if catalog_cfg.author:
                                 custom_author = catalog_cfg.author
-                            if catalog_cfg.cover_url:
+                            if catalog_vol and catalog_vol.cover_url:
+                                custom_cover = catalog_vol.cover_url
+                            elif catalog_cfg.cover_url:
                                 custom_cover = catalog_cfg.cover_url
                         else:
                             details = FANDOM_SERIES_DETAILS.get(subdomain)

@@ -197,6 +197,20 @@ def _matches_series_context(config: FandomSeriesConfig, title: str, wikitext: st
     if not config.series_filter:
         return True
     title_text = re.sub(r"\s+", " ", f"{title} {wikitext or ''}").lower()
+    # Custom rule for lordofthemysteries subdomain separation (Book 1 vs Book 2)
+    if config.subdomain == "lordofthemysteries":
+        has_book1 = any(term in title_text for term in ["book1", "book 1", "theme = book1"])
+        has_book2 = any(term in title_text for term in ["book2", "book 2", "theme = book2"])
+        if has_book2:
+            return config.series_key == "coi"
+        if has_book1:
+            return config.series_key == "lotm"
+        if "circle of inevitability" in title_text:
+            return config.series_key == "coi"
+        if "lord of mysteries" in title_text or "lord of the mysteries" in title_text:
+            return config.series_key == "lotm"
+        return False
+
     filter_text = re.sub(r"\s+", " ", config.series_filter.lower()).strip()
     if not filter_text:
         return True
@@ -233,6 +247,37 @@ def _fetch_wikitext(subdomain: str, page: str) -> str:
     except Exception as e:
         log.warning(f"Wikitext fetch failed for {page} on {subdomain}: {e}")
     return ""
+
+
+def _fetch_wikitext_batch(subdomain: str, pages: list[str]) -> dict[str, str]:
+    if not pages:
+        return {}
+    results = {}
+    for i in range(0, len(pages), 50):
+        batch = pages[i:i+50]
+        try:
+            r = httpx.get(
+                _api_url(subdomain),
+                params={
+                    "action": "query",
+                    "titles": "|".join(batch),
+                    "prop": "revisions",
+                    "rvprop": "content",
+                    "format": "json"
+                },
+                headers=HEADERS,
+                timeout=12.0
+            )
+            if r.status_code == 200:
+                pages_data = r.json().get("query", {}).get("pages", {})
+                for pinfo in pages_data.values():
+                    title = pinfo.get("title")
+                    if title and "missing" not in pinfo:
+                        content = pinfo.get("revisions", [{}])[0].get("*", "") or ""
+                        results[title] = content
+        except Exception as e:
+            log.warning(f"Batch wikitext fetch failed for {batch} on {subdomain}: {e}")
+    return results
 
 
 def _extract_chapter_range_from_wikitext(wikitext: str) -> tuple[Optional[int], Optional[int]]:
@@ -428,6 +473,7 @@ def _fetch_master_sections(config: FandomSeriesConfig) -> list[FandomVolume]:
             "aplimit": 200, "format": "json",
         }, headers=HEADERS, timeout=12.0)
         if r.status_code == 200:
+            candidate_titles = []
             for item in r.json().get("query", {}).get("allpages", []):
                 title = item.get("title", "").strip()
                 if not title or title in seen:
@@ -438,9 +484,14 @@ def _fetch_master_sections(config: FandomSeriesConfig) -> list[FandomVolume]:
                     continue
                 if _should_exclude(title, config.exclude_page_patterns):
                     continue
-                # For some wikis (e.g. LOTM) the volume pages do not contain the
-                # series-filter phrase in their wikitext, so the fallback should
-                # still include them rather than fail the entire index.
+                candidate_titles.append(title)
+
+            # Batch fetch wikitext to perform accurate context filtering
+            wt_map = _fetch_wikitext_batch(config.subdomain, candidate_titles)
+            for title in candidate_titles:
+                page_wt = wt_map.get(title, "")
+                if not _matches_series_context(config, title, page_wt):
+                    continue
                 seen.add(title)
                 vol_num = _parse_volume_number(title)
                 if vol_num is None:
@@ -658,7 +709,7 @@ def _validate_chapters(chapters: list[str]) -> list[str]:
 def get_volume_chapters(config: FandomSeriesConfig, volume: FandomVolume) -> list[str]:
     if config.novel_master_page:
         return _chapters_from_novel_master_page(config, volume)
-    if config.chapters_wikitext_section:
+    if config.chapters_wikitext_section or config.subdomain == "lordofthemysteries":
         return _chapters_from_wikitext_section(config, volume)
     return []
 
@@ -700,8 +751,13 @@ def fetch_chapters_for_title(subdomain: str, book_title: str) -> list[str]:
     return get_volume_chapters(config, volume)
 
 
-def fetch_volume_synopsis(config: FandomSeriesConfig, volume: FandomVolume) -> str:
-    """Extract Synopsis section from a volume's wiki page."""
+def fetch_volume_metadata(config: FandomSeriesConfig, volume: FandomVolume) -> tuple[Optional[str], Optional[str]]:
+    """
+    Fetches the synopsis and cover image URL for a specific volume page.
+    Populates volume.synopsis and volume.cover_url.
+    """
+    synopsis = ""
+    cover_url = None
     try:
         r = httpx.get(
             _api_url(config.subdomain),
@@ -709,24 +765,69 @@ def fetch_volume_synopsis(config: FandomSeriesConfig, volume: FandomVolume) -> s
                     "prop": "text", "format": "json"},
             headers=HEADERS, timeout=10.0,
         )
-        if r.status_code != 200:
-            return ""
-        html = r.json().get("parse", {}).get("text", {}).get("*", "")
-        soup = BeautifulSoup(html, "html.parser")
-        for hl in soup.find_all(class_="mw-headline"):
-            if "synopsis" in hl.get_text().lower():
-                paragraphs = []
-                current = hl.parent
-                for sibling in current.next_siblings:
-                    if getattr(sibling, "name", None) in ("h2", "h3"):
+        if r.status_code == 200:
+            html = r.json().get("parse", {}).get("text", {}).get("*", "")
+            soup = BeautifulSoup(html, "html.parser")
+            
+            # 1. Extract Synopsis
+            for hl in soup.find_all(class_="mw-headline"):
+                if "synopsis" in hl.get_text().lower():
+                    paragraphs = []
+                    current = hl.parent
+                    for sibling in current.next_siblings:
+                        if getattr(sibling, "name", None) in ("h2", "h3"):
+                            break
+                        if sibling.name == "p":
+                            t = sibling.get_text().strip()
+                            if t:
+                                paragraphs.append(t)
+                    text = "\n\n".join(paragraphs)
+                    text = re.sub(r"\[\d+\]", "", text)
+                    synopsis = html_lib.unescape(text).strip()
+                    break
+            
+            # 2. Extract Cover Image
+            infobox = soup.find(class_=lambda x: x and ("infobox" in x or "portable-infobox" in x))
+            if infobox:
+                img_container = infobox.find(class_=lambda x: x and "pi-image" in x)
+                img = None
+                if img_container:
+                    img = img_container.find("img")
+                if not img:
+                    img = infobox.find("img")
+                if img:
+                    cover_url = img.get("data-src") or img.get("src")
+                    if cover_url and cover_url.startswith("data:"):
+                        cover_url = img.get("data-src") or img.get("src")
+            
+            if not cover_url:
+                # Fallback: search for first non-logo image in page
+                for img in soup.find_all("img"):
+                    src = img.get("data-src") or img.get("src")
+                    if src and not src.startswith("data:"):
+                        src_low = src.lower()
+                        if any(term in src_low for term in ["logo", "icon", "warning", "stub", "edit", "button", "social", "facebook", "twitter", "discord"]):
+                            continue
+                        cover_url = src
                         break
-                    if sibling.name == "p":
-                        t = sibling.get_text().strip()
-                        if t:
-                            paragraphs.append(t)
-                text = "\n\n".join(paragraphs)
-                text = re.sub(r"\[\d+\]", "", text)
-                return html_lib.unescape(text).strip()
+                        
+            # Clean cover URL
+            if cover_url:
+                if "/revision/latest" in cover_url:
+                    cover_url = cover_url.split("/revision/latest")[0] + "/revision/latest"
+                if "?" in cover_url:
+                    cover_url = cover_url.split("?")[0]
+                    
     except Exception as e:
-        log.warning(f"Synopsis fetch failed for {volume.wiki_page}: {e}")
-    return ""
+        log.warning(f"Metadata fetch failed for volume {volume.wiki_page} on {config.subdomain}: {e}")
+        
+    volume.synopsis = synopsis or None
+    volume.cover_url = cover_url or None
+    return synopsis, cover_url
+
+
+def fetch_volume_synopsis(config: FandomSeriesConfig, volume: FandomVolume) -> str:
+    """Extract Synopsis section from a volume's wiki page."""
+    if volume.synopsis is None:
+        fetch_volume_metadata(config, volume)
+    return volume.synopsis or ""

@@ -322,44 +322,40 @@ def resolve_fandom_subdomain(title: str, wikidata_id: Optional[str] = None) -> O
 def extract_fandom_infobox_metadata(subdomain: str, novel_title: str) -> tuple[Optional[str], Optional[str]]:
     """
     Extracts author and cover image URL from a Fandom wiki.
-    First checks if the subdomain has configured details in FANDOM_WIKIS.
-    If not, queries the MediaWiki API to find the main novel page, and scrapes the infobox.
+    First checks FANDOM_WIKIS static config (hand-verified, fastest, free).
+    Otherwise, finds the likely novel page and lets Gemini identify the
+    author from raw text and pick the correct cover from REAL candidate
+    image URLs — it never invents a URL it wasn't given.
+
+    Why not keep parsing the infobox HTML directly? Portable Infobox markup,
+    class names (pi-data / pi-image), and even whether an infobox exists at
+    all vary per wiki. A chain of "try infobox, then table, then regex on
+    plain text" fallbacks (as this used to do) is itself a hardcoded model of
+    what a wiki page looks like — it works for the wikis it was tested
+    against and silently returns nothing (or the wrong thing) for the shapes
+    it wasn't. Extraction from the actual page content generalizes instead.
     """
-    # 1. Check configuration first (fastest and most reliable)
+    # 1. Check configuration first (fastest, most reliable, zero API calls)
     for k, cfg in FANDOM_WIKIS.items():
         if cfg["subdomain"] == subdomain:
             return cfg.get("author"), cfg.get("cover_url")
 
     url = f"https://{subdomain}.fandom.com/api.php"
     headers = {"User-Agent": "BookHub/1.0 (mokhhtar@github.com)"}
-    
-    # 2. Query search API to find target page
-    search_params = {
-        "action": "query",
-        "list": "search",
-        "srsearch": f'"{novel_title}" novel',
-        "format": "json",
-        "srlimit": 5
-    }
-    
-    # 2. Get mainpage from siteinfo as a fallback/primary target
+
+    # 2. Find the likely novel page (this search step is sound — the
+    #    fragility was never in FINDING the page, only in interpreting it).
     main_page = None
     try:
-        r = httpx.get(url, params={"action": "query", "meta": "siteinfo", "siprop": "general", "format": "json"}, headers=headers, timeout=3.0)
+        r = httpx.get(url, params={"action": "query", "meta": "siteinfo", "siprop": "general", "format": "json"},
+                       headers=headers, timeout=3.0)
         if r.status_code == 200:
             main_page = r.json().get("query", {}).get("general", {}).get("mainpage")
     except Exception:
         pass
 
-    # 3. Query search API to find target page
-    search_params = {
-        "action": "query",
-        "list": "search",
-        "srsearch": f'"{novel_title}" novel',
-        "format": "json",
-        "srlimit": 5
-    }
-    
+    search_params = {"action": "query", "list": "search", "srsearch": f'"{novel_title}" novel',
+                      "format": "json", "srlimit": 5}
     target_pages = []
     try:
         r = httpx.get(url, params=search_params, headers=headers, timeout=5.0)
@@ -371,7 +367,6 @@ def extract_fandom_infobox_metadata(subdomain: str, novel_title: str) -> tuple[O
                 if "(novel)" in t_low or "(light novel)" in t_low or "(web novel)" in t_low:
                     target_pages.append(t)
             if not target_pages and results:
-                # Check if any page title is very close to novel_title
                 for res in results:
                     t = res.get("title", "")
                     if re.sub(r'[^a-z0-9]', '', t.lower()) == re.sub(r'[^a-z0-9]', '', novel_title.lower()):
@@ -381,104 +376,104 @@ def extract_fandom_infobox_metadata(subdomain: str, novel_title: str) -> tuple[O
                     target_pages.append(results[0].get("title"))
     except Exception as e:
         log.warning(f"Fandom search failed for {novel_title} in subdomain {subdomain}: {e}")
-        
+
     if main_page and main_page not in target_pages:
         target_pages.append(main_page)
     if novel_title not in target_pages:
         target_pages.append(novel_title)
 
-    author = None
-    cover_url = None
-    
-    # Try parsing target pages in order of priority to extract author and cover
-    for page_name in target_pages:
+    # 3. Fetch raw text + real candidate image URLs from the top page only —
+    #    one Gemini call, not per-tier guessing across every page.
+    page_text = ""
+    candidate_images: list[str] = []
+    for page_name in target_pages[:2]:
         if not page_name:
             continue
-        parse_params = {
-            "action": "parse",
-            "page": page_name,
-            "prop": "text",
-            "format": "json"
-        }
+        parse_params = {"action": "parse", "page": page_name, "prop": "text", "format": "json"}
         try:
             r = httpx.get(url, params=parse_params, headers=headers, timeout=5.0)
-            if r.status_code == 200:
-                html = r.json().get("parse", {}).get("text", {}).get("*", "")
-                soup = BeautifulSoup(html, 'html.parser')
-                
-                # A. Look for Portable Infobox
-                infobox = soup.find(class_=lambda x: x and ("infobox" in x or "portable-infobox" in x))
-                if infobox:
-                    # Extract author
-                    if not author:
-                        author_keys = ["author", "writer", "novelist", "creator", "original_writer", "original writer", "written_by", "written by"]
-                        for key in author_keys:
-                            author_item = infobox.find(class_=lambda x: x and "pi-data" in x, attrs={"data-source": key})
-                            if author_item:
-                                val_div = author_item.find(class_="pi-data-value")
-                                if val_div:
-                                    author = val_div.get_text().strip()
-                                    author = re.sub(r'\s+', ' ', author)
-                                    break
-                    
-                    # Extract image
-                    if not cover_url:
-                        img_container = infobox.find(class_=lambda x: x and "pi-image" in x)
-                        img = None
-                        if img_container:
-                            img = img_container.find("img")
-                        if not img:
-                            img = infobox.find("img")
-                        if img:
-                            cover_url = img.get("data-src") or img.get("src")
-                            if cover_url and cover_url.startswith("data:"):
-                                cover_url = img.get("data-src") or img.get("src") # re-extract if lazyloaded
-                                
-                # B. Fallback to standard tables
-                if not author:
-                    for table in soup.find_all("table"):
-                        headers_list = table.find_all(["th", "td"])
-                        for cell in headers_list:
-                            cell_txt = cell.get_text().strip().lower()
-                            if cell_txt in ["author", "author(s)", "novelist", "writer", "written by"]:
-                                sibling = cell.find_next_sibling(["td", "th"])
-                                if sibling:
-                                    author = sibling.get_text().strip()
-                                    break
-                        if author:
-                            break
-                            
-                # C. Extract cover from any decent image if still not found
-                if not cover_url:
-                    for img in soup.find_all("img"):
-                        src = img.get("data-src") or img.get("src")
-                        if src and not src.startswith("data:"):
-                            src_low = src.lower()
-                            if any(term in src_low for term in ["logo", "icon", "warning", "stub", "edit", "button", "social", "facebook", "twitter", "discord"]):
-                                continue
-                            cover_url = src
-                            break
+            if r.status_code != 200:
+                continue
+            html = r.json().get("parse", {}).get("text", {}).get("*", "")
+            soup = BeautifulSoup(html, 'html.parser')
 
-                # D. Plain text search for author (e.g. "written by Zogarth")
-                if not author:
-                    page_text = soup.get_text()
-                    m_auth = re.search(r'\b(?:written by|novel by|authored by)\s+([A-Z][a-zA-Z0-9_-]{1,30})\b', page_text, flags=re.IGNORECASE)
-                    if m_auth:
-                        author = m_auth.group(1).strip()
-                        
-                # If we have both, we can stop!
-                if author and cover_url:
-                    break
+            if not page_text:
+                page_text = clean_wiki_html(html)[:4000]
+
+            for img in soup.find_all("img"):
+                src = img.get("data-src") or img.get("src")
+                if src and not src.startswith("data:") and src not in candidate_images:
+                    candidate_images.append(src)
+
+            if page_text and candidate_images:
+                break
         except Exception as e:
-            log.warning(f"Fandom parse/scraping failed for page {page_name} in subdomain {subdomain}: {e}")
-            
-    # Post-process cover URL
+            log.warning(f"Fandom parse failed for page {page_name} in subdomain {subdomain}: {e}")
+
+    if not page_text:
+        return None, None
+
+    author, cover_url = _extract_author_and_cover_via_gemini(novel_title, page_text, candidate_images[:12])
+
     if cover_url:
         if "/revision/latest" in cover_url:
             cover_url = cover_url.split("/revision/latest")[0] + "/revision/latest"
         if "?" in cover_url:
             cover_url = cover_url.split("?")[0]
-            
+
+    return author, cover_url
+
+
+def _extract_author_and_cover_via_gemini(
+    novel_title: str, page_text: str, candidate_images: list[str]
+) -> tuple[Optional[str], Optional[str]]:
+    """
+    Extraction, not generation: Gemini reads real page text to find the
+    author's name, and picks the correct cover from a REAL list of image
+    URLs we scraped — it is never allowed to output a URL that isn't in
+    that list, so it cannot invent a cover image.
+    """
+    if not candidate_images:
+        images_block = "(no images found on this page)"
+    else:
+        images_block = "\n".join(f"{i}: {u}" for i, u in enumerate(candidate_images))
+
+    prompt = f"""You are extracting metadata from a Fandom wiki page about a novel. Use ONLY the text and image list below — no outside knowledge.
+
+NOVEL: "{novel_title}"
+
+PAGE TEXT:
+\"\"\"
+{page_text}
+\"\"\"
+
+CANDIDATE IMAGES ON THIS PAGE (index: url):
+{images_block}
+
+TASK:
+1. Find the author's real name if it is stated in the page text (e.g. near "Author", "Written by", "Novelist"). If not clearly stated, return null.
+2. Pick the index of the image most likely to be this novel's cover art (usually the main infobox image — not a logo, icon, wiki banner, or social media icon). If no image looks like a book cover, return null.
+
+RULES:
+- Do not invent an author name not present in the text.
+- Only choose from the exact image indices given — never output a URL yourself.
+- Return ONLY a JSON object, nothing else. No markdown, no preamble.
+- Format: {{"author": "Name or null", "cover_image_index": integer_or_null}}"""
+
+    try:
+        raw = gemini_client.generate(prompt)
+        data = gemini_client.parse_json_response(raw)
+    except Exception as e:
+        log.warning(f"Author/cover extraction via Gemini failed for '{novel_title}': {e}")
+        return None, None
+
+    author = data.get("author") if isinstance(data.get("author"), str) and data.get("author") else None
+
+    cover_url = None
+    idx = data.get("cover_image_index")
+    if isinstance(idx, int) and 0 <= idx < len(candidate_images):
+        cover_url = candidate_images[idx]
+
     return author, cover_url
 
 
@@ -496,135 +491,95 @@ def fetch_volumes_from_fandom(subdomain: str, book_title: str) -> list[str]:
     except Exception as e:
         log.warning(f"Fandom catalog volume fetch failed for '{book_title}': {e}")
 
-    # ── Legacy heuristic path (non-catalog series) ────────────
+    # ── Generalized path: read a master/index page's raw text via Gemini ──
+    # (Falls back to a full-wiki page scan only if no master page exists.)
     url = f"https://{subdomain}.fandom.com/api.php"
     headers = {"User-Agent": "BookHub/1.0 (mokhhtar@github.com)"}
-    
-    verified_volumes = []
-    
-    # 1. Prioritize querying a master page (e.g. List of Volumes, Volumes and Chapters)
-    master_titles = ["List of Volumes", "Volumes and Chapters", "Volumes & Chapters", "List of Light Novels", "Volumes"]
-    for m_title in master_titles:
-        params_master = {
-            "action": "query",
-            "titles": m_title,
-            "prop": "revisions",
-            "rvprop": "content",
-            "format": "json"
-        }
-        try:
-            r = httpx.get(url, params=params_master, headers=headers, timeout=5.0)
-            if r.status_code == 200:
-                pages_data = r.json().get("query", {}).get("pages", {}).values()
-                for p_info in pages_data:
-                    if "missing" in p_info:
-                        continue
-                    wikitext = p_info.get("revisions", [{}])[0].get("*", "")
-                    if wikitext:
-                        # Method A: Extract volume headers
-                        vols = re.findall(r'==+\s*(Volume\s+\d+.*?)\s*==+', wikitext, flags=re.IGNORECASE)
-                        vols_clean = [v.strip() for v in vols if v.strip()]
-                        
-                        # Method B: Extract wikilinks containing 'volume' or 'vol'
-                        if len(vols_clean) < 2:
-                            links = re.findall(r'\[\[([^\]|]*?\b(?:volume|vol)\b[^\]|]*?)(?:\|[^\]]*)?\]\]', wikitext, flags=re.IGNORECASE)
-                            for l in links:
-                                t = l.strip()
-                                if not t or "/" in t:
-                                    continue
-                                if any(t.lower().startswith(p) for p in ["category:", "file:", "image:", "template:", "media:"]):
-                                    continue
-                                if t not in vols_clean:
-                                    vols_clean.append(t)
-                                        
-                        if len(vols_clean) >= 2:
-                            verified_volumes = vols_clean
-                            break
-                if verified_volumes:
-                    break
-        except Exception:
-            pass
 
-    # 2. Fallback to scanning all pages starting with 'Volume'
-    if not verified_volumes:
-        params = {
-            "action": "query",
-            "list": "allpages",
-            "apprefix": "Volume",
-            "format": "json",
-            "aplimit": 100
-        }
+    master_titles = ["List of Volumes", "Volumes and Chapters", "Volumes & Chapters", "List of Light Novels", "Volumes"]
+    master_text = ""
+    for m_title in master_titles:
+        params = {"action": "parse", "page": m_title, "prop": "text", "format": "json"}
         try:
             r = httpx.get(url, params=params, headers=headers, timeout=5.0)
             if r.status_code == 200:
-                search_results = r.json().get("query", {}).get("allpages", [])
-                volume_pages = []
-                for res in search_results:
-                    title = res.get("title", "")
-                    if "/" not in title and re.match(r'^Volume\s+\d+(?:\.\d+)?\b', title, flags=re.IGNORECASE):
-                        volume_pages.append(title)
-                
-                if volume_pages:
-                    # Batch fetch page contents to verify they belong to the series
-                    params_content = {
-                        "action": "query",
-                        "titles": "|".join(volume_pages),
-                        "prop": "revisions",
-                        "rvprop": "content",
-                        "format": "json"
-                    }
-                    r_c = httpx.get(url, params=params_content, headers=headers, timeout=5.0)
-                    if r_c.status_code == 200:
-                        pages_data = r_c.json().get("query", {}).get("pages", {}).values()
-                        for p_info in pages_data:
-                            title = p_info.get("title", "")
-                            wikitext = p_info.get("revisions", [{}])[0].get("*", "")
-                            
-                            clean_q = re.sub(r'[^a-z0-9]', '', book_title.lower())
-                            clean_wiki = re.sub(r'[^a-z0-9]', '', wikitext.lower()) if wikitext else ""
-                            
-                            is_coi_query = "circle" in clean_q or "inevitability" in clean_q
-                            has_coi_in_wiki = "circleofinevitability" in clean_wiki
-                            if has_coi_in_wiki and not is_coi_query:
-                                continue
-                                
-                            if clean_q in clean_wiki:
-                                verified_volumes.append(title)
-                    if not verified_volumes:
-                        verified_volumes = volume_pages
+                parse_data = r.json().get("parse")
+                if parse_data:
+                    html = parse_data.get("text", {}).get("*", "")
+                    text = clean_wiki_html(html)
+                    if len(text) > len(master_text):
+                        master_text = text[:6000]
         except Exception:
             pass
 
-    # Deduplicate and sort numerically by volume number
-    verified_volumes = list(set(verified_volumes))
-    def get_vol_num(v):
-        # 1. Extract major segment: Year/Arc/Season/Part/Act number
-        major_val = 0.0
-        # Try pattern like: "2nd Year", "3rd Arc", "1st Season"
-        m_major1 = re.search(r'\b(\d+)(?:st|nd|rd|th)?\s+(year|arc|season|part|act)\b', v, flags=re.IGNORECASE)
-        if m_major1:
-            num = int(m_major1.group(1))
-            major_val = (num - 1) * 100.0
-        else:
-            # Try pattern like: "Year 2", "Arc 3", "Season 1"
-            m_major2 = re.search(r'\b(year|arc|season|part|act)\s+(\d+)\b', v, flags=re.IGNORECASE)
-            if m_major2:
-                num = int(m_major2.group(2))
-                major_val = (num - 1) * 100.0
+    all_page_titles: list[str] = []
+    if not master_text:
+        # No master/index page exists on this wiki — fall back to listing
+        # every page starting with "Volume" so Gemini has real titles to
+        # choose from (it still can't invent a page that isn't in this list).
+        params = {"action": "query", "list": "allpages", "apprefix": "Volume", "format": "json", "aplimit": 200}
+        try:
+            r = httpx.get(url, params=params, headers=headers, timeout=5.0)
+            if r.status_code == 200:
+                for res in r.json().get("query", {}).get("allpages", []):
+                    t = res.get("title", "")
+                    if "/" not in t:
+                        all_page_titles.append(t)
+        except Exception:
+            pass
+        if not all_page_titles:
+            return []
+        master_text = "Candidate page titles found on this wiki:\n" + "\n".join(all_page_titles)
 
-        # 2. Extract minor segment: Volume/Vol/Book/Chapter number
-        m_minor = re.search(r'\b(?:volume|vol|v|book)\.?\s*(\d+(?:\.\d+)?)\b', v, flags=re.IGNORECASE)
-        if m_minor:
-            minor_val = float(m_minor.group(1))
-        else:
-            # Fallback to the first stand-alone number in the title
-            m_num = re.search(r'\b(\d+(?:\.\d+)?)\b', v)
-            minor_val = float(m_num.group(1)) if m_num else 999.0
-            
-        return major_val + minor_val
-        
-    verified_volumes.sort(key=get_vol_num)
-    return verified_volumes
+    volumes = _extract_volume_list_via_gemini(book_title, master_text, all_page_titles)
+    return volumes
+
+
+def _extract_volume_list_via_gemini(book_title: str, wiki_text: str, known_page_titles: list[str]) -> list[str]:
+    """
+    Extraction, not generation: Gemini reads the wiki's own volume-index
+    text (or, lacking one, a real list of "Volume ..." page titles it
+    actually found) and identifies which volumes belong to THIS book,
+    in the correct order. It cannot invent a volume/page title that
+    wasn't present in the source.
+    """
+    constraint = (
+        f"\nYou may ONLY return titles from this exact list of real page titles on the wiki "
+        f"(do not alter their spelling/casing): {known_page_titles}"
+        if known_page_titles else ""
+    )
+    prompt = f"""You are extracting a list of volumes/books belonging to a specific series from raw wiki text. Use ONLY the text below — no outside knowledge.
+
+SERIES/BOOK: "{book_title}"{constraint}
+
+RAW WIKI TEXT:
+\"\"\"
+{wiki_text}
+\"\"\"
+
+TASK: Extract the volume or book titles that belong to this specific series, in their correct reading order. If this text mixes in volumes from an unrelated series (e.g. a spin-off or different work sharing wiki space), exclude those.
+
+RULES:
+- Extract only — do not invent volumes not present in the text.
+- If you cannot find a genuine volume list for this series in the text, return an empty list.
+- Return ONLY a JSON object, nothing else. No markdown, no preamble.
+- Format: {{"confident": true_or_false, "volumes": ["Volume title 1", "Volume title 2", ...]}}"""
+
+    try:
+        raw = gemini_client.generate(prompt)
+        data = gemini_client.parse_json_response(raw)
+        if data.get("confident") and isinstance(data.get("volumes"), list):
+            volumes = [v.strip() for v in data["volumes"] if isinstance(v, str) and v.strip()]
+            # If we had a closed set of known real page titles, drop anything
+            # not in that set — a final guard against the model straying.
+            if known_page_titles:
+                known_set = set(known_page_titles)
+                volumes = [v for v in volumes if v in known_set]
+            return volumes
+    except Exception as e:
+        log.warning(f"Volume extraction via Gemini failed for '{book_title}': {e}")
+
+    return []
 
 
 
@@ -678,8 +633,20 @@ def fetch_wiki_category_content(subdomain: str, category_query: str) -> str:
 
 def extract_chapters_from_fandom(subdomain: str, book_title: str) -> list[str]:
     """
-    Scrapes a series' Fandom wiki to find the correct, official chapter names for a book.
-    Cataloged series use fandom_catalog.py; others use legacy heuristics below.
+    Finds the Fandom wiki page(s) most likely to list this book's chapters,
+    then hands their RAW TEXT (not parsed HTML structure) to Gemini for
+    extraction. Cataloged series (fandom_catalog.py) still get first refusal,
+    since those configs were hand-verified against real wiki structure.
+
+    Why not parse HTML structure (tables / <li> lists / headlines) anymore?
+    Every Fandom wiki community formats its chapter-list page differently —
+    tables with different column orders, bullet lists, plain headings, or a
+    mix of all three on the same page — and a growing pile of series-specific
+    exceptions (COI filtering, "ignored_terms" sets, volume-header regexes)
+    is exactly the kind of special-case dictionary that breaks on the next
+    new title. Extraction with Gemini generalizes: it reads the page's
+    meaning regardless of its markup shape, and is explicitly instructed to
+    return nothing rather than invent a plausible-looking fake list.
     """
     try:
         from tools.fandom_catalog import fetch_chapters_for_title
@@ -689,19 +656,17 @@ def extract_chapters_from_fandom(subdomain: str, book_title: str) -> list[str]:
     except Exception as e:
         log.warning(f"Fandom catalog chapter fetch failed for '{book_title}': {e}")
 
-    # ── Legacy heuristic path (non-catalog series) ────────────
+    # ── Generalized path: search for candidate pages, then let Gemini read them ──
     url = f"https://{subdomain}.fandom.com/api.php"
     headers = {"User-Agent": "BookHub/1.0 (mokhhtar@github.com)"}
-    
-    def clean_name(name):
-        return re.sub(r'\s+', ' ', name).strip().lower()
-        
+
     req_vol = None
     m = re.search(r'\b(vol\.|volume|vol|part|pt\.|book|bk\.)\s*(\d+(?:\.\d+)?)\b', book_title, flags=re.IGNORECASE)
     if m:
         req_vol = m.group(2)
 
-    # 1. Search for matching pages
+    # Page search is source-agnostic and stays as-is — the fragility was
+    # never in FINDING the page, only in interpreting its HTML shape.
     if req_vol:
         search_queries = [
             f"{book_title} chapters",
@@ -712,7 +677,7 @@ def extract_chapters_from_fandom(subdomain: str, book_title: str) -> list[str]:
             "Volumes and Chapters",
             "Volumes & Chapters",
             "List of Volumes",
-            "Volumes"
+            "Volumes",
         ]
     else:
         search_queries = [
@@ -722,53 +687,31 @@ def extract_chapters_from_fandom(subdomain: str, book_title: str) -> list[str]:
             "Chapters",
             book_title,
             f"{book_title} Volume 1",
-            "Volume 1"
+            "Volume 1",
         ]
-    
+
     page_titles = []
     for q in search_queries:
-        params = {
-            "action": "query",
-            "list": "search",
-            "srsearch": q,
-            "format": "json",
-            "srlimit": 3
-        }
+        params = {"action": "query", "list": "search", "srsearch": q, "format": "json", "srlimit": 3}
         try:
             r = httpx.get(url, params=params, headers=headers, timeout=3.0)
             if r.status_code == 200:
-                search_results = r.json().get("query", {}).get("search", [])
-                for res in search_results:
+                for res in r.json().get("query", {}).get("search", []):
                     t = res.get("title")
                     if t not in page_titles:
                         page_titles.append(t)
         except Exception:
             pass
-            
-    # Filter page titles to exclude sequel volume pages if searching for the main series
-    clean_book_title = book_title.lower()
-    is_coi_query = "circle" in clean_book_title or "inevitability" in clean_book_title
-    filtered_page_titles = []
-    for t in page_titles:
-        t_low = t.lower()
-        if ("circle" in t_low or "inevitability" in t_low or "eternal aeon" in t_low) and not is_coi_query:
-            continue
-        filtered_page_titles.append(t)
-    page_titles = filtered_page_titles
 
-    # Sort page_titles to prioritize main lists and volume 1, penalizing subpages (e.g. /Author's Note)
     def page_priority(t):
         t_low = t.lower()
         title_low = book_title.lower()
         penalty = 10 if "/" in t else 0
-        
-        # If we are looking for a specific volume, boost pages matching "Volume X" or "Vol X"
         if req_vol:
             vol_pat = rf'\b(volume|vol|bk|book)\s*{req_vol}\b'
             if re.search(vol_pat, t_low):
                 return 0 + penalty
-                
-        if any(m in t_low for m in ["volumes and chapters", "volumes & chapters", "list of volumes"]):
+        if any(x in t_low for x in ["volumes and chapters", "volumes & chapters", "list of volumes"]):
             return 1 + penalty
         if "list of chapters" in t_low and title_low in t_low:
             return 1 + penalty
@@ -781,219 +724,73 @@ def extract_chapters_from_fandom(subdomain: str, book_title: str) -> list[str]:
         return 5 + penalty
 
     page_titles.sort(key=page_priority)
-    
-    parsed_pages = []
-    
-    # Phase 1: Try to extract chapters from tables
-    for page_title in page_titles[:5]:
-        params = {
-            "action": "parse",
-            "page": page_title,
-            "prop": "text",
-            "format": "json"
-        }
+
+    # Fetch RAW TEXT for the top candidates — no table/list/headline
+    # interpretation. clean_wiki_html() strips tags into plain text.
+    MAX_CHARS_PER_PAGE = 6000  # keeps prompt size sane; a real chapter list fits easily
+    candidate_texts = []
+    for page_title in page_titles[:3]:
+        params = {"action": "parse", "page": page_title, "prop": "text", "format": "json"}
         try:
             r = httpx.get(url, params=params, headers=headers, timeout=4.0)
             if r.status_code != 200:
                 continue
             html = r.json().get("parse", {}).get("text", {}).get("*", "")
-            soup = BeautifulSoup(html, 'html.parser')
-            parsed_pages.append((page_title, soup))
-            
-            # --- Check if this is a master page listing all volumes ---
-            page_title_clean = page_title.lower()
-            is_master_page = any(m in page_title_clean for m in ["volumes and chapters", "volumes & chapters", "list of volumes"]) or page_title_clean == "volumes"
-            
-            if is_master_page and req_vol:
-                # Extract chapters for this specific volume section only
-                headlines = soup.find_all(class_="mw-headline")
-                target_headline = None
-                for hl in headlines:
-                    hl_text = hl.get_text().strip()
-                    # Match "Volume X" or "Volume X: ..." where X = req_vol
-                    m_hl = re.search(r'\bVolume\s+(' + re.escape(str(req_vol)) + r')\b', hl_text, flags=re.IGNORECASE)
-                    if m_hl:
-                        target_headline = hl
-                        break
-                        
-                if target_headline:
-                    chapters = []
-                    current = target_headline.parent
-                    for sibling in current.next_siblings:
-                        if sibling.name in ("h2", "h3", "h4"):
-                            sib_text = sibling.get_text().strip()
-                            if re.search(r'\bVolume\s+\d+', sib_text, flags=re.IGNORECASE):
-                                break
-                        
-                        if sibling.name == "ul":
-                            for li in sibling.find_all("li"):
-                                txt = li.get_text().strip()
-                                if txt:
-                                    txt_clean = re.sub(r'^\d+[\s.:.-]+', '', txt).strip()
-                                    txt_clean = re.sub(r'\s+', ' ', txt_clean)
-                                    clean_txt = re.sub(r'^(chapter\s+\d+|ch\.\s+\d+|\d+)\s*[:.-]\s*', '', txt_clean, flags=re.IGNORECASE)
-                                    clean_txt = re.sub(r'\s+', ' ', clean_txt).strip()
-                                    if clean_txt and len(clean_txt) < 80:
-                                        chapters.append(clean_txt)
-                        elif sibling.name == "table":
-                            for tr in sibling.find_all("tr"):
-                                cells = tr.find_all("td")
-                                if cells:
-                                    for cell in cells:
-                                        ct = cell.get_text().strip()
-                                        if ct and not ct.isdigit() and len(ct) < 80:
-                                            chapters.append(ct)
-                                            break
-                    if len(chapters) >= 1:
-                        return chapters
-
-            headlines = soup.find_all(class_="mw-headline")
-            target_headline = None
-            book_title_clean = clean_name(book_title)
-            
-            for hl in headlines:
-                hl_text = clean_name(hl.get_text())
-                if book_title_clean in hl_text or hl_text in book_title_clean or "list of chapters" in hl_text or "chapters" in hl_text:
-                    target_headline = hl
-                    break
-            
-            tables = []
-            if target_headline:
-                current = target_headline.parent
-                for sibling in current.next_siblings:
-                    if sibling.name in ("h2", "h3"):
-                        break
-                    if sibling.name == "table":
-                        tables.append(sibling)
-            else:
-                tables = soup.find_all("table")
-                
-            for table in tables:
-                header_rows = []
-                for tr in table.find_all("tr"):
-                    ths = tr.find_all("th")
-                    if ths:
-                        header_rows.append(ths)
-                        
-                if not header_rows:
-                    continue
-                    
-                best_ths = max(header_rows, key=len)
-                headers_list = [clean_name(th.get_text()) for th in best_ths]
-                
-                name_col_idx = -1
-                for idx, h in enumerate(headers_list):
-                    # Check for title or name, but NOT just "chapter" to avoid "chapter#" number columns
-                    if "title" in h or "name" in h:
-                        name_col_idx = idx
-                        break
-                
-                # If no explicit header, guess by column count
-                if name_col_idx == -1 and len(headers_list) >= 2:
-                    if len(headers_list) == 3:
-                        name_col_idx = 1
-                    elif len(headers_list) == 4:
-                        name_col_idx = 2
-                        
-                if name_col_idx != -1:
-                    chapters = []
-                    rows = table.find_all("tr")
-                    for tr in rows:
-                        cells = tr.find_all("td")
-                        if len(cells) > name_col_idx:
-                            cell_text = cells[name_col_idx].get_text().strip()
-                            cell_text = re.sub(r'["\']', '', cell_text)
-                            cell_text = re.sub(r'\s+', ' ', cell_text)
-                            if cell_text and not cell_text.isdigit() and len(cell_text) < 100:
-                                chapters.append(cell_text)
-                                
-                    if len(chapters) >= 3:
-                        return chapters
+            text = clean_wiki_html(html)
+            if text:
+                candidate_texts.append((page_title, text[:MAX_CHARS_PER_PAGE]))
         except Exception as e:
-            log.warning(f"Failed parsing table chapter list on '{page_title}': {e}")
-            
-    # Phase 2: Fallback to list items (li) if no tables succeeded
-    for page_title, soup in parsed_pages:
-        page_title_lower = page_title.lower()
-        if "chapters" in page_title_lower or "list" in page_title_lower or "volume" in page_title_lower:
-            is_volume_page = False
-            if req_vol:
-                vol_pat = rf'\b(volume|vol|bk|book)\s*{req_vol}\b'
-                if re.search(vol_pat, page_title_lower):
-                    is_volume_page = True
-                    
-            ignored_terms = {
-                "synopsis", "summary", "trivia", "site navigation", "gallery", "illustrations",
-                "fan arts", "official art", "songs", "videos", "characters", "references",
-                "general information", "main story", "others", "mini arcs", "navigation"
-            }
-            
-            # A. Try to isolate chapters by header section
-            headlines = soup.find_all(class_="mw-headline")
-            chapter_headline = None
-            for hl in headlines:
-                hl_text = hl.get_text().strip().lower()
-                if "chapter" in hl_text or hl_text == "chapters":
-                    chapter_headline = hl
-                    break
-                    
-            if chapter_headline:
-                chapters = []
-                current = chapter_headline.parent
-                for sibling in current.next_siblings:
-                    if sibling.name in ("h2", "h3", "h4"):
-                        break
-                    if sibling.name == "ul":
-                        for li in sibling.find_all("li"):
-                            txt = li.get_text().strip()
-                            if not txt:
-                                continue
-                            txt_clean = re.sub(r'^\d+[\s.:.-]+', '', txt).strip()
-                            txt_clean = re.sub(r'\s+', ' ', txt_clean)
-                            txt_clean_lower = txt_clean.lower()
-                            if txt_clean_lower in ignored_terms or txt_clean_lower.startswith("category:"):
-                                continue
-                            clean_txt = re.sub(r'^(chapter\s+\d+|ch\.\s+\d+|\d+)\s*[:.-]\s*', '', txt_clean, flags=re.IGNORECASE)
-                            clean_txt = re.sub(r'\s+', ' ', clean_txt).strip()
-                            if clean_txt and clean_txt.lower() not in ignored_terms and len(clean_txt) < 80:
-                                if clean_txt not in chapters:
-                                    chapters.append(clean_txt)
-                if len(chapters) >= 1:
-                    return chapters[:150]
-            
-            # B. Page-wide fallback scan
-            chapters = []
-            for li in soup.find_all("li"):
-                txt = li.get_text().strip()
-                if not txt:
-                    continue
-                # Clean leading number/dot prefixes like "1. Synopsis" or "1 Synopsis" -> "Synopsis"
-                txt_clean = re.sub(r'^\d+[\s.:.-]+', '', txt).strip()
-                # Normalize whitespace
-                txt_clean = re.sub(r'\s+', ' ', txt_clean)
-                txt_clean_lower = txt_clean.lower()
-                
-                # Skip navigation links or ignored terms
-                if txt_clean_lower in ignored_terms:
-                    continue
-                if txt_clean_lower.startswith("category:"):
-                    continue
-                if re.match(r'^(vol\b|volume\b|part|pt\b|book|bk\b)\s*\d+', txt_clean_lower):
-                    continue
-                    
-                # Match chapter pattern or generic list item
-                if "chapter" in txt_clean_lower or re.match(r'^\d+\.', txt_clean) or (len(txt_clean) < 80):
-                    clean_txt = re.sub(r'^(chapter\s+\d+|ch\.\s+\d+|\d+)\s*[:.-]\s*', '', txt_clean, flags=re.IGNORECASE)
-                    clean_txt = re.sub(r'\s+', ' ', clean_txt).strip()
-                    if clean_txt and clean_txt.lower() not in ignored_terms and len(clean_txt) < 80:
-                        if clean_txt not in chapters:
-                            chapters.append(clean_txt)
-                            
-            min_chapters_threshold = 1 if is_volume_page else 5
-            if len(chapters) >= min_chapters_threshold:
-                return chapters[:150]
-                
+            log.warning(f"Failed fetching raw text for page '{page_title}' on wiki '{subdomain}': {e}")
+
+    if not candidate_texts:
+        return []
+
+    combined = "\n\n".join(f"=== Wiki page: {t} ===\n{txt}" for t, txt in candidate_texts)
+    prompt = _build_chapter_extraction_prompt(book_title, req_vol, combined)
+
+    try:
+        raw = gemini_client.generate(prompt)
+        data = gemini_client.parse_json_response(raw)
+        if data.get("confident") and isinstance(data.get("chapters"), list):
+            chapters = [c.strip() for c in data["chapters"] if isinstance(c, str) and c.strip()]
+            return chapters[:150]
+    except Exception as e:
+        log.warning(f"Chapter extraction via Gemini failed for '{book_title}' on wiki '{subdomain}': {e}")
+
     return []
+
+
+def _build_chapter_extraction_prompt(book_title: str, req_vol: Optional[str], wiki_text: str) -> str:
+    """
+    Pure extraction prompt — Gemini reads TEXT WE GIVE IT and pulls out a
+    chapter list if one is genuinely present. It must not use its own
+    training knowledge of the book to fill in gaps or invent a plausible
+    list when the source text doesn't clearly contain one.
+    """
+    volume_hint = (
+        f"\nThe user asked specifically about Volume/Part/Book {req_vol}. If the text covers "
+        f"multiple volumes, extract ONLY the chapters belonging to that volume."
+        if req_vol else ""
+    )
+    return f"""You are extracting a table of contents from raw wiki page text. You are NOT summarizing the book and NOT using any outside knowledge of it — only read the text below.
+
+BOOK: "{book_title}"{volume_hint}
+
+RAW WIKI PAGE TEXT (may mix unrelated navigation, categories, or other page furniture with real content):
+\"\"\"
+{wiki_text}
+\"\"\"
+
+TASK: Find and extract the actual chapter titles or part/volume titles for this book, IF this text clearly contains a real chapter list (e.g. numbered chapters with titles, a "List of Chapters" section, a table of contents).
+
+RULES:
+- Extract only — do not invent, complete, or guess chapter titles not explicitly present in the text above.
+- If the text does not contain a clear, genuine chapter list for THIS book (and this volume, if specified), return an empty list. Do not fall back on general knowledge of the book to construct one.
+- Ignore wiki navigation clutter, category links, infobox fields, and unrelated content mixed into the text.
+- Preserve the original chapter order as it appears in the text.
+- Return ONLY a JSON object, nothing else. No markdown, no preamble.
+- Format: {{"confident": true_or_false, "chapters": ["Chapter title 1", "Chapter title 2", ...]}}
+- Maximum 150 chapters."""
 
 
 # ── Prompts ──────────────────────────────────────────────────
@@ -1200,4 +997,3 @@ def fetch_volume_synopsis_from_fandom(subdomain: str, page_title: str) -> str:
     except Exception as e:
         log.warning(f"Failed to fetch volume synopsis for '{resolved_title}': {e}")
     return ""
-
