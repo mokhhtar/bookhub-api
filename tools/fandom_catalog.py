@@ -288,7 +288,11 @@ def resolve_series_config(query: str) -> Optional[FandomSeriesConfig]:
     return None
 
 
-def get_config_by_subdomain(subdomain: str) -> Optional[FandomSeriesConfig]:
+def get_config_by_subdomain(subdomain: str, query: Optional[str] = None) -> Optional[FandomSeriesConfig]:
+    if query:
+        cfg = resolve_series_config(query)
+        if cfg and cfg.subdomain == subdomain:
+            return cfg
     for cfg in CATALOG_SERIES.values():
         if cfg.subdomain == subdomain:
             return cfg
@@ -468,7 +472,7 @@ def fetch_volumes_for_search(subdomain: str, query: str) -> Optional[list[Fandom
     """
     Entry point for book search.  Returns None if the series is not in the catalog.
     """
-    config = resolve_series_config(query) or get_config_by_subdomain(subdomain)
+    config = resolve_series_config(query) or get_config_by_subdomain(subdomain, query)
     if not config or config.subdomain != subdomain:
         return None
     volumes = fetch_volume_index(config)
@@ -687,7 +691,7 @@ def find_volume_by_title(
 
 def fetch_chapters_for_title(subdomain: str, book_title: str) -> list[str]:
     """Entry point for summary tool chapter extraction."""
-    config = get_config_by_subdomain(subdomain)
+    config = get_config_by_subdomain(subdomain, book_title)
     if not config:
         return []
     volume = find_volume_by_title(config, book_title)

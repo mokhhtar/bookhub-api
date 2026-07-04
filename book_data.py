@@ -875,7 +875,7 @@ def resolve_book(title: str, author: str = "", isbn: Optional[str] = None, googl
                     subdomain = resolve_fandom_subdomain(title)
                     if subdomain:
                         vol_part = title.split(",")[-1].strip() if "," in title else title
-                        catalog_cfg = get_config_by_subdomain(subdomain)
+                        catalog_cfg = get_config_by_subdomain(subdomain, title)
                         catalog_vol = None
                         if catalog_cfg:
                             catalog_vol = find_volume_by_title(catalog_cfg, title)
