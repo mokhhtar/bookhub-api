@@ -139,7 +139,7 @@ CATALOG_SERIES: dict[str, FandomSeriesConfig] = {
         series_display_name="Circle of Inevitability",
         author="Cuttlefish That Loves Diving",
         aliases=["circle of inevitability", "coi"],
-        cover_url="https://static.wikia.nocookie.net/lord-of-the-mystery/images/c/cd/LOM_Manhua_cover.png/revision/latest?cb=20200113124228",
+        cover_url="https://static.wikia.nocookie.net/lord-of-the-mystery/images/d/dd/Circle_of_Inevitability_Official_Art.jpg/revision/latest/scale-to-width-down/268?cb=20230615130622",
         structure_type=StructureType.MASTER_SECTIONS,
         volumes_master_page="Volumes and Chapters",
         page_pattern=r"^Volume\s+\d+(?:\.\d+)?(?::\s*.+)?$",
@@ -558,11 +558,51 @@ def _chapters_from_novel_master_page(
 def _chapters_from_wikitext_section(
     config: FandomSeriesConfig, volume: FandomVolume,
 ) -> list[str]:
-    section = config.chapters_wikitext_section or "List of Chapters"
     wt = _fetch_wikitext(config.subdomain, volume.wiki_page)
     if not wt:
         return []
 
+    # LOTM/COI expose the chapter table in the rendered page HTML, so prefer that
+    # over brittle plain-text scraping.
+    if config.subdomain == "lordofthemysteries":
+        try:
+            r = httpx.get(
+                _api_url(config.subdomain),
+                params={"action": "parse", "page": volume.wiki_page, "prop": "text", "format": "json"},
+                headers=HEADERS, timeout=15.0,
+            )
+            if r.status_code == 200:
+                html = r.json().get("parse", {}).get("text", {}).get("*", "")
+                soup = BeautifulSoup(html, "html.parser")
+                # Find the chapter table in rendered HTML.
+                for table in soup.find_all("table"):
+                    rows = table.find_all("tr")
+                    if len(rows) < 3:
+                        continue
+                    headers = [c.get_text(" ", strip=True).lower() for c in rows[0].find_all(["th", "td"])]
+                    if not any("chapter" in h for h in headers):
+                        continue
+                    chapters: list[str] = []
+                    for tr in rows[1:]:
+                        cells = tr.find_all(["td", "th"])
+                        if not cells:
+                            continue
+                        title_cell = None
+                        for idx, cell in enumerate(cells):
+                            txt = cell.get_text(" ", strip=True)
+                            if not txt:
+                                continue
+                            if "chapter" in headers[idx].lower() and "name" in headers[idx].lower():
+                                title_cell = txt
+                                break
+                        if title_cell and title_cell not in {"Chapter Name", "Chapter"}:
+                            chapters.append(re.sub(r"\s+", " ", title_cell).strip())
+                    if chapters:
+                        return _validate_chapters(chapters)
+        except Exception as e:
+            log.warning(f"Rendered chapter table parse failed for {volume.wiki_page}: {e}")
+
+    section = config.chapters_wikitext_section or "List of Chapters"
     m = re.search(
         rf"==\s*{re.escape(section)}\s*==(.*?)(?=\n==|\Z)",
         wt, flags=re.IGNORECASE | re.DOTALL,
@@ -577,7 +617,6 @@ def _chapters_from_wikitext_section(
             continue
         title = _parse_nihongo_english(line)
         if not title:
-            # Fallback: extract link label
             lm = re.search(r"\[\[[^\]|]+\|([^\]]+)\]\]", line)
             if lm:
                 title = lm.group(1).strip()
