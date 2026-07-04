@@ -892,7 +892,11 @@ def resolve_fandom(title: str = Query(..., min_length=1), wikidata_id: Optional[
     if cached:
         return cached
         
-    subdomain = resolve_fandom_subdomain(title, wikidata_id)
+    # Same fix applied everywhere else: try the structured catalog first,
+    # since it correctly distinguishes series sharing a subdomain (e.g.
+    # lotm vs coi) that the flat FANDOM_WIKIS alias map cannot.
+    catalog_cfg = resolve_series_config_first(title)
+    subdomain = catalog_cfg.subdomain if catalog_cfg else resolve_fandom_subdomain(title, wikidata_id)
     result = {"subdomain": subdomain, "title": title}
     cache.set(result, *cache_key)
     return result
@@ -908,8 +912,12 @@ def get_universe(title: str = Query(..., min_length=1), subdomain: Optional[str]
     if cached:
         return cached
 
-    # 1. Resolve subdomain if missing
-    resolved_sub = subdomain or resolve_fandom_subdomain(title)
+    # 1. Resolve subdomain if missing — catalog first, same reasoning as above.
+    if subdomain:
+        resolved_sub = subdomain
+    else:
+        catalog_cfg = resolve_series_config_first(title)
+        resolved_sub = catalog_cfg.subdomain if catalog_cfg else resolve_fandom_subdomain(title)
     if not resolved_sub:
         return {
             "found": False,

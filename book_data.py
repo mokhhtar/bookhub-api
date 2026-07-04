@@ -870,9 +870,14 @@ def resolve_book(title: str, author: str = "", isbn: Optional[str] = None, googl
                 custom_cover = None
                 custom_author = None
                 try:
-                    from tools.fandom import resolve_fandom_subdomain, fetch_volume_synopsis_from_fandom, FANDOM_SERIES_DETAILS, extract_fandom_infobox_metadata
+                    from tools.fandom import resolve_fandom_subdomain, fetch_volume_synopsis_from_fandom, FANDOM_SERIES_DETAILS, extract_fandom_infobox_metadata, resolve_series_config_first
                     from tools.fandom_catalog import get_config_by_subdomain, find_volume_by_title, fetch_volume_synopsis
-                    subdomain = resolve_fandom_subdomain(title)
+                    # Same fix as the search-tier resolution above: try the
+                    # catalog-aware resolver first so series sharing a
+                    # subdomain (e.g. lotm vs coi) aren't confused with
+                    # each other by the flat FANDOM_WIKIS alias map.
+                    catalog_cfg_early = resolve_series_config_first(title)
+                    subdomain = catalog_cfg_early.subdomain if catalog_cfg_early else resolve_fandom_subdomain(title)
                     if subdomain:
                         vol_part = title.split(",")[-1].strip() if "," in title else title
                         catalog_cfg = get_config_by_subdomain(subdomain, title)
@@ -1064,9 +1069,20 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
 
     # ── Tier 1: Fandom Wiki Search ──
     try:
-        from tools.fandom import resolve_fandom_subdomain, fetch_volumes_from_fandom, FANDOM_SERIES_DETAILS, extract_fandom_infobox_metadata
+        from tools.fandom import resolve_fandom_subdomain, fetch_volumes_from_fandom, FANDOM_SERIES_DETAILS, extract_fandom_infobox_metadata, resolve_series_config_first
         from tools.fandom_catalog import fetch_volumes_for_search, resolve_series_config
-        subdomain = resolve_fandom_subdomain(query_clean)
+        # Try the structured catalog FIRST. Two different real books can
+        # share one Fandom subdomain (e.g. "Lord of the Mysteries" and
+        # "Circle of Inevitability" — same author, same wiki, different
+        # series). The flat FANDOM_WIKIS alias map has no way to express
+        # that distinction, so resolving via it first either merges the two
+        # (if an alias was mistakenly shared) or, once that mistake is
+        # removed, returns nothing at all for the second title — which is
+        # exactly why the old code fell through to a generic Open Library
+        # text search for "Circle of Inevitability" and showed unrelated
+        # books with "circle" in the title.
+        catalog_cfg_early = resolve_series_config_first(query_clean)
+        subdomain = catalog_cfg_early.subdomain if catalog_cfg_early else resolve_fandom_subdomain(query_clean)
         if subdomain:
             # Prefer structured catalog when available
             catalog_volumes = fetch_volumes_for_search(subdomain, query_clean)
@@ -1348,4 +1364,3 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
     # Sort the deduplicated results by match score in descending order
     deduped_results.sort(key=get_match_score, reverse=True)
     return deduped_results[:limit]
-
