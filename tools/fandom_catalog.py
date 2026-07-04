@@ -28,6 +28,7 @@ class StructureType(str, Enum):
     DEDICATED_PAGES = "dedicated_pages"       # one wiki page per volume (prefix scan)
     WIKILINK_LIST = "wikilink_list"           # master page with [[Light Novel Volume N]] links
     NOVEL_MASTER_PAGE = "novel_master_page"   # single page with per-volume chapter tables
+    MASTER_SECTIONS = "master_sections"       # master page with == Volume N == sections
 
 
 @dataclass
@@ -118,6 +119,34 @@ CATALOG_SERIES: dict[str, FandomSeriesConfig] = {
         ],
         chapters_wikitext_section="List of Chapters",
     ),
+    "lotm": FandomSeriesConfig(
+        series_key="lotm",
+        subdomain="lordofthemysteries",
+        series_display_name="Lord of the Mysteries",
+        author="Cuttlefish That Loves Diving",
+        aliases=["lord of the mysteries", "lord of mystery"],
+        cover_url="https://static.wikia.nocookie.net/lord-of-the-mystery/images/c/cd/LOM_Manhua_cover.png/revision/latest?cb=20200113124228",
+        structure_type=StructureType.MASTER_SECTIONS,
+        volumes_master_page="Volumes and Chapters",
+        page_pattern=r"^Volume\s+\d+(?:\.\d+)?(?::\s*.+)?$",
+        exclude_page_patterns=[r"summary", r"illustration", r"/", r"mini arc", r"untitled"],
+        series_filter="lord of the mysteries",
+        exclude_series_patterns=[r"circle of inevitability", r"coi"],
+    ),
+    "coi": FandomSeriesConfig(
+        series_key="coi",
+        subdomain="lordofthemysteries",
+        series_display_name="Circle of Inevitability",
+        author="Cuttlefish That Loves Diving",
+        aliases=["circle of inevitability", "coi"],
+        cover_url="https://static.wikia.nocookie.net/lord-of-the-mystery/images/c/cd/LOM_Manhua_cover.png/revision/latest?cb=20200113124228",
+        structure_type=StructureType.MASTER_SECTIONS,
+        volumes_master_page="Volumes and Chapters",
+        page_pattern=r"^Volume\s+\d+(?:\.\d+)?(?::\s*.+)?$",
+        exclude_page_patterns=[r"summary", r"illustration", r"/", r"mini arc", r"untitled"],
+        series_filter="circle of inevitability",
+        exclude_series_patterns=[r"lord of the mysteries"],
+    ),
 }
 
 # Build alias → config lookup
@@ -162,6 +191,30 @@ def _extract_subtitle(wiki_page: str) -> Optional[str]:
 
 def _sort_volumes(volumes: list[FandomVolume]) -> list[FandomVolume]:
     return sorted(volumes, key=lambda v: v.volume_number)
+
+
+def _matches_series_context(config: FandomSeriesConfig, title: str, wikitext: str) -> bool:
+    if not config.series_filter:
+        return True
+    title_text = re.sub(r"\s+", " ", f"{title} {wikitext or ''}").lower()
+    filter_text = re.sub(r"\s+", " ", config.series_filter.lower()).strip()
+    if not filter_text:
+        return True
+    if filter_text in title_text:
+        return True
+
+    compact_filter = re.sub(r"\bthe\b", "", filter_text).strip()
+    compact_text = re.sub(r"\bthe\b", "", title_text).strip()
+    if compact_filter and compact_filter in compact_text:
+        return True
+
+    display_text = re.sub(r"\s+", " ", config.series_display_name.lower()).strip()
+    if display_text and display_text in title_text:
+        return True
+    compact_display = re.sub(r"\bthe\b", "", display_text).strip()
+    if compact_display and compact_display in compact_text:
+        return True
+    return False
 
 
 def _fetch_wikitext(subdomain: str, page: str) -> str:
@@ -308,6 +361,8 @@ def _fetch_wikilink_list(config: FandomSeriesConfig) -> list[FandomVolume]:
                     continue
                 if _should_exclude(title, config.exclude_page_patterns):
                     continue
+                if config.series_filter and config.series_filter.lower() not in title.lower() and config.series_filter.lower() not in wt.lower():
+                    continue
                 seen.add(title)
                 vol_num = _parse_volume_number(title)
                 if vol_num is None:
@@ -330,11 +385,82 @@ def _fetch_wikilink_list(config: FandomSeriesConfig) -> list[FandomVolume]:
     return _sort_volumes(volumes)
 
 
+def _fetch_master_sections(config: FandomSeriesConfig) -> list[FandomVolume]:
+    volumes: list[FandomVolume] = []
+    seen: set[str] = set()
+
+    wt = _fetch_wikitext(config.subdomain, config.volumes_master_page or "Volumes and Chapters")
+    if wt:
+        headings = re.findall(r"^==+\s*(Volume\s+\d+(?:\.\d+)?(?::\s*.+)?)\s*==+", wt, flags=re.IGNORECASE | re.MULTILINE)
+        for raw in headings:
+            title = raw.strip()
+            if title in seen:
+                continue
+            if config.page_pattern and not re.match(config.page_pattern, title, re.IGNORECASE):
+                continue
+            if _should_exclude(title, config.exclude_page_patterns):
+                continue
+            if not _matches_series_context(config, title, wt):
+                continue
+            seen.add(title)
+            vol_num = _parse_volume_number(title)
+            if vol_num is None:
+                continue
+            volumes.append(FandomVolume(
+                volume_number=vol_num,
+                wiki_page=title,
+                display_title=f"{config.series_display_name}, {title}",
+                series_key=config.series_key,
+                subtitle=_extract_subtitle(title),
+            ))
+
+    if volumes:
+        return _sort_volumes(volumes)
+
+    # Fallback: query all pages with prefix "Volume" and filter by the series context.
+    try:
+        r = httpx.get(_api_url(config.subdomain), params={
+            "action": "query", "list": "allpages", "apprefix": "Volume",
+            "aplimit": 200, "format": "json",
+        }, headers=HEADERS, timeout=12.0)
+        if r.status_code == 200:
+            for item in r.json().get("query", {}).get("allpages", []):
+                title = item.get("title", "").strip()
+                if not title or title in seen:
+                    continue
+                if "/" in title:
+                    continue
+                if config.page_pattern and not re.match(config.page_pattern, title, re.IGNORECASE):
+                    continue
+                if _should_exclude(title, config.exclude_page_patterns):
+                    continue
+                # For some wikis (e.g. LOTM) the volume pages do not contain the
+                # series-filter phrase in their wikitext, so the fallback should
+                # still include them rather than fail the entire index.
+                seen.add(title)
+                vol_num = _parse_volume_number(title)
+                if vol_num is None:
+                    continue
+                volumes.append(FandomVolume(
+                    volume_number=vol_num,
+                    wiki_page=title,
+                    display_title=f"{config.series_display_name}, {title}",
+                    series_key=config.series_key,
+                    subtitle=_extract_subtitle(title),
+                ))
+    except Exception as e:
+        log.warning(f"Master-section fallback failed for {config.series_key}: {e}")
+
+    return _sort_volumes(volumes)
+
+
 def fetch_volume_index(config: FandomSeriesConfig) -> list[FandomVolume]:
     if config.structure_type == StructureType.DEDICATED_PAGES:
         return _fetch_dedicated_pages(config)
     if config.structure_type == StructureType.WIKILINK_LIST:
         return _fetch_wikilink_list(config)
+    if config.structure_type == StructureType.MASTER_SECTIONS:
+        return _fetch_master_sections(config)
     return []
 
 
