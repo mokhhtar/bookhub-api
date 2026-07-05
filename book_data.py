@@ -1068,19 +1068,10 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
             results.append(entry)
 
     # ── Tier 1: Fandom Wiki Search ──
+    fandom_found = False
     try:
         from tools.fandom import resolve_fandom_subdomain, fetch_volumes_from_fandom, FANDOM_SERIES_DETAILS, extract_fandom_infobox_metadata, resolve_series_config_first
         from tools.fandom_catalog import fetch_volumes_for_search, resolve_series_config
-        # Try the structured catalog FIRST. Two different real books can
-        # share one Fandom subdomain (e.g. "Lord of the Mysteries" and
-        # "Circle of Inevitability" — same author, same wiki, different
-        # series). The flat FANDOM_WIKIS alias map has no way to express
-        # that distinction, so resolving via it first either merges the two
-        # (if an alias was mistakenly shared) or, once that mistake is
-        # removed, returns nothing at all for the second title — which is
-        # exactly why the old code fell through to a generic Open Library
-        # text search for "Circle of Inevitability" and showed unrelated
-        # books with "circle" in the title.
         catalog_cfg_early = resolve_series_config_first(query_clean)
         subdomain = catalog_cfg_early.subdomain if catalog_cfg_early else resolve_fandom_subdomain(query_clean)
         if subdomain:
@@ -1094,73 +1085,92 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
                     item = vol.to_search_dict(default_author or "Author", default_cover)
                     add_item(**item)
                 if results:
-                    return results
+                    fandom_found = True
 
-            fandom_volumes = fetch_volumes_from_fandom(subdomain, query_clean)
-            if fandom_volumes:
-                default_author = ""
-                default_cover = ""
+            if not fandom_found:
+                fandom_volumes = fetch_volumes_from_fandom(subdomain, query_clean)
+                if fandom_volumes:
+                    # Validate that results look like real volume titles and not
+                    # descriptive text (synopsis, calendar descriptions, etc.).
+                    # A real volume title is short — long strings are almost always
+                    # page descriptions that Gemini mistakenly returned as "chapters".
+                    valid_volumes = [v for v in fandom_volumes if isinstance(v, str) and len(v.strip()) <= 120]
+                    if not valid_volumes:
+                        fandom_volumes = []
 
-                details = FANDOM_SERIES_DETAILS.get(subdomain)
-                if details:
-                    default_author = details.get("author", "")
-                    default_cover = details.get("cover_url", "")
-                else:
-                    try:
-                        default_author, default_cover = extract_fandom_infobox_metadata(subdomain, query_clean)
-                    except Exception as e:
-                        log.warning(f"Failed to dynamically extract Fandom metadata in search_books_list: {e}")
+                if fandom_volumes:
+                    default_author = ""
+                    default_cover = ""
 
-                if not default_author:
-                    try:
-                        params = {"q": query_clean, "maxResults": 3, "printType": "books", "langRestrict": "en"}
-                        if GOOGLE_BOOKS_API_KEY:
-                            params["key"] = GOOGLE_BOOKS_API_KEY
-                        r = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=4.0)
-                        if r.status_code == 200:
-                            items = r.json().get("items", [])
-                            if items:
-                                info = items[0].get("volumeInfo", {})
-                                default_author = ", ".join(info.get("authors", [])) if info.get("authors") else ""
-                                image_links = info.get("imageLinks", {})
-                                default_cover = image_links.get("thumbnail") or image_links.get("smallThumbnail")
-                                if default_cover and default_cover.startswith("http:"):
-                                    default_cover = default_cover.replace("http:", "https:")
-                    except Exception:
-                        pass
+                    details = FANDOM_SERIES_DETAILS.get(subdomain)
+                    if details:
+                        default_author = details.get("author", "")
+                        default_cover = details.get("cover_url", "")
+                    else:
+                        try:
+                            default_author, default_cover = extract_fandom_infobox_metadata(subdomain, query_clean)
+                        except Exception as e:
+                            log.warning(f"Failed to dynamically extract Fandom metadata in search_books_list: {e}")
 
-                if not default_author:
-                    try:
-                        r = httpx.get(f"{OPEN_LIBRARY_SEARCH_API}?q={urllib.parse.quote(query_clean)}&limit=3", headers=HEADERS, timeout=4.0)
-                        if r.status_code == 200:
-                            docs = r.json().get("docs", [])
-                            if docs:
-                                default_author = ", ".join(docs[0].get("author_name", [])) if docs[0].get("author_name") else ""
-                                cover_id = docs[0].get("cover_i")
-                                if cover_id:
-                                    default_cover = f"https://covers.openlibrary.org/b/id/{cover_id}-M.jpg"
-                    except Exception:
-                        pass
+                    if not default_author:
+                        try:
+                            params = {"q": query_clean, "maxResults": 3, "printType": "books", "langRestrict": "en"}
+                            if GOOGLE_BOOKS_API_KEY:
+                                params["key"] = GOOGLE_BOOKS_API_KEY
+                            r = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=4.0)
+                            if r.status_code == 200:
+                                items = r.json().get("items", [])
+                                if items:
+                                    info = items[0].get("volumeInfo", {})
+                                    default_author = ", ".join(info.get("authors", [])) if info.get("authors") else ""
+                                    image_links = info.get("imageLinks", {})
+                                    default_cover = image_links.get("thumbnail") or image_links.get("smallThumbnail")
+                                    if default_cover and default_cover.startswith("http:"):
+                                        default_cover = default_cover.replace("http:", "https:")
+                        except Exception:
+                            pass
 
-                cfg = resolve_series_config(query_clean)
-                series_name = cfg.series_display_name if cfg else query_clean.strip()
-                for v_title in fandom_volumes:
-                    display_title = f"{series_name}, {v_title}"
-                    add_item(
-                        title=display_title,
-                        author=default_author or "Author",
-                        cover_url=default_cover,
-                        isbn_10=None,
-                        isbn_13=None,
-                        published_year=None,
-                        source="fandom"
-                    )
-                if results:
-                    return results
+                    if not default_author:
+                        try:
+                            r = httpx.get(f"{OPEN_LIBRARY_SEARCH_API}?q={urllib.parse.quote(query_clean)}&limit=3", headers=HEADERS, timeout=4.0)
+                            if r.status_code == 200:
+                                docs = r.json().get("docs", [])
+                                if docs:
+                                    default_author = ", ".join(docs[0].get("author_name", [])) if docs[0].get("author_name") else ""
+                                    cover_id = docs[0].get("cover_i")
+                                    if cover_id:
+                                        default_cover = f"https://covers.openlibrary.org/b/id/{cover_id}-M.jpg"
+                        except Exception:
+                            pass
+
+                    cfg = resolve_series_config(query_clean)
+                    series_name = cfg.series_display_name if cfg else query_clean.strip()
+                    for v_title in fandom_volumes:
+                        display_title = f"{series_name}, {v_title}"
+                        add_item(
+                            title=display_title,
+                            author=default_author or "Author",
+                            cover_url=default_cover,
+                            isbn_10=None,
+                            isbn_13=None,
+                            published_year=None,
+                            source="fandom"
+                        )
+                    if results:
+                        fandom_found = True
     except Exception as e:
         log.warning(f"Error resolving Fandom volumes in search: {e}")
 
     # ── Tier 2: Open Library Search ──
+    # Always run Tier 2 alongside Fandom results — the user should see BOTH
+    # the novel's volumes AND other books carrying the same name (e.g.
+    # "Overlord" volumes from Fandom + other books titled "Overlord" from OL).
+    # The only exception: cataloged series (hand-verified volume lists) are
+    # returned as-is without mixing in OL noise, since those lists are already
+    # complete and accurate.
+    if fandom_found and catalog_cfg_early:
+        return results
+
     ol_page = (offset // 40) + 1
     ol_items = []
     try:
