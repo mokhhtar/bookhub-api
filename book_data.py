@@ -1181,11 +1181,29 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
         log.warning(f"Open Library search failed: {e}")
 
     if ol_items:
+        # When Fandom already returned the series' real volumes, filter out
+        # companion materials (calendars, fanbooks, artbooks, official guides)
+        # from the Open Library results — they're real books but not what the
+        # user is looking for when they search for the novel/series by name.
+        COMPANION_KEYWORDS = [
+            "calendar", "fanbook", "fan book", "artbook", "art book",
+            "official guide", "guide book", "short story collection",
+            "side story", "spin-off", "companion", "illustration",
+        ]
+        def is_companion_material(title: str) -> bool:
+            t = title.lower()
+            return any(kw in t for kw in COMPANION_KEYWORDS)
+
         for d in ol_items:
             title = d.get("title", "")
             authors = d.get("author_name", [])
             author = ", ".join(authors) if authors else ""
-            
+
+            # Skip companion materials when the user is clearly looking for
+            # the main series (i.e. Fandom already found real volumes).
+            if fandom_found and is_companion_material(title):
+                continue
+
             # Select the LATEST published year from all editions of this work
             pub_years = d.get("publish_year", [])
             published_year = None
@@ -1198,10 +1216,10 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
                     pass
             if not published_year:
                 published_year = str(d.get("first_publish_year", "")) or None
-                
+
             cover_id = d.get("cover_i")
             cover_url = f"https://covers.openlibrary.org/b/id/{cover_id}-M.jpg" if cover_id else None
-            
+
             isbns = d.get("isbn", [])
             isbn_13 = next((i for i in isbns if len(i) == 13 and (i.startswith("9780") or i.startswith("9781"))), None)
             isbn_10 = next((i for i in isbns if len(i) == 10 and (i.startswith("0") or i.startswith("1"))), None)
