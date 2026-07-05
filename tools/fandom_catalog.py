@@ -149,23 +149,44 @@ CATALOG_SERIES: dict[str, FandomSeriesConfig] = {
     ),
 }
 
+# ── Helpers ──────────────────────────────────────────────────
+
+
+def _clean_query(q: str) -> str:
+    """
+    Normalizes a query for alias matching. Beyond whitespace/case, this
+    also strips a leading "the" and a bare trailing plural 's' from the
+    last word, so common shorthand phrasings a user actually types (e.g.
+    "Lord Of Mysteries" instead of the full "Lord of the Mysteries") still
+    match the canonical alias — without us having to hand-add every
+    singular/plural/article variant to CATALOG_SERIES aliases one by one,
+    which is exactly the kind of special-case list that stays perpetually
+    incomplete.
+
+    Defined here (before _ALIAS_INDEX is built below) so the SAME
+    normalization applies to both the index's keys and any runtime query —
+    if the two used different normalization, a query could be normalized
+    into a form that no longer matches an index key normalized differently.
+    """
+    q = re.sub(r"\s+", " ", (q or "").lower()).strip()
+    q = re.sub(r"\bthe\s+", "", q)
+    q = re.sub(r"\s+", " ", q).strip()
+    words = q.split(" ")
+    if words and words[-1].endswith("s") and not words[-1].endswith("ss") and len(words[-1]) > 3:
+        words[-1] = words[-1][:-1]
+    return " ".join(words)
+
+
 # Build alias → config lookup
 _ALIAS_INDEX: dict[str, FandomSeriesConfig] = {}
 for _cfg in CATALOG_SERIES.values():
     _ALIAS_INDEX[_cfg.series_key] = _cfg
     for _alias in _cfg.aliases:
-        _ALIAS_INDEX[re.sub(r"\s+", " ", _alias.lower()).strip()] = _cfg
-
-
-# ── Helpers ──────────────────────────────────────────────────
+        _ALIAS_INDEX[_clean_query(_alias)] = _cfg
 
 
 def _api_url(subdomain: str) -> str:
     return f"https://{subdomain}.fandom.com/api.php"
-
-
-def _clean_query(q: str) -> str:
-    return re.sub(r"\s+", " ", (q or "").lower()).strip()
 
 
 def _should_exclude(title: str, patterns: list[str]) -> bool:
