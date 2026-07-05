@@ -335,9 +335,9 @@ def resolve_series_config(query: str) -> Optional[FandomSeriesConfig]:
     if q in _ALIAS_INDEX:
         return _ALIAS_INDEX[q]
 
-    for alias, cfg in _ALIAS_INDEX.items():
-        if alias in q or q in alias:
-            return cfg
+    match = _best_alias_word_match(q)
+    if match:
+        return match
 
     # Try stripping volume suffix
     base = re.sub(
@@ -350,8 +350,61 @@ def resolve_series_config(query: str) -> Optional[FandomSeriesConfig]:
     ).strip()
     if base in _ALIAS_INDEX:
         return _ALIAS_INDEX[base]
+    if base != q:
+        match = _best_alias_word_match(base)
+        if match:
+            return match
 
     return None
+
+
+# Words too generic to count as a meaningful match on their own — a query
+# consisting only of these (e.g. "the", "of") should never resolve anything.
+_STOPWORDS = {"the", "of", "a", "an", "and", "in", "on", "at"}
+
+
+def _best_alias_word_match(q: str) -> Optional["FandomSeriesConfig"]:
+    """
+    Word-overlap match, NOT substring match.
+
+    Why substring matching was wrong: "if alias in q or q in alias" treats
+    a single shared word as a full match — a search for just "shadow" or
+    "lord" would match the whole "shadow slave" / "lord of the mysteries"
+    alias, because "shadow" is textually contained in "shadow slave". That
+    silently hides every OTHER book whose title happens to contain the same
+    common word, which is exactly backwards: a one-word, generic query
+    should show broad results, not get locked onto one cataloged series.
+
+    This instead requires that nearly all of the SHORTER side's significant
+    (non-stopword) words appear in the longer side, so "Lord of the
+    Mysteries" / "lord of mysteries" / "lotm" still resolve correctly, but
+    a bare "lord" or "shadow" does not.
+    """
+    q_words = [w for w in q.split(" ") if w and w not in _STOPWORDS]
+    if not q_words:
+        return None
+
+    best_cfg = None
+    best_score = 0.0
+    for alias, cfg in _ALIAS_INDEX.items():
+        a_words = [w for w in alias.split(" ") if w and w not in _STOPWORDS]
+        if not a_words:
+            continue
+
+        shorter, longer = (q_words, a_words) if len(q_words) <= len(a_words) else (a_words, q_words)
+        overlap = sum(1 for w in shorter if w in longer)
+        coverage = overlap / len(shorter)
+
+        # Require near-complete coverage of the shorter side's significant
+        # words, AND at least 2 significant words matched (or the alias/
+        # query itself is a genuine single-word series key like "lotm" or
+        # "coi", which are handled by the exact `q in _ALIAS_INDEX` check
+        # above already — this function only runs after that fails).
+        if coverage >= 0.85 and overlap >= 2 and coverage > best_score:
+            best_score = coverage
+            best_cfg = cfg
+
+    return best_cfg
 
 
 def get_config_by_subdomain(subdomain: str, query: Optional[str] = None) -> Optional[FandomSeriesConfig]:
