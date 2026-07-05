@@ -527,11 +527,126 @@ RULES:
     return author, cover_url
 
 
+# Category names (case-insensitive, exact) that Fandom light-novel wikis use to
+# group their volume pages. This is the structured, deterministic entry point —
+# far more reliable than scraping a page's prose with Gemini.
+_VOLUME_CATEGORY_NAMES = {
+    "light novel", "light novels", "volumes", "light novel volumes",
+    "novels", "novel volumes", "light novel series", "novel",
+}
+
+# Titles that look like volumes but are companion/adaptation material, not the
+# main light-novel series. Excluded from the deterministic volume list.
+_COMPANION_TITLE_RE = re.compile(
+    r"fanbook|fan book|junior bunko|manga|short story|artbook|art book|"
+    r"\bart collection\b|calendar|anthology|drama|web novel|side story|"
+    r"\bguide\b|bonus|special edition|omnibus",
+    re.IGNORECASE,
+)
+
+
+def _fetch_volumes_via_category(subdomain: str, book_title: str) -> list[str]:
+    """
+    Deterministic volume discovery via MediaWiki's STRUCTURED category API —
+    no Gemini, no prose scraping, nothing to hallucinate.
+
+    How it works (validated against e.g. Ascendance of a Bookworm → 33 vols,
+    Overlord → 17 vols):
+      1. List the wiki's categories and match ones that group novel volumes
+         (Category:"Light Novel", "Light Novels", "Volumes", ...).
+      2. Pull those categories' member pages (list=categorymembers).
+      3. Keep only titles shaped like a real volume page — "Part N Volume M",
+         "Volume N", or "{Series} Volume N" — and drop companion/adaptation
+         material (fanbooks, manga, junior bunko, bonus/special editions...).
+      4. Sort by (part, volume).
+
+    Returns [] when the wiki has no usable volume category or too few matches,
+    so the caller can fall back to the master-page/Gemini path. Note: like the
+    rest of this generalized path, this runs only for series NOT in the
+    hand-verified catalog; series that share a subdomain are disambiguated by
+    the catalog, which is consulted first.
+    """
+    url = f"https://{subdomain}.fandom.com/api.php"
+    headers = {"User-Agent": "BookHub/1.0 (mokhhtar@github.com)"}
+
+    # 1. Find volume-grouping categories on this wiki.
+    matched_cats: list[str] = []
+    try:
+        r = httpx.get(url, params={
+            "action": "query", "list": "allcategories",
+            "aclimit": 500, "format": "json",
+        }, headers=headers, timeout=6.0)
+        if r.status_code == 200:
+            for c in r.json().get("query", {}).get("allcategories", []):
+                name = c.get("*", "")
+                if name.strip().lower() in _VOLUME_CATEGORY_NAMES:
+                    matched_cats.append(name)
+    except Exception as e:
+        log.warning(f"Category listing failed for '{subdomain}': {e}")
+        return []
+
+    if not matched_cats:
+        return []
+
+    # 2. Collect member page titles from those categories.
+    member_titles: list[str] = []
+    seen: set[str] = set()
+    for cat in matched_cats:
+        try:
+            r = httpx.get(url, params={
+                "action": "query", "list": "categorymembers",
+                "cmtitle": f"Category:{cat}", "cmlimit": 500, "format": "json",
+            }, headers=headers, timeout=8.0)
+            if r.status_code == 200:
+                for m in r.json().get("query", {}).get("categorymembers", []):
+                    t = m.get("title", "")
+                    if m.get("ns") == 0 and t and t not in seen:
+                        seen.add(t)
+                        member_titles.append(t)
+        except Exception as e:
+            log.warning(f"categorymembers fetch failed for '{cat}' on '{subdomain}': {e}")
+
+    if not member_titles:
+        return []
+
+    # 3. Keep only real volume pages, drop companion material.
+    series_prefix = re.escape(book_title.strip())
+    vol_patterns = [
+        re.compile(r"^(Part\s+\d+\s+)?Volume\s+\d+\b", re.IGNORECASE),
+        re.compile(rf"^{series_prefix}\s+Volume\s+\d+\b", re.IGNORECASE),
+    ]
+    volumes = [
+        t for t in member_titles
+        if "/" not in t
+        and not _COMPANION_TITLE_RE.search(t)
+        and any(p.match(t) for p in vol_patterns)
+    ]
+
+    # A lone match is more likely a false positive than a real one-volume
+    # series; require at least two before trusting this path.
+    if len(volumes) < 2:
+        return []
+
+    # 4. Order by (part, volume).
+    def _sort_key(t: str) -> tuple:
+        p = re.search(r"Part\s+(\d+)", t, re.IGNORECASE)
+        v = re.search(r"Volume\s+(\d+)", t, re.IGNORECASE)
+        return (int(p.group(1)) if p else 0, int(v.group(1)) if v else 0)
+
+    volumes.sort(key=_sort_key)
+    log.info(f"Resolved {len(volumes)} volumes for '{book_title}' via category API on '{subdomain}'")
+    return volumes
+
+
 def fetch_volumes_from_fandom(subdomain: str, book_title: str) -> list[str]:
     """
     Queries Fandom for all volumes of a book/series.
-    Cataloged series (see fandom_catalog.py) use structured configs first;
-    all others fall back to legacy heuristic scraping below.
+    Resolution order (most to least reliable):
+      1. Hand-verified catalog config (fandom_catalog.py).
+      2. Structured MediaWiki category API (_fetch_volumes_via_category) —
+         deterministic, no LLM.
+      3. Master/index page raw text handed to Gemini for extraction (last
+         resort, for wikis with no usable volume category).
     """
     try:
         from tools.fandom_catalog import fetch_volumes_for_search
@@ -540,6 +655,14 @@ def fetch_volumes_from_fandom(subdomain: str, book_title: str) -> list[str]:
             return [v.wiki_page for v in catalog_volumes]
     except Exception as e:
         log.warning(f"Fandom catalog volume fetch failed for '{book_title}': {e}")
+
+    # Structured, deterministic category lookup — preferred over the Gemini path.
+    try:
+        category_volumes = _fetch_volumes_via_category(subdomain, book_title)
+        if category_volumes:
+            return category_volumes
+    except Exception as e:
+        log.warning(f"Category-based volume fetch failed for '{book_title}': {e}")
 
     # ── Generalized path: read a master/index page's raw text via Gemini ──
     # (Always cross-checked against a real page-title scan below — a wiki's

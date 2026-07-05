@@ -223,13 +223,50 @@ def sanitize_book_query(text: str) -> str:
     return " ".join(text.split())
 
 
+# Companion materials are real published items (calendars, fanbooks, artbooks,
+# official guides, short-story collections, spin-offs) but NOT what a user means
+# when they search for a novel/series by name. They're the #1 cause of the
+# "summarized the wrong book" bug: their records are often richer than the main
+# series' (more subjects, cleaner English titles), so naive "best record"
+# heuristics pick them. Shared by resolve_book AND search_books_list so both
+# resolution paths stay consistent.
+COMPANION_KEYWORDS = [
+    "calendar", "fanbook", "fan book", "artbook", "art book",
+    "official guide", "guide book", "short story collection",
+    "side story", "spin-off", "companion", "illustration",
+]
+
+
+def is_companion_material(title: str) -> bool:
+    if not title:
+        return False
+    t = title.lower()
+    return any(kw in t for kw in COMPANION_KEYWORDS)
+
+
+def normalize_book_query(q: str) -> str:
+    """
+    Normalizes a title/series query so trivially-different phrasings resolve to
+    the SAME book. Right now this strips the article "the" wherever it appears —
+    Open Library's relevance ranking is surprisingly sensitive to a leading
+    "The ", so "The Ascendance of a Bookworm" and "Ascendance of a Bookworm"
+    otherwise return different (and differently-wrong) top matches from the same
+    API. Applied for the external API calls only, never to what we display.
+    """
+    if not q:
+        return q
+    stripped = re.sub(r'\bthe\s+', '', q, flags=re.IGNORECASE).strip()
+    return stripped or q
+
+
 def _query_google_books(title: str, author: str = "") -> Optional[BookRecord]:
     """
     Query Google Books. This is the PRIMARY source because it returns the
     official publisher/jacket description — the single most important
     grounding signal for the summarizer prompt.
     """
-    clean_title = sanitize_book_query(title)
+    norm_title = normalize_book_query(title)
+    clean_title = sanitize_book_query(norm_title)
     clean_author = sanitize_book_query(author)
     if not clean_title:
         return None
@@ -286,8 +323,8 @@ def _query_google_books(title: str, author: str = "") -> Optional[BookRecord]:
     
     def norm_str(s):
         return "".join(c.lower() for c in s if c.isalnum())
-        
-    target_title_norm = norm_str(title)
+
+    target_title_norm = norm_str(norm_title)
     
     for it in items:
         info = it.get("volumeInfo", {})
@@ -298,8 +335,11 @@ def _query_google_books(title: str, author: str = "") -> Optional[BookRecord]:
         if not item_desc:
             continue
             
-        item_title_norm = norm_str(item_title)
-        
+        # Compare with "the" stripped on BOTH sides so a literal "The Hobbit"
+        # entry still exact-matches the normalized "Hobbit" query (otherwise a
+        # translated edition could tie and win on ordering).
+        item_title_norm = norm_str(normalize_book_query(item_title))
+
         if item_title_norm == target_title_norm:
             score = 100
         elif item_title_norm in target_title_norm or target_title_norm in item_title_norm:
@@ -379,7 +419,7 @@ def _query_open_library(title: str, author: str = "") -> Optional[BookRecord]:
     Internet Archive) and frequently has titles Google Books misses —
     older books, small-press, non-English, academic texts.
     """
-    clean_title = sanitize_book_query(title)
+    clean_title = sanitize_book_query(normalize_book_query(title))
     clean_author = sanitize_book_query(author)
     if not clean_title:
         return None
@@ -446,8 +486,38 @@ def _query_open_library(title: str, author: str = "") -> Optional[BookRecord]:
     if not candidates:
         return None
 
-    # Prefer the doc with the most subjects (richer record) as a quality proxy.
-    best = max(candidates, key=lambda d: len(d.get("subject", [])))
+    # Drop companion materials (calendars, fanbooks, spin-offs) unless the
+    # user's own query names one — otherwise a fanbook's richer record can
+    # win the "most subjects" tie-break and get summarized as if it were the
+    # main series (the "Ascendance of a Bookworm Calendar 2022" bug).
+    if not is_companion_material(title):
+        non_companion = [d for d in candidates if not is_companion_material(d.get("title", ""))]
+        if non_companion:
+            candidates = non_companion
+
+    # Selection: prefer a candidate whose title actually matches the query
+    # (exact normalized match first, then a base-title match), and only fall
+    # back to the "most subjects" richness proxy to break ties among equally
+    # relevant candidates. Matching relevance beats record-richness — a thin
+    # record for the right book is better than a rich one for the wrong book.
+    def _norm(s: str) -> str:
+        return re.sub(r'[^a-z0-9]', '', (s or "").lower())
+
+    q_norm = _norm(normalize_book_query(title))
+
+    def _rank(d: dict) -> tuple:
+        t_norm = _norm(d.get("title", ""))
+        if t_norm == q_norm:
+            relevance = 3
+        elif q_norm and (t_norm.startswith(q_norm) or q_norm.startswith(t_norm)):
+            relevance = 2
+        elif q_norm and (q_norm in t_norm or t_norm in q_norm):
+            relevance = 1
+        else:
+            relevance = 0
+        return (relevance, len(d.get("subject", [])))
+
+    best = max(candidates, key=_rank)
 
     cover_id = best.get("cover_i")
     cover_url = f"{OPEN_LIBRARY_COVERS_API}/id/{cover_id}-L.jpg" if cover_id else None
@@ -846,15 +916,28 @@ def resolve_book(title: str, author: str = "", isbn: Optional[str] = None, googl
     # Go straight to the Fandom series fallback which fetches the correct synopsis.
     req_vol_check = extract_volume_number(title)
     if not req_vol_check:
-        # No volume number — normal search path (Open Library first, Google Books fallback)
-        record = _query_open_library(title, author)
-        if record and record.found:
-            log.info(f"Resolved '{title}' via open_library")
-            return record
+        # No volume number — normal search path. Google Books FIRST: it carries
+        # the official publisher description (the single most important grounding
+        # signal, per this module's contract), and it indexes the main-series
+        # entry for titles where Open Library only has peripheral editions
+        # (manga, calendars, spin-offs) — which is exactly what made the old
+        # OL-first order ground to the wrong book. Open Library is the fallback
+        # for older/obscure titles Google Books misses.
+        # Both queries normalize "the" internally. When the query is NOT itself a
+        # companion item, reject a companion-material match and try the next source
+        # instead, so /summary never grounds to a calendar/fanbook when the real
+        # series is available.
+        query_is_companion = is_companion_material(title)
 
         record = _query_google_books(title, author)
-        if record and record.found:
-            log.info(f"Resolved '{title}' via google_books (fallback)")
+        if record and record.found and (query_is_companion or not is_companion_material(record.title)):
+            log.info(f"Resolved '{title}' via google_books")
+            return record
+
+        record = _query_open_library(title, author)
+        if record and record.found and (query_is_companion or not is_companion_material(record.title)):
+            log.info(f"Resolved '{title}' via open_library (fallback)")
+            return record
        # Fallback for synthetic/Fandom volume titles (e.g. "Lord of Mysteries, Volume 8: Fool")
     req_vol = extract_volume_number(title)
     if req_vol:
@@ -1016,24 +1099,19 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
     query_clean = query.strip()
     if not query_clean:
         return []
-    
+
+    # Normalize the query for the external API calls (see normalize_book_query):
+    # "The Ascendance of a Bookworm" and "Ascendance of a Bookworm" otherwise
+    # return different candidate sets from the same APIs.
+    query_for_search = normalize_book_query(query_clean)
+
     results = []
     seen = set()
 
-    # Companion materials (calendars, fanbooks, artbooks, official guides) are
-    # real published items but not what a user means when they search for a
-    # novel/series by name. Shared by both the Fandom and Open Library tiers.
-    COMPANION_KEYWORDS = [
-        "calendar", "fanbook", "fan book", "artbook", "art book",
-        "official guide", "guide book", "short story collection",
-        "side story", "spin-off", "companion", "illustration",
-    ]
-    def is_companion_material(title: str) -> bool:
-        t = title.lower()
-        return any(kw in t for kw in COMPANION_KEYWORDS)
-
     # If the user's own query names a companion item (e.g. "... Fanbook 2"),
     # don't filter it out — they're explicitly looking for it.
+    # (COMPANION_KEYWORDS / is_companion_material are module-level, shared with
+    # resolve_book so both resolution paths filter identically.)
     query_is_companion_search = is_companion_material(query_clean)
 
     # Helper function for word overlap validation
@@ -1196,7 +1274,7 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
     ol_page = (offset // 40) + 1
     ol_items = []
     try:
-        resp = httpx.get(f"{OPEN_LIBRARY_SEARCH_API}?q={urllib.parse.quote(query_clean)}&page={ol_page}&limit=40", headers=HEADERS, timeout=8.0)
+        resp = httpx.get(f"{OPEN_LIBRARY_SEARCH_API}?q={urllib.parse.quote(query_for_search)}&page={ol_page}&limit=40", headers=HEADERS, timeout=8.0)
         if resp.status_code == 200:
             ol_items = resp.json().get("docs", []) or []
     except Exception as e:
@@ -1242,12 +1320,16 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
 
             add_item(title, author, cover_url, isbn_10, isbn_13, published_year, openlibrary_id=d.get("key"), source="open_library")
 
-    # ── Tier 3: Google Books Search (Fallback) ──
-    if not results:
+    # ── Tier 3: Google Books Search (Fallback / enrichment) ──
+    # Not gated to "only when OL found nothing": a single sparse or
+    # off-target Open Library match (e.g. one spin-off novel, one foreign
+    # edition) shouldn't block a much better Google Books result set for
+    # the same query. Runs whenever the combined results so far are thin.
+    if len(results) < 5:
         gb_items = []
         gb_offset = offset
         params = {
-            "q": query_clean,
+            "q": query_for_search,
             "maxResults": 40,
             "startIndex": gb_offset,
             "printType": "books",
@@ -1362,11 +1444,20 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
     
     deduped_results = []
     for item in results:
+        # Fandom volumes are already a clean, complete, correctly-ordered series
+        # list (from the catalog or the structured category API). Don't run them
+        # through the edition-dedup below — it merges duplicate OL/Google editions
+        # by (base_title, volume_number), and two-level "Part N Volume M" numbering
+        # (e.g. Ascendance of a Bookworm) collapses distinct volumes into one.
+        if item.get("source") == "fandom":
+            deduped_results.append(item)
+            continue
+
         title = item.get("title", "")
         author = item.get("author", "")
         base_title = get_base_title(title)
         vol_num = extract_volume_number(title)
-        
+
         is_duplicate = False
         for existing in deduped_results:
             ex_title = existing.get("title", "")
