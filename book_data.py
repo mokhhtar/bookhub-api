@@ -1020,6 +1020,18 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
     results = []
     seen = set()
 
+    # Companion materials (calendars, fanbooks, artbooks, official guides) are
+    # real published items but not what a user means when they search for a
+    # novel/series by name. Shared by both the Fandom and Open Library tiers.
+    COMPANION_KEYWORDS = [
+        "calendar", "fanbook", "fan book", "artbook", "art book",
+        "official guide", "guide book", "short story collection",
+        "side story", "spin-off", "companion", "illustration",
+    ]
+    def is_companion_material(title: str) -> bool:
+        t = title.lower()
+        return any(kw in t for kw in COMPANION_KEYWORDS)
+
     # Helper function for word overlap validation
     STOP_WORDS = {"the", "of", "a", "an", "in", "on", "and", "or", "to", "for", "with", "by", "at", "de", "la", "el"}
     def has_word_overlap(title: str) -> bool:
@@ -1094,9 +1106,14 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
                     # descriptive text (synopsis, calendar descriptions, etc.).
                     # A real volume title is short — long strings are almost always
                     # page descriptions that Gemini mistakenly returned as "chapters".
-                    valid_volumes = [v for v in fandom_volumes if isinstance(v, str) and len(v.strip()) <= 120]
-                    if not valid_volumes:
-                        fandom_volumes = []
+                    # Also drop companion materials (calendars, fanbooks, artbooks)
+                    # that Gemini's wiki-scrape may have mistaken for a real volume —
+                    # the length check alone doesn't catch a short title like
+                    # "Calendar 2022".
+                    fandom_volumes = [
+                        v for v in fandom_volumes
+                        if isinstance(v, str) and len(v.strip()) <= 120 and not is_companion_material(v)
+                    ]
 
                 if fandom_volumes:
                     default_author = ""
@@ -1185,15 +1202,6 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
         # companion materials (calendars, fanbooks, artbooks, official guides)
         # from the Open Library results — they're real books but not what the
         # user is looking for when they search for the novel/series by name.
-        COMPANION_KEYWORDS = [
-            "calendar", "fanbook", "fan book", "artbook", "art book",
-            "official guide", "guide book", "short story collection",
-            "side story", "spin-off", "companion", "illustration",
-        ]
-        def is_companion_material(title: str) -> bool:
-            t = title.lower()
-            return any(kw in t for kw in COMPANION_KEYWORDS)
-
         for d in ol_items:
             title = d.get("title", "")
             authors = d.get("author_name", [])
