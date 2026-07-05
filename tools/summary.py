@@ -472,9 +472,7 @@ def summary(req: SummaryRequest):
 
     def get_similar():
         try:
-            return book_data.find_similar_by_category(
-                record.primary_category, exclude_title=record.title, limit=4
-            )
+            return book_data.find_similar_books(record, limit=4)
         except Exception as e:
             log.warning(f"Similar books search failed for '{record.title}': {e}")
             return []

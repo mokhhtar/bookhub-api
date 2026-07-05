@@ -1021,66 +1021,233 @@ def resolve_book(title: str, author: str = "", isbn: Optional[str] = None, googl
     return _empty_record()
 
 
-def find_similar_by_category(category: str, exclude_title: str = "", limit: int = 4) -> list[dict]:
+# Over-broad subjects that make poor "similar" signals — they match half the
+# catalog, so searching them returns random books. Dropped in favour of the
+# more specific subjects a book also carries.
+_BROAD_SUBJECTS = {
+    "fiction", "juvenile fiction", "juvenile nonfiction", "nonfiction",
+    "non-fiction", "general", "literary collections", "literature", "books",
+    "reading", "books and reading", "young adult fiction", "young adult nonfiction",
+}
+
+
+def _is_mostly_ascii(s: str) -> bool:
+    return bool(s) and sum(1 for c in s if ord(c) < 128) >= len(s) * 0.8
+
+
+def _clean_subject(s: str) -> str:
     """
-    Real "similar books" — not Gemini-invented titles. Searches Google
-    Books by category/subject and returns actual catalog matches, sorted
-    by relevance/rating. Falls back to Open Library subject search.
+    Normalizes a raw subject and rejects unusable ones: Open Library facet
+    subjects ("franchise:...", "place:...", "person:...") and non-Latin
+    subjects (e.g. the Japanese subjects OL returns for a JP-catalogued series),
+    both of which produce garbage `subject:"..."` queries.
     """
-    if not category:
+    s = (s or "").strip()
+    if not s or ":" in s:
+        return ""
+    if not re.search(r"[A-Za-z]", s) or not _is_mostly_ascii(s):
+        return ""
+    return s
+
+
+def _collect_similarity_subjects(record: "BookRecord") -> list[str]:
+    """
+    Best-effort genre/theme signals for finding similar books. Google Books
+    `categories` are frequently missing or over-broad, so we also pull the far
+    more granular Open Library `subject` list for this same book (e.g. "Dragons",
+    "Magic", "Fantasy fiction"). Specific subjects rank first; over-broad buckets
+    ("Fiction", "Young Adult Fiction") are kept only as a last-resort fallback so
+    a book with nothing but a broad category still gets suggestions.
+    """
+    specific: list[str] = []
+    broad: list[str] = []
+    seen: set[str] = set()
+
+    def add(raw: str) -> None:
+        s = _clean_subject(raw)
+        if not s:
+            return
+        key = s.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        (broad if key in _BROAD_SUBJECTS else specific).append(s)
+
+    # 1. Google Books categories already on the record (may be slash-joined,
+    #    e.g. "Fiction / Fantasy / Epic").
+    for c in record.categories or []:
+        for part in re.split(r"\s*/\s*", c):
+            add(part)
+
+    # 2. Granular Open Library subjects for this exact book.
+    try:
+        params = {"fields": "subject", "limit": 1}
+        if record.isbn_13:
+            params["isbn"] = record.isbn_13
+        else:
+            params["title"] = sanitize_book_query(normalize_book_query(record.title))
+            if record.author:
+                params["author"] = sanitize_book_query(record.author)
+        r = httpx.get(OPEN_LIBRARY_SEARCH_API, params=params, headers=HEADERS, timeout=6.0)
+        if r.status_code == 200:
+            docs = r.json().get("docs", [])
+            if docs:
+                for s in (docs[0].get("subject", []) or [])[:12]:
+                    add(s)
+    except Exception as e:
+        log.warning(f"OL subject lookup for similar books failed: {e}")
+
+    # 3. Last resort: the exact resolved Google Books volume often carries no
+    #    categories even when sibling editions do (e.g. Atomic Habits). If we
+    #    still have nothing, harvest categories from a title search so popular
+    #    books never end up with zero suggestions.
+    if not specific and not broad:
+        try:
+            params = {
+                "q": f"intitle:{sanitize_book_query(normalize_book_query(record.title))}",
+                "maxResults": 5, "printType": "books",
+            }
+            if GOOGLE_BOOKS_API_KEY:
+                params["key"] = GOOGLE_BOOKS_API_KEY
+            r = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=6.0)
+            if r.status_code == 200:
+                for it in r.json().get("items", []) or []:
+                    for c in it.get("volumeInfo", {}).get("categories", []) or []:
+                        for part in re.split(r"\s*/\s*", c):
+                            add(part)
+        except Exception as e:
+            log.warning(f"GB category harvest for similar books failed: {e}")
+
+    return specific + broad
+
+
+def find_similar_books(record: "BookRecord", limit: int = 4) -> list[dict]:
+    """
+    Real, same-genre "similar books" — not Gemini-invented titles. Returns items
+    in the SAME shape as search results (SearchResponseItem), crucially WITH
+    identifiers (google_id / isbn / openlibrary_id) so the frontend can open each
+    one straight into a summary instead of falling back to a title search.
+
+    Strategy: collect specific genre/theme subjects for this book, search Google
+    Books by subject (ranked by popularity), exclude this same series and any
+    companion material, keep one book per author for variety (different authors,
+    same genre), and top up from Open Library subject pages if still thin.
+    """
+    if not record or not record.found:
         return []
 
-    params = {"q": f'subject:"{category}"', "maxResults": limit + 3, "printType": "books",
-              "orderBy": "relevance"}
-    if GOOGLE_BOOKS_API_KEY:
-        params["key"] = GOOGLE_BOOKS_API_KEY
+    subjects = _collect_similarity_subjects(record)
+    if not subjects:
+        return []
 
-    results = []
-    try:
-        resp = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=8.0)
-        resp.raise_for_status()
-        items = resp.json().get("items", [])
-        for it in items:
-            info = it.get("volumeInfo", {})
-            t = info.get("title", "")
-            if not t or t.lower() == exclude_title.lower():
-                continue
-            results.append({
-                "title": t,
-                "author": ", ".join(info.get("authors", [])) or "Unknown",
-                "cover_url": (info.get("imageLinks", {}) or {}).get("thumbnail", ""),
-            })
+    exclude_base = get_base_title(record.title)
+    exclude_author = (record.author or "").lower()
+    # A distinctive base title lets us drop same-universe entries (e.g. exclude
+    # every "Dune ..." book when the source is "Dune"). Guarded by length so we
+    # don't over-filter short/common titles like "It".
+    franchise_token = exclude_base if len(exclude_base) >= 4 else None
+
+    results: list[dict] = []
+    seen_base: set[str] = set()
+    seen_authors: set[str] = set()
+
+    def consider(item: dict) -> None:
+        title = item.get("title", "")
+        # Every suggestion must be openable into a summary → require an identifier.
+        if not title or not (item.get("google_id") or item.get("openlibrary_id")):
+            return
+        # English only — subject browsing returns foreign editions even with
+        # langRestrict, and a non-Latin title is a giveaway.
+        if not _is_mostly_ascii(title):
+            return
+        if is_companion_material(title):
+            return
+        base = get_base_title(title)
+        if not base or base == exclude_base or base in seen_base:
+            return
+        if franchise_token and (franchise_token in base or base in franchise_token):
+            return
+        # Same-genre / different-author: skip the source author and cap one per author.
+        author = (item.get("author") or "").lower()
+        if author and author != "unknown" and (author == exclude_author or author in seen_authors):
+            return
+        seen_base.add(base)
+        if author and author != "unknown":
+            seen_authors.add(author)
+        results.append(item)
+
+    # ── Google Books by subject (carries google_id + isbn) ──
+    # Keep Google's own relevance ordering — re-ranking by popularity surfaces
+    # famous but mis-tagged classics (e.g. Wuthering Heights under "Science
+    # Fiction") ahead of genuinely on-subject books.
+    for subject in subjects[:2]:
+        if len(results) >= limit:
+            break
+        params = {"q": f'subject:"{subject}"', "maxResults": 20, "printType": "books",
+                  "orderBy": "relevance", "langRestrict": "en"}
+        if GOOGLE_BOOKS_API_KEY:
+            params["key"] = GOOGLE_BOOKS_API_KEY
+        try:
+            resp = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=8.0)
+            resp.raise_for_status()
+            items = resp.json().get("items", []) or []
+            for it in items:
+                if len(results) >= limit:
+                    break
+                info = it.get("volumeInfo", {})
+                if info.get("language") and info.get("language") != "en":
+                    continue
+                isbn_10 = isbn_13 = None
+                for ident in info.get("industryIdentifiers", []):
+                    v = ident.get("identifier", "")
+                    if ident.get("type") == "ISBN_13":
+                        isbn_13 = v
+                    elif ident.get("type") == "ISBN_10":
+                        isbn_10 = v
+                cover = (info.get("imageLinks", {}) or {}).get("thumbnail", "") or ""
+                if cover.startswith("http:"):
+                    cover = cover.replace("http:", "https:")
+                consider({
+                    "title": info.get("title", ""),
+                    "author": ", ".join(info.get("authors", [])) or "Unknown",
+                    "cover_url": cover,
+                    "isbn_10": isbn_10,
+                    "isbn_13": isbn_13,
+                    "published_year": (info.get("publishedDate") or "")[:4] or None,
+                    "google_id": it.get("id"),
+                    "source": "google_books",
+                })
+        except Exception as e:
+            log.warning(f"Google Books subject search failed for '{subject}': {e}")
+
+    # ── Open Library subject pages (fallback / top-up when Google Books is thin) ──
+    if len(results) < limit:
+        for subject in subjects[:2]:
             if len(results) >= limit:
                 break
-    except Exception as e:
-        log.warning(f"Google Books category search failed: {e}")
+            try:
+                slug = urllib.parse.quote(subject.lower().replace(" ", "_"))
+                resp = httpx.get(f"https://openlibrary.org/subjects/{slug}.json",
+                                  params={"limit": 20}, headers=HEADERS, timeout=8.0)
+                resp.raise_for_status()
+                for w in resp.json().get("works", []) or []:
+                    if len(results) >= limit:
+                        break
+                    cover_id = w.get("cover_id")
+                    consider({
+                        "title": w.get("title", ""),
+                        "author": ", ".join(a.get("name", "") for a in w.get("authors", [])) or "Unknown",
+                        "cover_url": f"{OPEN_LIBRARY_COVERS_API}/id/{cover_id}-M.jpg" if cover_id else "",
+                        "isbn_10": None,
+                        "isbn_13": None,
+                        "published_year": str(w.get("first_publish_year", "")) or None,
+                        "openlibrary_id": w.get("key"),
+                        "source": "open_library",
+                    })
+            except Exception as e:
+                log.warning(f"Open Library subject search failed for '{subject}': {e}")
 
-    if results:
-        return results
-
-    # Fallback: Open Library subject search
-    try:
-        slug = urllib.parse.quote(category.lower().replace(" ", "_"))
-        resp = httpx.get(f"https://openlibrary.org/subjects/{slug}.json",
-                          params={"limit": limit + 3}, headers=HEADERS, timeout=8.0)
-        resp.raise_for_status()
-        works = resp.json().get("works", [])
-        for w in works:
-            t = w.get("title", "")
-            if not t or t.lower() == exclude_title.lower():
-                continue
-            cover_id = w.get("cover_id")
-            results.append({
-                "title": t,
-                "author": ", ".join(a.get("name", "") for a in w.get("authors", [])) or "Unknown",
-                "cover_url": f"{OPEN_LIBRARY_COVERS_API}/id/{cover_id}-M.jpg" if cover_id else "",
-            })
-            if len(results) >= limit:
-                break
-    except Exception as e:
-        log.warning(f"Open Library subject search failed: {e}")
-
-    return results
+    return results[:limit]
 
 
 def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict]:
