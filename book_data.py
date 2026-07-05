@@ -1121,17 +1121,81 @@ def _collect_similarity_subjects(record: "BookRecord") -> list[str]:
     return specific + broad
 
 
-def find_similar_books(record: "BookRecord", limit: int = 4) -> list[dict]:
+def verify_book_exists(title: str, author: str = "") -> Optional[dict]:
     """
-    Real, same-genre "similar books" — not Gemini-invented titles. Returns items
-    in the SAME shape as search results (SearchResponseItem), crucially WITH
-    identifiers (google_id / isbn / openlibrary_id) so the frontend can open each
-    one straight into a summary instead of falling back to a title search.
+    Lightweight grounding check for a proposed book title. Returns a
+    SearchResponseItem-shaped dict (title, author, cover_url, isbn_10/13,
+    published_year, google_id, source) if the book is a real, English catalog
+    entry, else None. Used to VERIFY AI-proposed "similar books" so we only ever
+    surface titles that actually exist and can be opened into a summary —
+    keeping the no-hallucinated-books guarantee even for AI-sourced suggestions.
+    """
+    clean_title = sanitize_book_query(title)
+    if not clean_title:
+        return None
+    q = f"intitle:{clean_title}"
+    if author:
+        q += f" inauthor:{sanitize_book_query(author)}"
+    params = {"q": q, "maxResults": 3, "printType": "books", "langRestrict": "en"}
+    if GOOGLE_BOOKS_API_KEY:
+        params["key"] = GOOGLE_BOOKS_API_KEY
+
+    target = re.sub(r"[^a-z0-9]", "", normalize_book_query(title).lower())
+    try:
+        resp = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=6.0)
+        if resp.status_code != 200:
+            return None
+        for it in resp.json().get("items", []) or []:
+            info = it.get("volumeInfo", {})
+            if info.get("language") and info.get("language") != "en":
+                continue
+            cand_title = info.get("title", "")
+            cand_norm = re.sub(r"[^a-z0-9]", "", normalize_book_query(cand_title).lower())
+            # Require a real title-match so a vague AI title doesn't map to an
+            # unrelated book: exact, prefix, or substring either direction.
+            if not cand_norm or not (
+                cand_norm == target or cand_norm.startswith(target)
+                or target.startswith(cand_norm) or target in cand_norm or cand_norm in target
+            ):
+                continue
+            isbn_10 = isbn_13 = None
+            for ident in info.get("industryIdentifiers", []):
+                v = ident.get("identifier", "")
+                if ident.get("type") == "ISBN_13":
+                    isbn_13 = v
+                elif ident.get("type") == "ISBN_10":
+                    isbn_10 = v
+            cover = (info.get("imageLinks", {}) or {}).get("thumbnail", "") or ""
+            if cover.startswith("http:"):
+                cover = cover.replace("http:", "https:")
+            return {
+                "title": cand_title,
+                "author": ", ".join(info.get("authors", [])) or (author or "Unknown"),
+                "cover_url": cover,
+                "isbn_10": isbn_10,
+                "isbn_13": isbn_13,
+                "published_year": (info.get("publishedDate") or "")[:4] or None,
+                "google_id": it.get("id"),
+                "source": "google_books",
+            }
+    except Exception as e:
+        log.warning(f"verify_book_exists failed for '{title}': {e}")
+    return None
+
+
+def find_similar_by_subject(record: "BookRecord", limit: int = 4) -> list[dict]:
+    """
+    Catalog-based "similar books" fallback (used when the AI-proposed path in the
+    summary tool yields too few verified results). Returns items in the SAME shape
+    as search results (SearchResponseItem), WITH identifiers so each can open a
+    summary directly.
 
     Strategy: collect specific genre/theme subjects for this book, search Google
-    Books by subject (ranked by popularity), exclude this same series and any
-    companion material, keep one book per author for variety (different authors,
-    same genre), and top up from Open Library subject pages if still thin.
+    Books by subject (Google's relevance order), exclude this same series and any
+    companion material, keep one book per author, and top up from Open Library
+    subject pages if still thin. Works well for mainstream books but is weak for
+    web/light novels whose genre isn't captured in the Western catalogs — which is
+    exactly why the AI-proposed path is primary.
     """
     if not record or not record.found:
         return []

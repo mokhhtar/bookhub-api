@@ -349,6 +349,99 @@ def resolve_factual_awards(record: book_data.BookRecord) -> list[dict]:
     return []
 
 
+# ── Similar books: AI proposes, catalog verifies ────────────
+def _propose_similar_titles(record: book_data.BookRecord, n: int = 8) -> list[tuple]:
+    """
+    Ask Gemini for real, same-genre books a fan of this one would enjoy. Only
+    TITLES are AI-sourced — each is verified against the real catalog before
+    being shown (see _similar_books), so nothing hallucinated ever surfaces.
+    This is the only approach that works for web/light novels, whose genre isn't
+    captured in Google Books / Open Library subject data.
+    """
+    ctx = ""
+    if record.primary_category:
+        ctx += f"Category: {record.primary_category}\n"
+    if record.description:
+        ctx += f"About: {record.description[:400]}\n"
+
+    prompt = f"""You recommend books to a reader who just finished one and wants MORE LIKE IT.
+
+BOOK: "{record.title}" by {record.author or "Unknown"}
+{ctx}
+List {n} real, actually-published books a fan of this one would enjoy — same genre, themes, tone, and audience. If this is a web novel / light novel, recommend other novels in that same space (e.g. progression fantasy, xianxia, LitRPG, isekai, cultivation), NOT unrelated literary classics.
+
+RULES:
+- Real, published books ONLY. Never invent titles or authors.
+- Do NOT include "{record.title}" itself or another volume of the SAME series.
+- Prefer DIFFERENT authors and a variety of works.
+- Order from most to least similar.
+- Return ONLY JSON: {{"books": [{{"title": "...", "author": "..."}}, ...]}}"""
+
+    raw = gemini_client.generate(prompt)
+    data = gemini_client.parse_json_response(raw)
+    out = []
+    for b in (data.get("books") or []):
+        if isinstance(b, dict):
+            t = (b.get("title") or "").strip()
+            a = (b.get("author") or "").strip()
+            if t:
+                out.append((t, a))
+    return out
+
+
+def _similar_books(record: book_data.BookRecord, limit: int = 4) -> list[dict]:
+    """
+    Same-genre "similar books": Gemini proposes real titles, each is VERIFIED
+    against the real catalog (book_data.verify_book_exists) so every suggestion
+    exists and carries the identifiers needed to open its summary directly.
+    Tops up from the catalog subject-search fallback if the AI path is thin.
+    """
+    import concurrent.futures
+
+    exclude_base = book_data.get_base_title(record.title)
+    results: list[dict] = []
+    seen_base: set[str] = set()
+
+    def _add(item: dict) -> None:
+        if not item or not item.get("google_id"):
+            return
+        title = item.get("title", "")
+        if book_data.is_companion_material(title):
+            return
+        base = book_data.get_base_title(title)
+        if not base or base == exclude_base or base in seen_base:
+            return
+        seen_base.add(base)
+        results.append(item)
+
+    # 1. AI proposes → verify each against the real catalog (in parallel).
+    try:
+        proposed = _propose_similar_titles(record, n=max(8, limit * 2))
+    except Exception as e:
+        log.warning(f"AI similar-book proposal failed for '{record.title}': {e}")
+        proposed = []
+
+    if proposed:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+            verified = list(ex.map(lambda ta: book_data.verify_book_exists(ta[0], ta[1]), proposed))
+        for item in verified:
+            if len(results) >= limit:
+                break
+            _add(item)
+
+    # 2. Catalog subject-search fallback tops up if the AI path came up short.
+    if len(results) < limit:
+        try:
+            for item in book_data.find_similar_by_subject(record, limit=limit * 2):
+                if len(results) >= limit:
+                    break
+                _add(item)
+        except Exception as e:
+            log.warning(f"Subject-based similar fallback failed for '{record.title}': {e}")
+
+    return results[:limit]
+
+
 # ── Route ───────────────────────────────────────────────────
 @router.post("/summary")
 def summary(req: SummaryRequest):
@@ -472,7 +565,7 @@ def summary(req: SummaryRequest):
 
     def get_similar():
         try:
-            return book_data.find_similar_books(record, limit=4)
+            return _similar_books(record, limit=4)
         except Exception as e:
             log.warning(f"Similar books search failed for '{record.title}': {e}")
             return []
