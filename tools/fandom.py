@@ -542,11 +542,20 @@ def fetch_volumes_from_fandom(subdomain: str, book_title: str) -> list[str]:
         log.warning(f"Fandom catalog volume fetch failed for '{book_title}': {e}")
 
     # ── Generalized path: read a master/index page's raw text via Gemini ──
-    # (Falls back to a full-wiki page scan only if no master page exists.)
+    # (Always cross-checked against a real page-title scan below — a wiki's
+    # naming convention for its master page or volume pages can't be guessed
+    # from a fixed literal list, so we try title-derived candidates too.)
     url = f"https://{subdomain}.fandom.com/api.php"
     headers = {"User-Agent": "BookHub/1.0 (mokhhtar@github.com)"}
 
-    master_titles = ["List of Volumes", "Volumes and Chapters", "Volumes & Chapters", "List of Light Novels", "Volumes"]
+    MAX_CHARS_PER_PAGE = 10000  # keeps prompt size sane; a real volume table fits easily
+
+    master_titles = [
+        f"{book_title} (Novel Series)",
+        f"{book_title} (Light Novel Series)",
+        f"{book_title} (Series)",
+        "List of Volumes", "Volumes and Chapters", "Volumes & Chapters", "List of Light Novels", "Volumes",
+    ]
     master_text = ""
     for m_title in master_titles:
         params = {"action": "parse", "page": m_title, "prop": "text", "format": "json"}
@@ -558,25 +567,30 @@ def fetch_volumes_from_fandom(subdomain: str, book_title: str) -> list[str]:
                     html = parse_data.get("text", {}).get("*", "")
                     text = clean_wiki_html(html)
                     if len(text) > len(master_text):
-                        master_text = text[:6000]
+                        master_text = text[:MAX_CHARS_PER_PAGE]
         except Exception:
             pass
 
+    # Always scan for real volume pages as a closed-set constraint, not only
+    # when no master page was found — a wiki's volume pages may be titled
+    # "Volume N" or "{Series} Volume N" (e.g. Overlord's "Overlord Volume 01"),
+    # so both prefixes are tried and merged.
     all_page_titles: list[str] = []
-    if not master_text:
-        # No master/index page exists on this wiki — fall back to listing
-        # every page starting with "Volume" so Gemini has real titles to
-        # choose from (it still can't invent a page that isn't in this list).
-        params = {"action": "query", "list": "allpages", "apprefix": "Volume", "format": "json", "aplimit": 200}
+    seen_titles: set[str] = set()
+    for apprefix in ("Volume", f"{book_title} Volume"):
+        params = {"action": "query", "list": "allpages", "apprefix": apprefix, "format": "json", "aplimit": 200}
         try:
             r = httpx.get(url, params=params, headers=headers, timeout=5.0)
             if r.status_code == 200:
                 for res in r.json().get("query", {}).get("allpages", []):
                     t = res.get("title", "")
-                    if "/" not in t:
+                    if t and "/" not in t and t not in seen_titles:
+                        seen_titles.add(t)
                         all_page_titles.append(t)
         except Exception:
             pass
+
+    if not master_text:
         if not all_page_titles:
             return []
         master_text = "Candidate page titles found on this wiki:\n" + "\n".join(all_page_titles)
