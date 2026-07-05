@@ -20,12 +20,15 @@ Pipeline:
 
 import logging
 from typing import Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field
 
 import cache
 import book_data
 import gemini_client
+import taxonomy
+import slug as slug_mod
+import github_publisher
 
 log = logging.getLogger("bookhub-api.tools.summary")
 
@@ -444,8 +447,9 @@ def _similar_books(record: book_data.BookRecord, limit: int = 4) -> list[dict]:
 
 # ── Route ───────────────────────────────────────────────────
 @router.post("/summary")
-def summary(req: SummaryRequest):
-    cache_key = ("summary_v4", req.title, req.author, req.depth, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
+def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
+    # v5: response gained categories/slug/static_page — never serve stale v4 shapes.
+    cache_key = ("summary_v5", req.title, req.author, req.depth, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
     cached = cache.get(*cache_key)
     if cached:
         # Self-healing cache migration: verify if the cached amazon_url is valid and English,
@@ -484,6 +488,13 @@ def summary(req: SummaryRequest):
                     amazon_url = f"https://www.amazon.com/s?k={q}&tag={tag}"
             cached["amazon_url"] = amazon_url
             cache.set(cached, *cache_key)
+
+        # Backfill slug/static_page on the way out (cheap Redis lookups) so
+        # repeat visitors get the clean static URL once the page is built.
+        if isinstance(cached, dict) and cached.get("found"):
+            c_slug = cached.get("slug") or slug_mod.book_slug(cached.get("title", ""))
+            cached["slug"] = c_slug
+            cached["static_page"] = github_publisher.static_page_ready(c_slug)
         return cached
 
     record = book_data.resolve_book(req.title, req.author, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
@@ -583,14 +594,37 @@ def summary(req: SummaryRequest):
                 amazon_url = f"https://www.amazon.com/s?k={q}&tag={tag}"
         return amazon_url
 
-    # Execute all 6 tasks concurrently
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+    def get_categories():
+        """Gemini picks 1-3 slugs FROM OUR FIXED TAXONOMY ONLY (validated);
+        falls back to a keyword-mapped default so no book ends up uncategorized."""
+        try:
+            prompt = f"""Assign categories to this book. Choose 1 to 3 category slugs FROM THIS LIST ONLY:
+
+{taxonomy.prompt_list()}
+
+BOOK: "{record.title}" by {record.author or "Unknown"}
+Publisher category: {record.primary_category or "N/A"}
+Description: {(record.description or "")[:500]}
+
+Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
+            raw = gemini_client.generate(prompt)
+            data = gemini_client.parse_json_response(raw)
+            validated = taxonomy.validate_categories(data.get("categories") or [])
+            if validated:
+                return validated
+        except Exception as e:
+            log.warning(f"Category assignment failed for '{record.title}': {e}")
+        return [taxonomy.fallback_category(record.primary_category)]
+
+    # Execute all 7 tasks concurrently
+    with concurrent.futures.ThreadPoolExecutor(max_workers=7) as executor:
         future_summary = executor.submit(get_summary_text)
         future_chapters = executor.submit(get_chapters)
         future_awards = executor.submit(get_awards)
         future_similar = executor.submit(get_similar)
         future_amazon = executor.submit(get_amazon)
         future_fandom_cover = executor.submit(get_fandom_cover)
+        future_categories = executor.submit(get_categories)
 
         summary_text = future_summary.result()
         chapters = future_chapters.result()
@@ -598,6 +632,9 @@ def summary(req: SummaryRequest):
         similar = future_similar.result()
         amazon_url = future_amazon.result()
         fandom_cover = future_fandom_cover.result()
+        categories = future_categories.result()
+
+    book_slug = slug_mod.book_slug(record.title)
 
     result = {
         "found": True,
@@ -607,6 +644,11 @@ def summary(req: SummaryRequest):
         "depth": req.depth,
         "summary": summary_text,
         "category": record.primary_category,
+        "categories": categories,
+        "slug": book_slug,
+        # True only once the static page was published >5 min ago (rebuild
+        # buffer) — gates the frontend's history.replaceState to the clean URL.
+        "static_page": github_publisher.static_page_ready(book_slug),
         "page_count": record.page_count,
         "published_year": record.published_year,
         # Prefer the catalog's hand-verified per-series cover when this
@@ -623,6 +665,13 @@ def summary(req: SummaryRequest):
         "open_library_work_key": record.open_library_work_key,
     }
     cache.set(result, *cache_key)
+
+    # Publish the static SEO pages in the background — commit failures are
+    # logged inside the publisher and never affect this response.
+    if github_publisher.is_enabled():
+        background_tasks.add_task(github_publisher.publish_book, result)
+        background_tasks.add_task(github_publisher.publish_author, record.author, record.title)
+
     return result
 
 

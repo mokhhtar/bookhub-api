@@ -24,6 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import gemini_client
 from tools import summary as summary_tool
 from tools import fandom as fandom_tool
+from tools import daily as daily_tool
 # from tools import recommend as recommend_tool   # pending rebuild
 # from tools import questions as questions_tool   # pending rebuild
 # from tools import compare as compare_tool       # pending rebuild
@@ -50,23 +51,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Startup event to clear cache ───────────────────────────
-@app.on_event("startup")
-def clear_cache_on_startup():
-    try:
-        import shutil
-        from cache import CACHE_DIR
-        if CACHE_DIR.exists():
-            shutil.rmtree(CACHE_DIR)
-            CACHE_DIR.mkdir(exist_ok=True)
-            log.info("Disk cache cleared successfully on startup.")
-    except Exception as e:
-        log.warning(f"Failed to clear cache on startup: {e}")
-
-
 # ── Mount each tool's router independently ─────────────────
 app.include_router(summary_tool.router, tags=["summary"])
 app.include_router(fandom_tool.router, tags=["fandom"])
+app.include_router(daily_tool.router, tags=["daily"])
 
 
 @app.get("/health")
@@ -96,7 +84,7 @@ def root():
     return {
         "name": "BookHub API",
         "version": "2.0.0",
-        "active_endpoints": ["/summary", "/fandom/resolve", "/fandom/universe", "/health", "/models"],
+        "active_endpoints": ["/summary", "/daily", "/fandom/resolve", "/fandom/universe", "/health", "/models"],
         "note": "Other tools (recommend, questions, compare) are being rebuilt "
                 "with the same grounding pipeline as /summary before re-enabling.",
         "docs": "/docs",

@@ -20,4 +20,16 @@ services:
         sync: false
       - key: AMAZON_PARTNER_TAG
         sync: false
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false        # Upstash Redis REST endpoint — daily picks + response cache
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
+      - key: GITHUB_PAT
+        sync: false        # fine-grained PAT, contents:write on the bookhub repo only
+      - key: GITHUB_REPO
+        sync: false        # e.g. mokhhtar/bookhub
+      - key: GITHUB_BRANCH
+        sync: false        # e.g. main
+      - key: GITHUB_PUBLISH_ENABLED
+        sync: false        # "true" to enable static-page commits
     healthCheckPath: /health
