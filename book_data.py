@@ -1032,6 +1032,10 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
         t = title.lower()
         return any(kw in t for kw in COMPANION_KEYWORDS)
 
+    # If the user's own query names a companion item (e.g. "... Fanbook 2"),
+    # don't filter it out — they're explicitly looking for it.
+    query_is_companion_search = is_companion_material(query_clean)
+
     # Helper function for word overlap validation
     STOP_WORDS = {"the", "of", "a", "an", "in", "on", "and", "or", "to", "for", "with", "by", "at", "de", "la", "el"}
     def has_word_overlap(title: str) -> bool:
@@ -1112,7 +1116,8 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
                     # "Calendar 2022".
                     fandom_volumes = [
                         v for v in fandom_volumes
-                        if isinstance(v, str) and len(v.strip()) <= 120 and not is_companion_material(v)
+                        if isinstance(v, str) and len(v.strip()) <= 120
+                        and (query_is_companion_search or not is_companion_material(v))
                     ]
 
                 if fandom_volumes:
@@ -1198,18 +1203,17 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
         log.warning(f"Open Library search failed: {e}")
 
     if ol_items:
-        # When Fandom already returned the series' real volumes, filter out
-        # companion materials (calendars, fanbooks, artbooks, official guides)
-        # from the Open Library results — they're real books but not what the
-        # user is looking for when they search for the novel/series by name.
+        # Filter out companion materials (calendars, fanbooks, artbooks,
+        # official guides) from the Open Library results — they're real books
+        # but not what the user is looking for when they search for the
+        # novel/series by name (unless their query names a companion item
+        # directly, e.g. "... Fanbook 2").
         for d in ol_items:
             title = d.get("title", "")
             authors = d.get("author_name", [])
             author = ", ".join(authors) if authors else ""
 
-            # Skip companion materials when the user is clearly looking for
-            # the main series (i.e. Fandom already found real volumes).
-            if fandom_found and is_companion_material(title):
+            if not query_is_companion_search and is_companion_material(title):
                 continue
 
             # Select the LATEST published year from all editions of this work
@@ -1272,7 +1276,10 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
             title = info.get("title", "")
             authors = info.get("authors", [])
             author = ", ".join(authors) if authors else ""
-            
+
+            if not query_is_companion_search and is_companion_material(title):
+                continue
+
             image_links = info.get("imageLinks", {})
             cover_url = image_links.get("thumbnail") or image_links.get("smallThumbnail")
             if cover_url and cover_url.startswith("http:"):
