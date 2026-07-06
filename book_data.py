@@ -562,6 +562,75 @@ def _query_open_library(title: str, author: str = "") -> Optional[BookRecord]:
     )
 
 
+def fetch_chapters_from_open_library(
+    isbn_13: Optional[str] = None,
+    isbn_10: Optional[str] = None,
+    work_key: Optional[str] = None,
+) -> list[str]:
+    """
+    Chapter list (table of contents) for a REGULAR published book, WHEN
+    AVAILABLE in Open Library. This is the non-Fandom counterpart to
+    extract_chapters_from_fandom — for mainstream books (not web/light novels)
+    Open Library often stores a `table_of_contents` on the edition.
+
+    Coverage: the exact ISBN edition frequently lacks a TOC even when a sibling
+    edition of the same work has one (e.g. Atomic Habits), so we also scan the
+    work's other editions. Deterministic — no LLM, nothing invented. Returns []
+    when no TOC exists anywhere, so callers fall through gracefully.
+    """
+    def _extract(toc) -> list[str]:
+        out: list[str] = []
+        for entry in toc or []:
+            if isinstance(entry, dict):
+                title = (entry.get("title") or entry.get("label") or "").strip()
+            else:
+                title = str(entry).strip()
+            # Real chapter/section titles are short; a long string is a blurb.
+            if title and len(title) <= 200:
+                out.append(title)
+            if len(out) >= 150:
+                break
+        return out
+
+    resolved_work_key = work_key
+
+    # 1. Direct edition lookup by ISBN.
+    for isbn in (isbn_13, isbn_10):
+        if not isbn:
+            continue
+        try:
+            r = httpx.get(f"https://openlibrary.org/isbn/{isbn}.json",
+                          headers=HEADERS, timeout=8.0, follow_redirects=True)
+            if r.status_code == 200:
+                data = r.json()
+                chapters = _extract(data.get("table_of_contents"))
+                if chapters:
+                    return chapters
+                if not resolved_work_key:
+                    works = data.get("works") or []
+                    if works:
+                        resolved_work_key = works[0].get("key")
+        except Exception as e:
+            log.warning(f"Open Library ISBN TOC lookup failed for '{isbn}': {e}")
+
+    # 2. Scan the work's other editions for one that carries a TOC.
+    if resolved_work_key:
+        key = resolved_work_key.strip("/")  # e.g. "works/OL...W"
+        try:
+            r = httpx.get(f"https://openlibrary.org/{key}/editions.json",
+                          headers=HEADERS, params={"limit": 50}, timeout=10.0,
+                          follow_redirects=True)
+            if r.status_code == 200:
+                for e in r.json().get("entries", []):
+                    chapters = _extract(e.get("table_of_contents"))
+                    if chapters:
+                        return chapters
+        except Exception as e:
+            log.warning(f"Open Library work-editions TOC scan failed for '{resolved_work_key}': {e}")
+
+    return []
+
+
 def _query_google_books_by_id(google_id: str) -> Optional[BookRecord]:
     url = f"{GOOGLE_BOOKS_API}/{google_id}"
     params = {}

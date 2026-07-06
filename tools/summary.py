@@ -540,6 +540,18 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
                     return chapters
         except Exception as e:
             log.warning(f"Error fetching Fandom chapters for '{record.title}': {e}")
+
+        # Regular (non-Fandom) books: use Open Library's table of contents when
+        # it exists — web/light novels go through Fandom above; mainstream books
+        # get their real chapter list here instead of showing none.
+        try:
+            ol_chapters = book_data.fetch_chapters_from_open_library(
+                record.isbn_13, record.isbn_10, record.open_library_work_key
+            )
+            if ol_chapters:
+                return ol_chapters
+        except Exception as e:
+            log.warning(f"Error fetching Open Library chapters for '{record.title}': {e}")
         return []
 
     def get_fandom_cover():
