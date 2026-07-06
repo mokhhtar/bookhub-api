@@ -414,36 +414,73 @@ def _fetch_goodreads_rating(title: str, author: str) -> Optional[dict]:
     title-match guard and full fallback to Open Library when it breaks.
     """
     import httpx
+
+    def _build(cand):
+        out = {
+            "source": "goodreads",
+            "average": round(float(cand.get("avgRating")), 2),
+            "count": int(cand.get("ratingsCount")),
+            "url": "https://www.goodreads.com" + (cand.get("bookUrl") or ""),
+        }
+        pages = cand.get("numPages")
+        if isinstance(pages, int) and pages > 0:
+            out["pages"] = pages
+        return out
+
+    req_vol = book_data.extract_volume_number(title)
+    # For a volume, query "{series} volume {N}" and match on base title + exact
+    # volume number. A bare series query only returns GR's top ~5 volumes (so
+    # vol 8 would be missed), and our title carries a comma+subtitle
+    # ("..., Volume 3: Traveler") that GR's ("... Volume 3") lacks, so substring
+    # matching alone misses it. This also yields the volume's OWN page count and
+    # rating (previously every volume showed none).
+    if req_vol:
+        query = f"{book_data.get_base_title(title)} volume {req_vol}"
+    else:
+        query = title
     try:
-        # Query by TITLE ONLY — GR's autocomplete searches titles; appending
-        # the author derails it into knock-off "Summary of X" listings. The
-        # author is used below to VALIDATE candidates instead.
         r = httpx.get(
             "https://www.goodreads.com/book/auto_complete",
-            params={"format": "json", "q": title[:120]},
+            # Query by TITLE ONLY — appending the author derails GR's
+            # autocomplete into knock-off "Summary of X" listings; the author
+            # is used below to VALIDATE candidates instead.
+            params={"format": "json", "q": (query or title)[:120]},
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
             timeout=6.0, follow_redirects=True,
         )
         if r.status_code != 200:
             return None
-        want = _normalize_title_for_match(title)
-        if not want:
-            return None
+        candidates = r.json() or []
+
         surname = ""
         if author:
             parts = author.split(",")[0].strip().split()
             surname = parts[-1].lower() if parts else ""
 
-        # Two-tier matching. Knock-off "Summary of X" / workbook editions often
-        # rank high and their titles CONTAIN the real title, so loose substring
-        # matching alone picks the wrong (tiny) edition:
-        #   tier 1 — candidate title equals/starts with ours AND (no author
-        #            expected, or candidate author surname matches).
-        #   tier 2 — ours appears inside theirs; knock-off prefixes excluded,
-        #            author-mismatches excluded, most-rated candidate wins.
         knockoff = re.compile(r"^\s*(a\s+|the\s+)?(summary|workbook|study guide|analysis|key takeaways|conversations?)\b", re.IGNORECASE)
+
+        # ── Volume path: base title + exact volume number ──
+        if req_vol:
+            want_base = _normalize_title_for_match(book_data.get_base_title(title))
+            for cand in candidates:
+                raw_title = cand.get("bookTitleBare") or cand.get("title", "")
+                avg = float(cand.get("avgRating") or 0)
+                count = int(cand.get("ratingsCount") or 0)
+                if not avg or not count or knockoff.match(raw_title):
+                    continue
+                if book_data.extract_volume_number(raw_title) != req_vol:
+                    continue
+                cand_base = _normalize_title_for_match(book_data.get_base_title(raw_title))
+                if want_base and cand_base and (want_base in cand_base or cand_base in want_base):
+                    return _build(cand)
+            return None
+
+        # ── Non-volume path: two-tier title match ──
+        want = _normalize_title_for_match(title)
+        if not want:
+            return None
         exact, loose = None, None
-        for cand in r.json() or []:
+        for cand in candidates:
             raw_title = cand.get("bookTitleBare") or cand.get("title", "")
             got = _normalize_title_for_match(raw_title)
             avg = float(cand.get("avgRating") or 0)
@@ -452,25 +489,17 @@ def _fetch_goodreads_rating(title: str, author: str) -> Optional[dict]:
             if not got or not avg or not count:
                 continue
             author_ok = not surname or surname in cand_author
-            if (got == want or got.startswith(want)) and author_ok and not knockoff.match(raw_title):
+            if not author_ok or knockoff.match(raw_title):
+                continue
+            if got == want or got.startswith(want):
                 exact = cand
                 break
-            if want in got and author_ok and not knockoff.match(raw_title):
+            # ours contains theirs (they lack our subtitle) OR theirs contains ours
+            if (want in got or got in want):
                 if loose is None or count > int(loose.get("ratingsCount") or 0):
                     loose = cand
         best = exact or loose
-        if not best:
-            return None
-        out = {
-            "source": "goodreads",
-            "average": round(float(best.get("avgRating")), 2),
-            "count": int(best.get("ratingsCount")),
-            "url": "https://www.goodreads.com" + (best.get("bookUrl") or ""),
-        }
-        pages = best.get("numPages")
-        if isinstance(pages, int) and pages > 0:
-            out["pages"] = pages
-        return out
+        return _build(best) if best else None
     except Exception as e:
         log.warning(f"Goodreads rating lookup failed for '{title}': {e}")
     return None
@@ -801,13 +830,31 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
 
     def get_categories():
         """Gemini picks 1-3 slugs FROM OUR FIXED TAXONOMY ONLY (validated);
-        falls back to a keyword-mapped default so no book ends up uncategorized."""
+        falls back to a keyword-mapped default so no book ends up uncategorized.
+
+        Categorized on the SERIES (base) title, not the individual volume, and
+        cached by that title — so every volume of one series shares ONE set of
+        categories instead of Gemini drifting ("Adventure" on vol 3,
+        "Magic & Supernatural" on vol 4) for the same work."""
+        # Use the base/series title for volumes so the genre signal is stable.
+        cat_title = record.title
+        if book_data.extract_volume_number(record.title):
+            base = book_data.get_base_title(record.title)
+            if base:
+                cat_title = base
+
+        cat_key = ("categories_v1", cat_title, record.author)
+        cached_cats = cache.get(*cat_key)
+        if cached_cats:
+            return cached_cats
+
+        result_cats = None
         try:
             prompt = f"""Assign categories to this book. Choose 1 to 3 category slugs FROM THIS LIST ONLY:
 
 {taxonomy.prompt_list()}
 
-BOOK: "{record.title}" by {record.author or "Unknown"}
+BOOK: "{cat_title}" by {record.author or "Unknown"}
 Publisher category: {record.primary_category or "N/A"}
 Description: {(record.description or "")[:500]}
 
@@ -816,10 +863,14 @@ Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
             data = gemini_client.parse_json_response(raw)
             validated = taxonomy.validate_categories(data.get("categories") or [])
             if validated:
-                return validated
+                result_cats = validated
         except Exception as e:
-            log.warning(f"Category assignment failed for '{record.title}': {e}")
-        return [taxonomy.fallback_category(record.primary_category)]
+            log.warning(f"Category assignment failed for '{cat_title}': {e}")
+
+        if not result_cats:
+            result_cats = [taxonomy.fallback_category(record.primary_category)]
+        cache.set(result_cats, *cat_key)
+        return result_cats
 
     def get_ratings():
         try:
