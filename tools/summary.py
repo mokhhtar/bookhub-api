@@ -439,18 +439,33 @@ def _fetch_goodreads_rating(title: str, author: str) -> Optional[dict]:
     else:
         query = title
     try:
-        r = httpx.get(
-            "https://www.goodreads.com/book/auto_complete",
-            # Query by TITLE ONLY — appending the author derails GR's
-            # autocomplete into knock-off "Summary of X" listings; the author
-            # is used below to VALIDATE candidates instead.
-            params={"format": "json", "q": (query or title)[:120]},
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
-            timeout=6.0, follow_redirects=True,
-        )
-        if r.status_code != 200:
+        # Goodreads throttles datacenter IPs (Render) intermittently — a browsery
+        # header set + one short retry recovers many of those transient 403/429s.
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.goodreads.com/",
+        }
+        candidates = None
+        for attempt in range(2):
+            try:
+                r = httpx.get(
+                    "https://www.goodreads.com/book/auto_complete",
+                    # Query by TITLE ONLY — appending the author derails GR's
+                    # autocomplete into knock-off "Summary of X" listings; the
+                    # author is used below to VALIDATE candidates instead.
+                    params={"format": "json", "q": (query or title)[:120]},
+                    headers=headers, timeout=7.0, follow_redirects=True,
+                )
+                if r.status_code == 200:
+                    candidates = r.json() or []
+                    break
+                log.warning(f"Goodreads returned {r.status_code} for '{query}' (attempt {attempt + 1})")
+            except Exception as e:
+                log.warning(f"Goodreads request error for '{query}' (attempt {attempt + 1}): {e}")
+        if candidates is None:
             return None
-        candidates = r.json() or []
 
         surname = ""
         if author:
@@ -564,7 +579,13 @@ def resolve_ratings(record: book_data.BookRecord) -> Optional[dict]:
     elif not ratings:
         ratings = ol
 
-    cache.set(ratings or {}, *cache_key)  # cache negative results too
+    if ratings:
+        cache.set(ratings, *cache_key)          # good result → cache 30 days
+    else:
+        # Goodreads throttles datacenter IPs intermittently, so a miss is often
+        # transient — cache the negative only briefly so the next visit retries
+        # instead of hiding ratings for 30 days.
+        cache.set({}, *cache_key, ttl=3600)
     return ratings
 
 
@@ -719,6 +740,26 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
             cached["static_page"] = ready
             if not cached.get("author_slug"):
                 cached["author_slug"] = slug_mod.author_slug(cached.get("author", ""))
+
+            # Self-heal ratings/page_count: a past Goodreads throttle (common
+            # from Render's datacenter IP) can leave these empty in an otherwise
+            # good cached summary. Retry on read — resolve_ratings has its own
+            # short negative cache, so this is cheap and recovers automatically.
+            if not cached.get("ratings") or not cached.get("page_count"):
+                try:
+                    tmp = book_data.BookRecord(
+                        found=True, title=cached.get("title", ""), author=cached.get("author", ""),
+                        isbn_13=cached.get("isbn_13"), isbn_10=cached.get("isbn_10"),
+                        open_library_work_key=cached.get("open_library_work_key"),
+                    )
+                    fresh = resolve_ratings(tmp)
+                    if fresh:
+                        cached["ratings"] = fresh
+                        if not cached.get("page_count") and fresh.get("pages"):
+                            cached["page_count"] = fresh["pages"]
+                        cache.set(cached, *cache_key)  # persist the heal
+                except Exception as e:
+                    log.warning(f"Ratings self-heal failed for '{cached.get('title')}': {e}")
         return cached
 
     record = book_data.resolve_book(req.title, req.author, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
