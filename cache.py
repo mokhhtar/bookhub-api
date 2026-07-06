@@ -155,3 +155,64 @@ def set_key(key: str, data: any, ttl: Optional[int] = None) -> None:
 def acquire_lock(key: str, ttl: int = 120) -> bool:
     """Best-effort distributed lock (SET NX EX). True = caller may proceed."""
     return _redis_setnx(key, {"locked": True}, ttl)
+
+
+def set_key_strict(key: str, data: any, ttl: Optional[int] = None, l1: bool = False) -> bool:
+    """
+    Like set_key but returns whether the Redis write actually succeeded.
+    For writes that must NOT be silently dropped (e.g. a PDF text block —
+    a half-stored document must abort, not pretend success). l1=False by
+    default so large payloads don't flood the small in-memory layer.
+
+    Without Upstash configured (local dev), falls back to L1-only and reports
+    success — data survives only until restart, which is fine for dev.
+    """
+    effective_ttl = ttl or TTL_SECONDS
+    if not (UPSTASH_URL and UPSTASH_TOKEN):
+        _mem_set(key, data, effective_ttl)
+        return True
+    try:
+        value = json.dumps(data, ensure_ascii=False)
+        r = httpx.post(f"{UPSTASH_URL}/set/{key}?EX={int(effective_ttl)}",
+                       headers=_HEADERS, content=value.encode("utf-8"), timeout=8.0)
+        if r.status_code != 200:
+            log.warning(f"Redis strict SET returned {r.status_code} for '{key}'")
+            return False
+        if l1:
+            _mem_set(key, data, effective_ttl)
+        return True
+    except Exception as e:
+        log.warning(f"Redis strict SET failed for '{key}': {e}")
+        return False
+
+
+def incr_key(key: str, ttl: int) -> Optional[int]:
+    """
+    Atomic counter (INCR + EXPIRE on first increment). Returns the new count,
+    or None on any failure — callers treat None as fail-open "allow", matching
+    the rest of this module's philosophy.
+    """
+    if not (UPSTASH_URL and UPSTASH_TOKEN):
+        return None
+    try:
+        r = httpx.post(f"{UPSTASH_URL}/incr/{key}", headers=_HEADERS, timeout=4.0)
+        if r.status_code != 200:
+            return None
+        count = r.json().get("result")
+        if count == 1:
+            httpx.post(f"{UPSTASH_URL}/expire/{key}/{int(ttl)}", headers=_HEADERS, timeout=4.0)
+        return int(count) if count is not None else None
+    except Exception as e:
+        log.warning(f"Redis INCR failed for '{key}': {e}")
+        return None
+
+
+def delete_key(key: str) -> None:
+    """Best-effort DEL (also evicts L1) — e.g. releasing an ingest lock on failure."""
+    _mem_cache.pop(key, None)
+    if not (UPSTASH_URL and UPSTASH_TOKEN):
+        return
+    try:
+        httpx.post(f"{UPSTASH_URL}/del/{key}", headers=_HEADERS, timeout=4.0)
+    except Exception as e:
+        log.warning(f"Redis DEL failed for '{key}': {e}")

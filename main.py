@@ -25,6 +25,7 @@ import gemini_client
 from tools import summary as summary_tool
 from tools import fandom as fandom_tool
 from tools import daily as daily_tool
+from tools import pdfchat as pdfchat_tool
 # from tools import recommend as recommend_tool   # pending rebuild
 # from tools import questions as questions_tool   # pending rebuild
 # from tools import compare as compare_tool       # pending rebuild
@@ -55,6 +56,7 @@ app.add_middleware(
 app.include_router(summary_tool.router, tags=["summary"])
 app.include_router(fandom_tool.router, tags=["fandom"])
 app.include_router(daily_tool.router, tags=["daily"])
+app.include_router(pdfchat_tool.router, tags=["pdfchat"])
 
 
 @app.get("/health")
@@ -84,7 +86,7 @@ def root():
     return {
         "name": "BookHub API",
         "version": "2.0.0",
-        "active_endpoints": ["/summary", "/daily", "/fandom/resolve", "/fandom/universe", "/health", "/models"],
+        "active_endpoints": ["/summary", "/daily", "/pdfchat/check", "/pdfchat/ingest", "/pdfchat/chat", "/pdfchat/quiz", "/fandom/resolve", "/fandom/universe", "/health", "/models"],
         "note": "Other tools (recommend, questions, compare) are being rebuilt "
                 "with the same grounding pipeline as /summary before re-enabling.",
         "docs": "/docs",
