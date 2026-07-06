@@ -476,19 +476,33 @@ def _fetch_goodreads_rating(title: str, author: str) -> Optional[dict]:
 
         # ── Volume path: base title + exact volume number ──
         if req_vol:
+            try:
+                want_vol_int = int(req_vol)
+            except (TypeError, ValueError):
+                want_vol_int = None
             want_base = _normalize_title_for_match(book_data.get_base_title(title))
+            best = None  # most-rated candidate that matches base + volume
             for cand in candidates:
                 raw_title = cand.get("bookTitleBare") or cand.get("title", "")
                 avg = float(cand.get("avgRating") or 0)
                 count = int(cand.get("ratingsCount") or 0)
                 if not avg or not count or knockoff.match(raw_title):
                     continue
-                if book_data.extract_volume_number(raw_title) != req_vol:
+                cand_vol = book_data.extract_volume_number(raw_title)
+                # Compare as INTEGERS — Goodreads often zero-pads ("Vol. 02"),
+                # so a string compare ("5" != "05") wrongly rejected the match
+                # for every series GR pads (LOTM happens not to be padded).
+                if not cand_vol or want_vol_int is None or int(cand_vol) != want_vol_int:
                     continue
                 cand_base = _normalize_title_for_match(book_data.get_base_title(raw_title))
-                if want_base and cand_base and (want_base in cand_base or cand_base in want_base):
-                    return _build(cand)
-            return None
+                if not (want_base and cand_base and (want_base in cand_base or cand_base in want_base)):
+                    continue
+                # Prefer the most-rated match — otherwise a low-count fan/"New
+                # Manhwa of the world:" edition listed first would win over the
+                # canonical volume.
+                if best is None or count > int(best.get("ratingsCount") or 0):
+                    best = cand
+            return _build(best) if best else None
 
         # ── Non-volume path: two-tier title match ──
         want = _normalize_title_for_match(title)
@@ -886,8 +900,14 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
             if base:
                 cat_title = base
 
-        cat_key = ("categories_v1", cat_title, record.author)
-        cached_cats = cache.get(*cat_key)
+        # Stored under a RAW key (not the hashed response cache) so a series'
+        # categories stay identical across its volumes EVEN when the dev switch
+        # DISABLE_RESPONSE_CACHE is on — category consistency is a correctness
+        # property, not a perf cache. Bump the version to re-derive after a
+        # taxonomy change.
+        norm = re.sub(r"[^a-z0-9]+", "-", f"{cat_title}|{record.author}".lower()).strip("-")
+        cat_key = f"cat:v1:{norm}"
+        cached_cats = cache.get_key(cat_key)
         if cached_cats:
             return cached_cats
 
@@ -902,7 +922,10 @@ Publisher category: {record.primary_category or "N/A"}
 Description: {(record.description or "")[:500]}
 
 Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
-            raw = gemini_client.generate(prompt)
+            # temperature 0 → the first (cached) computation is as stable as
+            # Gemini allows, minimizing drift before the cache is populated.
+            from google.genai import types as _gt
+            raw = gemini_client.generate(prompt, _gt.GenerateContentConfig(temperature=0.0, max_output_tokens=256))
             data = gemini_client.parse_json_response(raw)
             validated = taxonomy.validate_categories(data.get("categories") or [])
             if validated:
@@ -912,7 +935,7 @@ Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
 
         if not result_cats:
             result_cats = [taxonomy.fallback_category(record.primary_category)]
-        cache.set(result_cats, *cat_key)
+        cache.set_key(cat_key, result_cats)
         return result_cats
 
     def get_ratings():
