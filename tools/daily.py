@@ -19,7 +19,7 @@ import re
 from datetime import datetime, timezone
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 
 import cache
 import book_data
@@ -204,6 +204,21 @@ def _build_daily(date_str: str, mm: str, dd: str) -> dict:
         "author": _pick_author_of_day(births),
         "quote": _pick_quote_of_day(date_str),
     }
+
+
+@router.options("/daily")
+def daily_options():
+    # Some uptime monitors probe with OPTIONS instead of GET — respond
+    # cheaply instead of 405ing.
+    return Response(status_code=204)
+
+
+@router.head("/daily")
+def daily_head():
+    # Some uptime monitors default to HEAD. Respond cheaply — do NOT run the
+    # full build pipeline (Wikimedia + Gemini + Google Books) on every liveness
+    # ping, that would burn API quota for no reason.
+    return Response(status_code=200)
 
 
 @router.get("/daily")
