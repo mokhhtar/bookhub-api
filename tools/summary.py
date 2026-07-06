@@ -552,7 +552,7 @@ def resolve_ratings(record: book_data.BookRecord) -> Optional[dict]:
     endpoint has no per-star counts). Fail-open: None means the frontend
     falls back to the legacy Google Books average_rating.
     """
-    cache_key = ("ratings_v1", record.title, record.author)
+    cache_key = ("ratings_v2", record.title, record.author)
     cached = cache.get(*cache_key)
     if cached is not None:
         return cached or None  # {} sentinel → None
@@ -665,7 +665,9 @@ def _similar_books(record: book_data.BookRecord, limit: int = 4) -> list[dict]:
 @router.post("/summary")
 def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
     # v5: response gained categories/slug/static_page — never serve stale v4 shapes.
-    cache_key = ("summary_v5", req.title, req.author, req.depth, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
+    # v6: volume page_count/ratings/consistent-categories fixes — stale v5
+    # entries held page_count=None / wrong values for series volumes.
+    cache_key = ("summary_v6", req.title, req.author, req.depth, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
     cached = cache.get(*cache_key)
     if cached:
         # Self-healing cache migration: verify if the cached amazon_url is valid and English,
