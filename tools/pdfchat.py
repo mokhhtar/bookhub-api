@@ -44,8 +44,8 @@ MAX_TEXT_CHARS = int(os.environ.get("PDFCHAT_MAX_TEXT_CHARS", 1_200_000))
 MIN_TEXT_CHARS = 500
 CHUNK_CHARS = 3000
 CHUNKS_PER_BLOCK = 64          # ~192KB JSON per key — under Upstash's ~1MB cap
-RETRIEVAL_TOP_K = 6
-QUIZ_SAMPLE_CHUNKS = 12
+RETRIEVAL_TOP_K = 8
+QUIZ_SAMPLE_CHUNKS = 16
 QUIZ_MAX_COUNT = 10
 MAX_QUESTION_CHARS = 500
 MAX_HISTORY_TURNS = 8
@@ -201,9 +201,25 @@ def _question_terms(question: str) -> list[str]:
     return terms
 
 
-def _retrieve_chunks(question: str, chunks: list[str], k: int = RETRIEVAL_TOP_K) -> list[tuple[int, str]]:
-    """Returns up to k (index, chunk) pairs, re-sorted into book order."""
+def _retrieve_chunks(question: str, chunks: list[str], k: int = RETRIEVAL_TOP_K,
+                      history: Optional[list[dict]] = None) -> list[tuple[int, str]]:
+    """
+    Returns up to k (index, chunk) pairs, re-sorted into book order, plus the
+    immediate neighbors of the single best-scoring chunk (chunks are stored
+    with NO overlap, so a fact can be split right across a chunk boundary).
+
+    Follow-up questions ("what happened to him next?", "why did she do that?")
+    carry almost no retrievable keywords on their own — pull terms from the
+    last user turn too when the current question is sparse (<=3 terms), so
+    multi-turn chat doesn't go blind on pronouns/back-references the way a
+    single-shot question wouldn't.
+    """
     terms = _question_terms(question)
+    if history and len(terms) <= 3:
+        for h in reversed(history):
+            if h.get("role") == "user":
+                terms = _question_terms(str(h.get("content", "")))[:6] + terms
+                break
     if not terms:
         return []
     lowered = [c.lower() for c in chunks]
@@ -231,7 +247,18 @@ def _retrieve_chunks(question: str, chunks: list[str], k: int = RETRIEVAL_TOP_K)
         if s > 0:
             scored.append((s, i))
     scored.sort(reverse=True)
-    top = sorted(i for _, i in scored[:k])
+    top_indices = {i for _, i in scored[:k]}
+
+    # Give the single best hit its neighbors for continuity across the
+    # (non-overlapping) chunk boundary — cheap, and only for the top hit so
+    # the context doesn't balloon.
+    if scored:
+        best = scored[0][1]
+        for neighbor in (best - 1, best + 1):
+            if 0 <= neighbor < n:
+                top_indices.add(neighbor)
+
+    top = sorted(top_indices)
     return [(i, chunks[i]) for i in top]
 
 
@@ -242,12 +269,12 @@ def _generate_digest(chunks: list[str], title: str) -> str:
     take = min(40, n)
     indices = sorted({round(i * (n - 1) / max(take - 1, 1)) for i in range(take)})
     sampled = "\n\n".join(f"[Excerpt {i}]\n{chunks[i][:1500]}" for i in indices)
-    prompt = f"""You are reading sampled excerpts from a book{f' titled "{title}"' if title else ""}. Write a condensed DIGEST (max 3000 characters, plain text) covering ONLY what the excerpts show: probable title/author, what kind of book it is, its main subject, structure/major parts, key people/places/terms with one-line descriptors, and the overall arc. No outside knowledge, no invention.
+    prompt = f"""You are reading sampled excerpts from a book{f' titled "{title}"' if title else ""}. Write a thorough DIGEST (up to 4500 characters, plain text) covering ONLY what the excerpts show: probable title/author, what kind of book it is, its main subject, structure/major parts, EVERY named person/place/term you see with a one-line descriptor, and the overall arc in some detail. Be specific and concrete rather than vague — this digest is the only context available for answering detailed questions later. No outside knowledge, no invention.
 
 EXCERPTS:
 {sampled}"""
-    config = genai_types.GenerateContentConfig(temperature=0.2, max_output_tokens=1200)
-    return gemini_client.generate(prompt, config).strip()[:3200]
+    config = genai_types.GenerateContentConfig(temperature=0.2, max_output_tokens=2000)
+    return gemini_client.generate(prompt, config).strip()[:4800]
 
 
 def _build_chat_prompt(digest: str, retrieved: list[tuple[int, str]],
@@ -448,10 +475,10 @@ def chat(req: ChatRequest):
 
     _, chunks = _load_doc(did)
     digest = _get_digest(did)
-    retrieved = _retrieve_chunks(req.question, chunks)
+    retrieved = _retrieve_chunks(req.question, chunks, history=req.history)
     prompt = _build_chat_prompt(digest, retrieved, req.history, req.question)
 
-    config = genai_types.GenerateContentConfig(temperature=0.2, max_output_tokens=1024)
+    config = genai_types.GenerateContentConfig(temperature=0.2, max_output_tokens=1536)
     answer = gemini_client.generate(prompt, config)
 
     sources = [{"chunk_index": i, "snippet": c[:200]} for i, c in retrieved]
