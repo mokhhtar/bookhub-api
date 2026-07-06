@@ -63,6 +63,7 @@ app.include_router(pdfchat_tool.router, tags=["pdfchat"])
 def health():
     """Used by UptimeRobot / cron-job.org to keep the Render instance awake."""
     import github_publisher
+    import cache
     return {
         "status": "ok",
         "model": gemini_client.MODEL_NAME,
@@ -71,6 +72,9 @@ def health():
         # Static-page publishing to the Jekyll repo (GITHUB_PUBLISH_ENABLED
         # + PAT). Surfaced here so flipping the env var is verifiable at a glance.
         "publishing": github_publisher.is_enabled(),
+        # True while the dev switch DISABLE_RESPONSE_CACHE is on (summaries
+        # recompute fresh every request).
+        "response_cache_disabled": cache.RESPONSE_CACHE_DISABLED,
     }
 
 

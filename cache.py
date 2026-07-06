@@ -37,8 +37,17 @@ UPSTASH_URL = (os.environ.get("UPSTASH_REDIS_REST_URL") or "").rstrip("/")
 UPSTASH_TOKEN = os.environ.get("UPSTASH_REDIS_REST_TOKEN") or ""
 _HEADERS = {"Authorization": f"Bearer {UPSTASH_TOKEN}"}
 
+# Dev switch: when true, the HASHED-key API (get/set) becomes a no-op so every
+# summary / search / ratings / categories / awards request recomputes fresh —
+# handy while iterating so stale cached responses don't hide changes. It does
+# NOT touch the RAW-key API (get_key/set_key/incr_key/acquire_lock/delete_key),
+# so PDF-chat storage, daily picks, rate limits and publish flags keep working.
+RESPONSE_CACHE_DISABLED = os.environ.get("DISABLE_RESPONSE_CACHE", "").lower() in ("1", "true", "yes")
+
 if not (UPSTASH_URL and UPSTASH_TOKEN):
     log.warning("Upstash env vars not set — cache runs in-memory only (misses after restarts).")
+if RESPONSE_CACHE_DISABLED:
+    log.warning("DISABLE_RESPONSE_CACHE is on — summary/search/ratings responses are NOT cached.")
 
 
 def _key(*parts: str) -> str:
@@ -127,6 +136,8 @@ def _redis_setnx(key: str, data: any, ttl: int) -> bool:
 # ── Public API: hashed keys ──────────────────────────────────
 
 def get(*parts: str) -> Optional[any]:
+    if RESPONSE_CACHE_DISABLED:
+        return None
     key = _key(*parts)
     data = _mem_get(key)
     if data is not None:
@@ -138,6 +149,8 @@ def get(*parts: str) -> Optional[any]:
 
 
 def set(data: any, *parts: str, ttl: Optional[int] = None) -> None:
+    if RESPONSE_CACHE_DISABLED:
+        return
     key = _key(*parts)
     effective_ttl = ttl or TTL_SECONDS
     _mem_set(key, data, effective_ttl)
