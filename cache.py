@@ -100,15 +100,24 @@ def _redis_set(key: str, data: any, ttl: Optional[int]) -> None:
 
 
 def _redis_setnx(key: str, data: any, ttl: int) -> bool:
-    """SET key value NX EX ttl — returns True if the key was newly set (lock acquired)."""
+    """
+    SET key value NX EX ttl — returns True if the key was newly set (lock
+    acquired). Uses Upstash's JSON-command-array endpoint (POST to the base
+    URL with ["SET", key, value, "EX", ttl, "NX"]) rather than combining NX
+    and EX as query-string params on the path-based /set/{key} endpoint —
+    that combination isn't reliably supported and was silently making every
+    lock acquisition fail (every first-time caller got "already locked").
+    """
     if not (UPSTASH_URL and UPSTASH_TOKEN):
         return True  # no shared store → behave as if lock acquired
     try:
         value = json.dumps(data, ensure_ascii=False)
-        r = httpx.post(f"{UPSTASH_URL}/set/{key}?NX=true&EX={int(ttl)}",
-                       headers=_HEADERS, content=value.encode("utf-8"), timeout=4.0)
+        command = ["SET", key, value, "EX", str(int(ttl)), "NX"]
+        r = httpx.post(UPSTASH_URL, headers={**_HEADERS, "Content-Type": "application/json"},
+                       json=command, timeout=4.0)
         if r.status_code != 200:
-            return False
+            log.warning(f"Redis SETNX returned {r.status_code} for '{key}': {r.text[:200]}")
+            return True  # fail-open — never let a broken lock endpoint block real users
         return r.json().get("result") == "OK"
     except Exception as e:
         log.warning(f"Redis SETNX failed for '{key}': {e}")
