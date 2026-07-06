@@ -62,11 +62,15 @@ app.include_router(pdfchat_tool.router, tags=["pdfchat"])
 @app.get("/health")
 def health():
     """Used by UptimeRobot / cron-job.org to keep the Render instance awake."""
+    import github_publisher
     return {
         "status": "ok",
         "model": gemini_client.MODEL_NAME,
         "configured": gemini_client.is_configured(),
         "amazon_api_configured": bool(os.environ.get("AMAZON_CREDENTIAL_ID") and os.environ.get("AMAZON_CREDENTIAL_SECRET")),
+        # Static-page publishing to the Jekyll repo (GITHUB_PUBLISH_ENABLED
+        # + PAT). Surfaced here so flipping the env var is verifiable at a glance.
+        "publishing": github_publisher.is_enabled(),
     }
 
 

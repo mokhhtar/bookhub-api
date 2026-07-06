@@ -198,41 +198,97 @@ def get_series_title_candidates(title: str) -> list[str]:
                 candidates.append(first_part_clean)
     return candidates
 
+_BOOKISH_RE = re.compile(
+    r"light novel|web novel|novel series|webnovel|\bnovels?\b|\bbooks?\b|"
+    r"\bmanga\b|manhwa|manhua|webtoon|light-novel|written by|\bauthor\b|"
+    r"book series|\bvolumes?\b",
+    re.IGNORECASE,
+)
+
+
+def _wiki_looks_bookish(subdomain: str) -> bool:
+    """
+    Validates that a Fandom wiki is actually about a book/novel/manga before
+    a FUZZY match (search-engine or subdomain-ping tiers) is trusted — those
+    tiers happily return a same-named GAME or film wiki, whose volumes then
+    pollute search results. Reads the wiki's main page text and requires book
+    signals. Cached per-subdomain; FAIL-OPEN on network trouble (a broken
+    check must not take down legit wikis), but a cleanly-fetched main page
+    with zero book signals is rejected.
+    """
+    cache_key = ("fandom_bookish_v1", subdomain)
+    cached = cache.get(*cache_key)
+    if cached is not None:
+        return bool(cached.get("bookish"))
+
+    url = f"https://{subdomain}.fandom.com/api.php"
+    headers = {"User-Agent": "BookHub/1.0 (mokhhtar@github.com)"}
+    try:
+        # Resolve the wiki's actual main page name, then read its text.
+        r = httpx.get(url, params={
+            "action": "query", "meta": "siteinfo", "siprop": "general", "format": "json",
+        }, headers=headers, timeout=6.0)
+        if r.status_code != 200:
+            return True  # fail-open
+        general = r.json().get("query", {}).get("general", {})
+        mainpage = general.get("mainpage", "Main Page")
+        sitename = general.get("sitename", "")
+
+        text = sitename
+        r2 = httpx.get(url, params={
+            "action": "parse", "page": mainpage, "prop": "text", "format": "json",
+        }, headers=headers, timeout=8.0)
+        if r2.status_code == 200:
+            html = ((r2.json().get("parse") or {}).get("text") or {}).get("*", "")
+            text += " " + clean_wiki_html(html)[:8000]
+
+        bookish = bool(_BOOKISH_RE.search(text))
+        cache.set({"bookish": bookish}, *cache_key)
+        if not bookish:
+            log.info(f"Rejected fuzzy Fandom match '{subdomain}' — main page has no book signals.")
+        return bookish
+    except Exception as e:
+        log.warning(f"Bookish check failed for '{subdomain}' (fail-open): {e}")
+        return True
+
+
 def _resolve_fandom_subdomain_single(title: str, wikidata_id: Optional[str] = None) -> Optional[str]:
     """
     Highly robust 5-tier subdomain resolver cascade for a single title string.
+    Tiers 1-2 (Wikidata-derived) are trusted as-is; tiers 3-5 are fuzzy
+    text-search matches and must pass _wiki_looks_bookish before being used.
     """
     # Tier 1: QID provided
     if wikidata_id:
         sub = _get_fandom_from_wikidata(wikidata_id)
         if sub:
             return sub
-            
+
     # Tier 2: Search QID by title
     qid = _search_wikidata_qid_by_title(title)
     if qid:
         sub = _get_fandom_from_wikidata(qid)
         if sub:
             return sub
-            
+
     # Tier 3: Google Custom Search
     api_key = os.environ.get("GOOGLE_CUSTOM_SEARCH_API_KEY")
     cx_id = os.environ.get("GOOGLE_SEARCH_CX_ID")
     if api_key and cx_id:
         sub = _get_fandom_from_google_cse(title, api_key, cx_id)
-        if sub:
+        if sub and _wiki_looks_bookish(sub):
             return sub
-            
+
     # Tier 4: DuckDuckGo HTML Search
     sub = _get_fandom_from_ddg(title)
-    if sub:
+    if sub and _wiki_looks_bookish(sub):
         return sub
-        
+
     # Tier 5: Title Normalization Ping
     normalized = "".join(c.lower() for c in title if c.isalnum())
-    if normalized and _ping_fandom_subdomain(normalized):
+    if normalized and _ping_fandom_subdomain(normalized) and _wiki_looks_bookish(normalized):
         return normalized
-        
+
     return None
 FANDOM_WIKIS = {
     "tbate": {

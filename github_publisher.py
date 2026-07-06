@@ -300,15 +300,30 @@ def publish_author(name: str, book_title: str) -> None:
         log.warning(f"publish_author failed (non-fatal): {e}")
 
 
+def resolve_published(book_slug: str, gid: str = "") -> tuple:
+    """
+    Returns (static_page_ready, actual_slug).
+
+    Checks the gid-keyed flag FIRST because it records the slug the page was
+    ACTUALLY published under — on a slug collision publish_book suffixes the
+    slug (e.g. "dune-frank-herbert"), and checking only the unsuffixed slug
+    would report static_page=False forever for that book. "Ready" means
+    published >5 minutes ago (GitHub Actions rebuild buffer), so the frontend
+    may safely swap to the clean URL.
+    """
+    now = datetime.now(timezone.utc).timestamp()
+    if gid:
+        flag = cache.get_key(f"published_gid:{gid}")
+        if isinstance(flag, dict) and flag.get("slug"):
+            return (now - (flag.get("ts") or 0)) > 300, flag["slug"]
+    if book_slug:
+        flag = cache.get_key(f"published:{book_slug}")
+        if isinstance(flag, dict):
+            return (now - (flag.get("ts") or 0)) > 300, book_slug
+    return False, book_slug
+
+
 def static_page_ready(book_slug: str) -> bool:
-    """
-    True when the book's page was published >5 minutes ago — enough time for
-    the GitHub Actions rebuild, so the frontend may swap to the clean URL.
-    """
-    if not book_slug:
-        return False
-    flag = cache.get_key(f"published:{book_slug}")
-    if not isinstance(flag, dict):
-        return False
-    ts = flag.get("ts") or 0
-    return (datetime.now(timezone.utc).timestamp() - ts) > 300
+    """Back-compat wrapper around resolve_published."""
+    ready, _ = resolve_published(book_slug)
+    return ready

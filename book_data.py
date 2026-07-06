@@ -1076,10 +1076,15 @@ def resolve_book(title: str, author: str = "", isbn: Optional[str] = None, googl
                     author=author_val,
                     description=description,
                     categories=series_record.categories,
-                    page_count=series_record.page_count,
-                    published_year=series_record.published_year,
+                    # page_count/published_year/average_rating belong to the
+                    # BASE title's record, not this specific volume — copying
+                    # them showed the same page count on every volume of a
+                    # series. Honest nulls; the ratings fetcher backfills a
+                    # volume-specific page count when Goodreads knows it.
+                    page_count=None,
+                    published_year=None,
                     cover_url=cover_val,
-                    average_rating=series_record.average_rating,
+                    average_rating=None,
                     isbn_13=None,
                     isbn_10=None,
                     google_volume_id=None,

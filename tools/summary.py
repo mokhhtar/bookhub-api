@@ -19,6 +19,7 @@ Pipeline:
 """
 
 import logging
+import re
 from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field
@@ -180,72 +181,120 @@ def _get_amazon_url_from_api(title: str, author: str = "") -> Optional[str]:
     return None
 
 
+# Wikidata P31 (instance-of) values that identify a written work. Used to
+# verify a candidate entity really IS a book before its awards are shown —
+# a band/film/game sharing the book's name must never pass.
+_BOOK_CLASS_QIDS = {
+    "Q571",       # book
+    "Q7725634",   # literary work
+    "Q47461344",  # written work
+    "Q8261",      # novel
+    "Q277759",    # book series
+    "Q1667921",   # novel series
+    "Q747381",    # light novel
+    "Q49084",     # short story
+    "Q1004",      # comics
+    "Q21198342",  # manga series
+    "Q25379",     # play
+    "Q5185279",   # poem
+}
+
+_WIKIDATA_URL = "https://www.wikidata.org/w/api.php"
+_WIKIDATA_HEADERS = {
+    "User-Agent": "BookHubApp/1.0 (https://github.com/mokhhtar/bookhub; mokhhtar@gmail.com) httpx/0.24",
+    "Accept": "application/json",
+}
+
+
+def _first_book_qid(qids: list) -> Optional[str]:
+    """
+    Returns the first candidate QID that is verifiably a written work:
+    P31 in the book-class set, OR carries a P50 (author) claim — P50 is a
+    generic strong book signal that also covers specific P31 subclasses
+    ("heroic fantasy novel", etc.) missing from the set. Bands, films and
+    games have neither. No candidate passes → None (no awards is better
+    than the wrong entity's awards).
+    """
+    import httpx
+    qids = [q for q in qids if isinstance(q, str) and re.match(r"^Q\d+$", q)][:8]
+    if not qids:
+        return None
+    try:
+        r = httpx.get(_WIKIDATA_URL, params={
+            "action": "wbgetentities", "ids": "|".join(qids),
+            "props": "claims", "format": "json",
+        }, headers=_WIKIDATA_HEADERS, timeout=6.0)
+        if r.status_code != 200:
+            return None
+        entities = r.json().get("entities", {})
+        for qid in qids:
+            claims = (entities.get(qid) or {}).get("claims", {})
+            for claim in claims.get("P31", []):
+                value = (((claim.get("mainsnak") or {}).get("datavalue") or {}).get("value") or {})
+                if value.get("id") in _BOOK_CLASS_QIDS:
+                    return qid
+            if "P50" in claims:  # has an author → written work
+                return qid
+    except Exception as e:
+        log.warning(f"Wikidata P31 verification failed: {e}")
+    return None
+
+
 def _fetch_wikidata_qid(record: book_data.BookRecord) -> Optional[str]:
     import httpx
-    url = "https://www.wikidata.org/w/api.php"
-    headers = {
-        "User-Agent": "BookHubApp/1.0 (https://github.com/mokhhtar/bookhub; mokhhtar@gmail.com) httpx/0.24",
-        "Accept": "application/json"
-    }
-    
-    # 1. Try search by Open Library Work Key
+
+    # 1. Candidates from Open Library work-key search
     if record.open_library_work_key:
         ol_clean = record.open_library_work_key.replace("/works/", "").replace("/books/", "")
-        params = {
-            "action": "query",
-            "list": "search",
-            "srsearch": ol_clean,
-            "format": "json"
-        }
         try:
-            r = httpx.get(url, params=params, headers=headers, timeout=5.0)
+            r = httpx.get(_WIKIDATA_URL, params={
+                "action": "query", "list": "search", "srsearch": ol_clean, "format": "json",
+            }, headers=_WIKIDATA_HEADERS, timeout=5.0)
             if r.status_code == 200:
-                search_results = r.json().get("query", {}).get("search", [])
-                if search_results:
-                    return search_results[0].get("title")
+                candidates = [res.get("title") for res in r.json().get("query", {}).get("search", [])[:5]]
+                qid = _first_book_qid(candidates)
+                if qid:
+                    return qid
         except Exception:
             pass
 
-    # 2. Try search by ISBN-13
+    # 2. Candidates from ISBN-13 search
     if record.isbn_13:
         isbn_clean = record.isbn_13.replace("-", "").strip()
-        params = {
-            "action": "query",
-            "list": "search",
-            "srsearch": isbn_clean,
-            "format": "json"
-        }
         try:
-            r = httpx.get(url, params=params, headers=headers, timeout=5.0)
+            r = httpx.get(_WIKIDATA_URL, params={
+                "action": "query", "list": "search", "srsearch": isbn_clean, "format": "json",
+            }, headers=_WIKIDATA_HEADERS, timeout=5.0)
             if r.status_code == 200:
-                search_results = r.json().get("query", {}).get("search", [])
-                if search_results:
-                    return search_results[0].get("title")
+                candidates = [res.get("title") for res in r.json().get("query", {}).get("search", [])[:5]]
+                qid = _first_book_qid(candidates)
+                if qid:
+                    return qid
         except Exception:
             pass
 
-    # 3. Try search by Title
-    params = {
-        "action": "wbsearchentities",
-        "search": record.title,
-        "language": "en",
-        "format": "json",
-        "limit": 8
-    }
+    # 3. Candidates from title search — entities whose description mentions
+    #    the author's surname rank first, then everything else; the P31/P50
+    #    gate makes the final call either way.
     try:
-        r = httpx.get(url, params=params, headers=headers, timeout=5.0)
+        r = httpx.get(_WIKIDATA_URL, params={
+            "action": "wbsearchentities", "search": record.title,
+            "language": "en", "format": "json", "limit": 8,
+        }, headers=_WIKIDATA_HEADERS, timeout=5.0)
         if r.status_code == 200:
             search_results = r.json().get("search", [])
-            book_keywords = {"novel", "book", "play", "story", "literary", "writing", "work", "poem", "biography", "memoir"}
-            for res in search_results:
-                desc = res.get("description", "").lower()
-                if any(kw in desc for kw in book_keywords):
-                    return res.get("id")
-            if search_results:
-                return search_results[0].get("id")
+            surname = ""
+            if record.author:
+                parts = record.author.split(",")[0].strip().split()
+                surname = parts[-1].lower() if parts else ""
+            by_author = [res for res in search_results
+                         if surname and surname in (res.get("description", "") or "").lower()]
+            others = [res for res in search_results if res not in by_author]
+            candidates = [res.get("id") for res in by_author + others]
+            return _first_book_qid(candidates)
     except Exception:
         pass
-        
+
     return None
 
 
@@ -350,6 +399,144 @@ def resolve_factual_awards(record: book_data.BookRecord) -> list[dict]:
     if qid:
         return _fetch_wikidata_awards(qid)
     return []
+
+
+# ── Ratings (Goodreads-first, Open Library fallback) ─────────
+def _normalize_title_for_match(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def _fetch_goodreads_rating(title: str, author: str) -> Optional[dict]:
+    """
+    Goodreads killed their public API (2020); their site's own autocomplete
+    endpoint returns clean JSON (avgRating, ratingsCount, bookUrl, numPages)
+    without HTML parsing. Unofficial — treated as best-effort with a strict
+    title-match guard and full fallback to Open Library when it breaks.
+    """
+    import httpx
+    try:
+        # Query by TITLE ONLY — GR's autocomplete searches titles; appending
+        # the author derails it into knock-off "Summary of X" listings. The
+        # author is used below to VALIDATE candidates instead.
+        r = httpx.get(
+            "https://www.goodreads.com/book/auto_complete",
+            params={"format": "json", "q": title[:120]},
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+            timeout=6.0, follow_redirects=True,
+        )
+        if r.status_code != 200:
+            return None
+        want = _normalize_title_for_match(title)
+        if not want:
+            return None
+        surname = ""
+        if author:
+            parts = author.split(",")[0].strip().split()
+            surname = parts[-1].lower() if parts else ""
+
+        # Two-tier matching. Knock-off "Summary of X" / workbook editions often
+        # rank high and their titles CONTAIN the real title, so loose substring
+        # matching alone picks the wrong (tiny) edition:
+        #   tier 1 — candidate title equals/starts with ours AND (no author
+        #            expected, or candidate author surname matches).
+        #   tier 2 — ours appears inside theirs; knock-off prefixes excluded,
+        #            author-mismatches excluded, most-rated candidate wins.
+        knockoff = re.compile(r"^\s*(a\s+|the\s+)?(summary|workbook|study guide|analysis|key takeaways|conversations?)\b", re.IGNORECASE)
+        exact, loose = None, None
+        for cand in r.json() or []:
+            raw_title = cand.get("bookTitleBare") or cand.get("title", "")
+            got = _normalize_title_for_match(raw_title)
+            avg = float(cand.get("avgRating") or 0)
+            count = int(cand.get("ratingsCount") or 0)
+            cand_author = ((cand.get("author") or {}).get("name") or "").lower()
+            if not got or not avg or not count:
+                continue
+            author_ok = not surname or surname in cand_author
+            if (got == want or got.startswith(want)) and author_ok and not knockoff.match(raw_title):
+                exact = cand
+                break
+            if want in got and author_ok and not knockoff.match(raw_title):
+                if loose is None or count > int(loose.get("ratingsCount") or 0):
+                    loose = cand
+        best = exact or loose
+        if not best:
+            return None
+        out = {
+            "source": "goodreads",
+            "average": round(float(best.get("avgRating")), 2),
+            "count": int(best.get("ratingsCount")),
+            "url": "https://www.goodreads.com" + (best.get("bookUrl") or ""),
+        }
+        pages = best.get("numPages")
+        if isinstance(pages, int) and pages > 0:
+            out["pages"] = pages
+        return out
+    except Exception as e:
+        log.warning(f"Goodreads rating lookup failed for '{title}': {e}")
+    return None
+
+
+def _fetch_ol_ratings(record: book_data.BookRecord) -> Optional[dict]:
+    """Open Library ratings: average + count + per-star distribution. Free, stable."""
+    import httpx
+    headers = {"User-Agent": "BookHub/1.0 (mokhhtar@github.com)"}
+    work_key = record.open_library_work_key
+    try:
+        if not work_key:
+            for isbn in (record.isbn_13, record.isbn_10):
+                if not isbn:
+                    continue
+                r = httpx.get(f"https://openlibrary.org/isbn/{isbn}.json",
+                              headers=headers, timeout=6.0, follow_redirects=True)
+                if r.status_code == 200:
+                    works = r.json().get("works") or []
+                    if works:
+                        work_key = works[0].get("key")
+                        break
+        if not work_key:
+            return None
+        key = work_key.strip("/").replace("works/", "")
+        r = httpx.get(f"https://openlibrary.org/works/{key}/ratings.json",
+                      headers=headers, timeout=6.0, follow_redirects=True)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        summary_d = data.get("summary") or {}
+        counts = data.get("counts") or {}
+        if not summary_d.get("count"):
+            return None
+        return {
+            "source": "open_library",
+            "average": round(float(summary_d.get("average") or 0), 2),
+            "count": int(summary_d.get("count") or 0),
+            "distribution": {str(s): int(counts.get(str(s)) or 0) for s in range(1, 6)},
+        }
+    except Exception as e:
+        log.warning(f"Open Library ratings lookup failed for '{record.title}': {e}")
+    return None
+
+
+def resolve_ratings(record: book_data.BookRecord) -> Optional[dict]:
+    """
+    Goodreads first (user preference; far larger rating pool), Open Library
+    as fallback — and as the distribution complement when both exist (GR's
+    endpoint has no per-star counts). Fail-open: None means the frontend
+    falls back to the legacy Google Books average_rating.
+    """
+    cache_key = ("ratings_v1", record.title, record.author)
+    cached = cache.get(*cache_key)
+    if cached is not None:
+        return cached or None  # {} sentinel → None
+
+    ratings = _fetch_goodreads_rating(record.title, record.author)
+    ol = _fetch_ol_ratings(record)
+    if ratings and ol and ol.get("distribution"):
+        ratings["distribution"] = ol["distribution"]
+    elif not ratings:
+        ratings = ol
+
+    cache.set(ratings or {}, *cache_key)  # cache negative results too
+    return ratings
 
 
 # ── Similar books: AI proposes, catalog verifies ────────────
@@ -489,12 +676,18 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
             cached["amazon_url"] = amazon_url
             cache.set(cached, *cache_key)
 
-        # Backfill slug/static_page on the way out (cheap Redis lookups) so
-        # repeat visitors get the clean static URL once the page is built.
+        # Backfill slug/static_page/author_slug on the way out (cheap Redis
+        # lookups) so repeat visitors get the clean static URL once the page
+        # is built, even for responses cached before these fields existed.
         if isinstance(cached, dict) and cached.get("found"):
             c_slug = cached.get("slug") or slug_mod.book_slug(cached.get("title", ""))
-            cached["slug"] = c_slug
-            cached["static_page"] = github_publisher.static_page_ready(c_slug)
+            ready, actual_slug = github_publisher.resolve_published(
+                c_slug, cached.get("google_volume_id") or cached.get("isbn_13") or ""
+            )
+            cached["slug"] = actual_slug
+            cached["static_page"] = ready
+            if not cached.get("author_slug"):
+                cached["author_slug"] = slug_mod.author_slug(cached.get("author", ""))
         return cached
 
     record = book_data.resolve_book(req.title, req.author, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
@@ -628,8 +821,15 @@ Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
             log.warning(f"Category assignment failed for '{record.title}': {e}")
         return [taxonomy.fallback_category(record.primary_category)]
 
-    # Execute all 7 tasks concurrently
-    with concurrent.futures.ThreadPoolExecutor(max_workers=7) as executor:
+    def get_ratings():
+        try:
+            return resolve_ratings(record)
+        except Exception as e:
+            log.warning(f"Ratings lookup failed for '{record.title}': {e}")
+            return None
+
+    # Execute all 8 tasks concurrently
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
         future_summary = executor.submit(get_summary_text)
         future_chapters = executor.submit(get_chapters)
         future_awards = executor.submit(get_awards)
@@ -637,6 +837,7 @@ Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
         future_amazon = executor.submit(get_amazon)
         future_fandom_cover = executor.submit(get_fandom_cover)
         future_categories = executor.submit(get_categories)
+        future_ratings = executor.submit(get_ratings)
 
         summary_text = future_summary.result()
         chapters = future_chapters.result()
@@ -645,28 +846,41 @@ Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
         amazon_url = future_amazon.result()
         fandom_cover = future_fandom_cover.result()
         categories = future_categories.result()
+        ratings = future_ratings.result()
 
     book_slug = slug_mod.book_slug(record.title)
+    static_ready, actual_slug = github_publisher.resolve_published(
+        book_slug, record.google_volume_id or record.isbn_13 or ""
+    )
+
+    # Volume-specific page count from Goodreads when our sources had none
+    # (fandom_series volumes deliberately carry page_count=None — the base
+    # title's count applied to every volume was wrong).
+    page_count = record.page_count
+    if not page_count and ratings and ratings.get("pages"):
+        page_count = ratings["pages"]
 
     result = {
         "found": True,
         "source": record.source,
         "title": record.title,
         "author": record.author,
+        "author_slug": slug_mod.author_slug(record.author),
         "depth": req.depth,
         "summary": summary_text,
         "category": record.primary_category,
         "categories": categories,
-        "slug": book_slug,
+        "slug": actual_slug,
         # True only once the static page was published >5 min ago (rebuild
         # buffer) — gates the frontend's history.replaceState to the clean URL.
-        "static_page": github_publisher.static_page_ready(book_slug),
-        "page_count": record.page_count,
+        "static_page": static_ready,
+        "page_count": page_count,
         "published_year": record.published_year,
         # Prefer the catalog's hand-verified per-series cover when this
         # title resolved to one — see get_fandom_cover() for why.
         "cover_url": fandom_cover or record.cover_url,
         "average_rating": record.average_rating,
+        "ratings": ratings,
         "isbn_13": record.isbn_13,
         "isbn_10": record.isbn_10,
         "amazon_url": amazon_url,
