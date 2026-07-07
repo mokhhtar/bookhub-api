@@ -109,19 +109,11 @@ Write a comprehensive study guide structured with the following HTML sections:
 - A main section header `<h2>2. Key Concepts & Core Ideas</h2>` followed by 3-4 subheadings using `<h3>` tags for each concept (e.g. `<h3>The Power of Habit</h3>`) and a detailed paragraph (`<p>`) of 3-5 sentences explaining it.
 - A main section header `<h2>3. Key Takeaways & Lessons</h2>` followed by a `<ul>` list containing 5-7 detailed, actionable `<li>` bullet points outlining the main lessons, rules, or practical applications. Use `<strong>` inside the list item for the lesson title (e.g. `<li><strong>Start Small:</strong> ...</li>`).
 - A main section header `<h2>4. Who Should Read This</h2>` followed by a paragraph (`<p>`) of 2-3 sentences explaining the target audience.
-- A main section header `<h2>5. Reader Reviews & Reception</h2>` followed by 3 realistic, synthesized reader reviews based on common Goodreads/BookWyrm critical consensus. Each review must be wrapped EXACTLY in:
-  <div class="user-review">
-    <div class="user-review-header">
-      <span class="user-review-author">Reviewer: [Username/Alias]</span>
-      <span class="user-review-stars">★★★★★ [or rating matching sentiment]</span>
-    </div>
-    <p class="user-review-text">"[Review text content summarizing a key reader praise or critique]"</p>
-  </div>
-- A main section header `<h2>6. Critical Evaluation & Conclusion</h2>` followed by a concluding analysis paragraph (`<p>`) of the book's impact, style, and contribution.
+- A main section header `<h2>5. Critical Evaluation & Conclusion</h2>` followed by a concluding analysis paragraph (`<p>`) of the book's impact, style, and contribution.
 
 RULES:
-- Base ALL sections (1–6) strictly on the verified data above. Do NOT use your own training knowledge about this book or series — only what is stated in the description block.
-- For section 5 (Reviews), synthesize realistic reader reactions based ONLY on the events and themes described in the synopsis above. Do not invent praise or critique that refers to plot points not mentioned in the provided description.
+- Base ALL sections (1–5) strictly on the verified data above. Do NOT use your own training knowledge about this book or series — only what is stated in the description block.
+- Never invent reader reviews, reviewer names/usernames, review quotes, or ratings — real rating/review data is sourced and displayed separately, from verified providers, elsewhere on the page. Do not simulate or synthesize this content under any section.
 - Do not contradict the description.
 - No preamble like "Here is a summary" — start directly with the HTML content of the first section.
 - Output clean, valid, semantic HTML tags ONLY. Do NOT wrap the output in markdown code blocks like ```html ```. Start directly with `<h2>1. Core Premise & Overview</h2>`.
@@ -702,7 +694,10 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
     # v5: response gained categories/slug/static_page — never serve stale v4 shapes.
     # v6: volume page_count/ratings/consistent-categories fixes — stale v5
     # entries held page_count=None / wrong values for series volumes.
-    cache_key = ("summary_v6", req.title, req.author, req.depth, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
+    # v7: removed the fabricated "Reader Reviews & Reception" section (fake
+    # reviewer usernames/quotes/ratings) from the prompt — stale v6 entries
+    # still carry invented reviews baked into the summary HTML.
+    cache_key = ("summary_v7", req.title, req.author, req.depth, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
     cached = cache.get(*cache_key)
     if cached:
         # Self-healing cache migration: verify if the cached amazon_url is valid and English,
