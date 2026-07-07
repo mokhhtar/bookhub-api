@@ -52,6 +52,17 @@ _WRITER_RE = re.compile(
     r"writer|novelist|author|poet|playwright|essayist|journalist", re.IGNORECASE
 )
 
+# Same "source already numbered its chapters" cleanup as the dynamic tool's
+# JS (summary.html), ported to Python so the STATIC page never needs
+# client-side cleanup — the committed markdown is already correct.
+_CHAPTER_NUM_RE = re.compile(
+    r"^\s*(?:ch(?:apter)?\.?\s*)?\d{1,4}\s*[-–—.:)\]]?\s*", re.IGNORECASE
+)
+
+# A cheap floor against ever publishing a failed/near-empty summary as a
+# public page — not a quality bar, just a "did this actually work" guard.
+MIN_SUMMARY_CHARS = 300
+
 
 def is_enabled() -> bool:
     return PUBLISH_ENABLED and bool(GITHUB_PAT)
@@ -105,14 +116,50 @@ def _yaml_str(value) -> str:
     return json.dumps(value if value is not None else "", ensure_ascii=False)
 
 
+def _yaml_json(value) -> str:
+    """
+    JSON encoding of ANY JSON-serializable value (list/dict/scalar/None) — a
+    JSON list/object is also valid flow-style YAML, so this is just _yaml_str
+    generalized beyond scalars. Used for the richer nested fields (chapters,
+    similar_books, awards, ratings) below.
+    """
+    return json.dumps(value, ensure_ascii=False) if value is not None else "null"
+
+
 def _strip_tags(html: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html or "")).strip()
+
+
+def _clean_chapter_title(title: str) -> str:
+    """Strip source-provided leading numbering ('01 Experiment 626' -> 'Experiment 626')
+    so the static page's own numbered list never doubles up — mirrors the JS
+    fix already shipped on the dynamic page's chapter list."""
+    if not isinstance(title, str):
+        return ""
+    stripped = _CHAPTER_NUM_RE.sub("", title).strip()
+    return stripped or title.strip()
+
+
+def _is_publishable(result: dict) -> bool:
+    """Cheap floor against publishing a failed/near-empty summary as a public
+    page — not a quality bar, just a sanity check that generation worked."""
+    text = _strip_tags(result.get("summary", "") or "")
+    return len(text) >= MIN_SUMMARY_CHARS
 
 
 def _book_markdown(result: dict, book_slug: str, a_slug: str) -> str:
     summary_html = result.get("summary", "") or ""
     description = _strip_tags(summary_html)[:160]
     categories = result.get("categories") or []
+
+    chapters = [_clean_chapter_title(c) for c in (result.get("chapters") or [])]
+    similar_books = [
+        {k: b.get(k) for k in ("title", "author", "cover_url", "google_id", "isbn_13")}
+        for b in (result.get("similar_books") or [])
+    ]
+    awards = result.get("awards") or []
+    ratings = result.get("ratings")  # dict or None
+
     lines = [
         "---",
         "layout: book",
@@ -131,6 +178,13 @@ def _book_markdown(result: dict, book_slug: str, a_slug: str) -> str:
         f"average_rating: {result.get('average_rating') if isinstance(result.get('average_rating'), (int, float)) else 'null'}",
         f"amazon_url: {_yaml_str(result.get('amazon_url'))}",
         f"description: {_yaml_str(description)}",
+        # Richer content + trust signals — see plan "Enrich the static book
+        # page" for why: chapters/similar_books/awards/ratings were already
+        # available in the API response but previously discarded here.
+        f"chapters: {_yaml_json(chapters)}",
+        f"similar_books: {_yaml_json(similar_books)}",
+        f"awards: {_yaml_json(awards)}",
+        f"ratings: {_yaml_json(ratings)}",
         f"date: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S %z')}",
         "---",
         "",
@@ -213,6 +267,9 @@ def publish_book(result: dict) -> None:
         if not is_enabled():
             return
         title = result.get("title") or ""
+        if not _is_publishable(result):
+            log.info(f"Summary for '{title}' too short/empty — skipping static publish.")
+            return
         book_slug = result.get("slug") or slug_mod.book_slug(title)
         if not book_slug:
             log.info(f"No usable slug for '{title}' (non-Latin?) — skipping publish.")
