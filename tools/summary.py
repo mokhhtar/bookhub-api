@@ -419,84 +419,61 @@ def _fetch_goodreads_rating(title: str, author: str) -> Optional[dict]:
             out["pages"] = pages
         return out
 
+    surname = ""
+    if author:
+        parts = author.split(",")[0].strip().split()
+        surname = parts[-1].lower() if parts else ""
+
+    knockoff = re.compile(r"^\s*(a\s+|the\s+)?(summary|workbook|study guide|analysis|key takeaways|conversations?)\b", re.IGNORECASE)
     req_vol = book_data.extract_volume_number(title)
-    # For a volume, query "{series} volume {N}" and match on base title + exact
-    # volume number. A bare series query only returns GR's top ~5 volumes (so
-    # vol 8 would be missed), and our title carries a comma+subtitle
-    # ("..., Volume 3: Traveler") that GR's ("... Volume 3") lacks, so substring
-    # matching alone misses it. This also yields the volume's OWN page count and
-    # rating (previously every volume showed none).
-    if req_vol:
-        query = f"{book_data.get_base_title(title)} volume {req_vol}"
-    else:
-        query = title
-    try:
-        # Goodreads throttles datacenter IPs (Render) intermittently — a browsery
-        # header set + one short retry recovers many of those transient 403/429s.
+
+    def _fetch(query):
+        """One autocomplete call with one retry (GR throttles datacenter IPs)."""
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36",
             "Accept": "application/json, text/plain, */*",
             "Accept-Language": "en-US,en;q=0.9",
             "Referer": "https://www.goodreads.com/",
         }
-        candidates = None
         for attempt in range(2):
             try:
                 r = httpx.get(
                     "https://www.goodreads.com/book/auto_complete",
-                    # Query by TITLE ONLY — appending the author derails GR's
-                    # autocomplete into knock-off "Summary of X" listings; the
-                    # author is used below to VALIDATE candidates instead.
-                    params={"format": "json", "q": (query or title)[:120]},
+                    params={"format": "json", "q": (query or "")[:120]},
                     headers=headers, timeout=7.0, follow_redirects=True,
                 )
                 if r.status_code == 200:
-                    candidates = r.json() or []
-                    break
+                    return r.json() or []
                 log.warning(f"Goodreads returned {r.status_code} for '{query}' (attempt {attempt + 1})")
             except Exception as e:
                 log.warning(f"Goodreads request error for '{query}' (attempt {attempt + 1}): {e}")
-        if candidates is None:
+        return None
+
+    def _match_volume(candidates):
+        try:
+            want_vol_int = int(req_vol)
+        except (TypeError, ValueError):
             return None
+        want_base = _normalize_title_for_match(book_data.get_base_title(title))
+        best = None
+        for cand in candidates:
+            raw_title = cand.get("bookTitleBare") or cand.get("title", "")
+            avg = float(cand.get("avgRating") or 0)
+            count = int(cand.get("ratingsCount") or 0)
+            if not avg or not count or knockoff.match(raw_title):
+                continue
+            cand_vol = book_data.extract_volume_number(raw_title)
+            # Integer compare — GR often zero-pads ("Vol. 02" vs our "Volume 5").
+            if not cand_vol or int(cand_vol) != want_vol_int:
+                continue
+            cand_base = _normalize_title_for_match(book_data.get_base_title(raw_title))
+            if not (want_base and cand_base and (want_base in cand_base or cand_base in want_base)):
+                continue
+            if best is None or count > int(best.get("ratingsCount") or 0):
+                best = cand
+        return best
 
-        surname = ""
-        if author:
-            parts = author.split(",")[0].strip().split()
-            surname = parts[-1].lower() if parts else ""
-
-        knockoff = re.compile(r"^\s*(a\s+|the\s+)?(summary|workbook|study guide|analysis|key takeaways|conversations?)\b", re.IGNORECASE)
-
-        # ── Volume path: base title + exact volume number ──
-        if req_vol:
-            try:
-                want_vol_int = int(req_vol)
-            except (TypeError, ValueError):
-                want_vol_int = None
-            want_base = _normalize_title_for_match(book_data.get_base_title(title))
-            best = None  # most-rated candidate that matches base + volume
-            for cand in candidates:
-                raw_title = cand.get("bookTitleBare") or cand.get("title", "")
-                avg = float(cand.get("avgRating") or 0)
-                count = int(cand.get("ratingsCount") or 0)
-                if not avg or not count or knockoff.match(raw_title):
-                    continue
-                cand_vol = book_data.extract_volume_number(raw_title)
-                # Compare as INTEGERS — Goodreads often zero-pads ("Vol. 02"),
-                # so a string compare ("5" != "05") wrongly rejected the match
-                # for every series GR pads (LOTM happens not to be padded).
-                if not cand_vol or want_vol_int is None or int(cand_vol) != want_vol_int:
-                    continue
-                cand_base = _normalize_title_for_match(book_data.get_base_title(raw_title))
-                if not (want_base and cand_base and (want_base in cand_base or cand_base in want_base)):
-                    continue
-                # Prefer the most-rated match — otherwise a low-count fan/"New
-                # Manhwa of the world:" edition listed first would win over the
-                # canonical volume.
-                if best is None or count > int(best.get("ratingsCount") or 0):
-                    best = cand
-            return _build(best) if best else None
-
-        # ── Non-volume path: two-tier title match ──
+    def _match_title(candidates):
         want = _normalize_title_for_match(title)
         if not want:
             return None
@@ -509,20 +486,39 @@ def _fetch_goodreads_rating(title: str, author: str) -> Optional[dict]:
             cand_author = ((cand.get("author") or {}).get("name") or "").lower()
             if not got or not avg or not count:
                 continue
-            author_ok = not surname or surname in cand_author
-            if not author_ok or knockoff.match(raw_title):
+            if (surname and surname not in cand_author) or knockoff.match(raw_title):
                 continue
             if got == want or got.startswith(want):
                 exact = cand
                 break
-            # ours contains theirs (they lack our subtitle) OR theirs contains ours
-            if (want in got or got in want):
+            if want in got or got in want:  # subtitle diffs either direction
                 if loose is None or count > int(loose.get("ratingsCount") or 0):
                     loose = cand
-        best = exact or loose
-        return _build(best) if best else None
-    except Exception as e:
-        log.warning(f"Goodreads rating lookup failed for '{title}': {e}")
+        return exact or loose
+
+    # Query order: title-only first (cleanest — appending the author derails GR
+    # into knock-off "Summary of X" listings for popular books). Fall back to
+    # a title+author query only when title-only found nothing — obscure books
+    # with generic titles (e.g. "The Social Studies Curriculum") return junk
+    # "Packet …" results on a bare-title search but surface correctly with the
+    # author appended.
+    if req_vol:
+        base = book_data.get_base_title(title)
+        queries = [f"{base} volume {req_vol}"]
+        if surname:
+            queries.append(f"{base} volume {req_vol} {surname}")
+    else:
+        queries = [title]
+        if surname:
+            queries.append(f"{title} {surname}")
+
+    for query in queries:
+        candidates = _fetch(query)
+        if not candidates:
+            continue
+        match = _match_volume(candidates) if req_vol else _match_title(candidates)
+        if match:
+            return _build(match)
     return None
 
 
@@ -566,24 +562,49 @@ def _fetch_ol_ratings(record: book_data.BookRecord) -> Optional[dict]:
     return None
 
 
+# A per-star distribution is only shown when it has at least this many ratings.
+# Open Library often holds a handful (sometimes ONE) rating for a book that
+# Goodreads has thousands of — merging that 1-rating distribution under a
+# "1,559 ratings" Goodreads headline produced an absurd, broken-looking
+# breakdown (a single 4★ bar at 100%). Below the floor, we show the Goodreads
+# headline alone and omit the breakdown.
+MIN_DISTRIBUTION_RATINGS = 30
+
+
 def resolve_ratings(record: book_data.BookRecord) -> Optional[dict]:
     """
-    Goodreads first (user preference; far larger rating pool), Open Library
-    as fallback — and as the distribution complement when both exist (GR's
-    endpoint has no per-star counts). Fail-open: None means the frontend
-    falls back to the legacy Google Books average_rating.
+    Goodreads first (user preference; far larger rating pool), Open Library as
+    fallback. Open Library also supplies the per-star DISTRIBUTION (GR's endpoint
+    has none) — but only when it's a meaningful sample, and always labelled with
+    its OWN source/count so it's never implied to match the GR headline count.
+    Fail-open: None means the frontend falls back to Google Books' average.
     """
-    cache_key = ("ratings_v2", record.title, record.author)
+    cache_key = ("ratings_v3", record.title, record.author)
     cached = cache.get(*cache_key)
     if cached is not None:
         return cached or None  # {} sentinel → None
 
     ratings = _fetch_goodreads_rating(record.title, record.author)
     ol = _fetch_ol_ratings(record)
-    if ratings and ol and ol.get("distribution"):
-        ratings["distribution"] = ol["distribution"]
-    elif not ratings:
+
+    def _dist_total(d):
+        return sum(int(v) for v in (d or {}).values())
+
+    if ratings:
+        # Attach OL's distribution to the GR headline ONLY if it's substantial.
+        if ol and ol.get("distribution") and _dist_total(ol["distribution"]) >= MIN_DISTRIBUTION_RATINGS:
+            ratings["distribution"] = ol["distribution"]
+            ratings["distribution_source"] = "open_library"
+            ratings["distribution_count"] = _dist_total(ol["distribution"])
+    elif ol:
+        # Pure Open Library result — count and distribution are the same
+        # population, so they're inherently consistent. Still gate the breakdown.
         ratings = ol
+        if ratings.get("distribution") and _dist_total(ratings["distribution"]) >= MIN_DISTRIBUTION_RATINGS:
+            ratings["distribution_source"] = "open_library"
+            ratings["distribution_count"] = _dist_total(ratings["distribution"])
+        else:
+            ratings.pop("distribution", None)
 
     if ratings:
         cache.set(ratings, *cache_key)          # good result → cache 30 days
@@ -697,7 +718,9 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
     # v7: removed the fabricated "Reader Reviews & Reception" section (fake
     # reviewer usernames/quotes/ratings) from the prompt — stale v6 entries
     # still carry invented reviews baked into the summary HTML.
-    cache_key = ("summary_v7", req.title, req.author, req.depth, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
+    # v8: ratings distribution now gated + author-fallback GR query — stale v7
+    # entries carry the 1-rating OL distribution / missing ratings.
+    cache_key = ("summary_v8", req.title, req.author, req.depth, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
     cached = cache.get(*cache_key)
     if cached:
         # Self-healing cache migration: verify if the cached amazon_url is valid and English,
