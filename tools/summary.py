@@ -756,14 +756,21 @@ def resolve_free_ebook(record: book_data.BookRecord) -> Optional[dict]:
     surname is accepted — linking the WRONG free ebook is worse than none.
     """
     import httpx
-    try:
-        r = httpx.get(GUTENDEX_API, params={"search": record.title},
-                      headers=_UA_HEADERS, timeout=6.0, follow_redirects=True)
-        if r.status_code != 200:
-            return None
-        results = r.json().get("results") or []
-    except Exception as e:
-        log.warning(f"Gutendex lookup failed for '{record.title}': {e}")
+    # Two attempts with a generous timeout — gutendex.com is noticeably
+    # slower from Render's datacenter IP than from residential connections,
+    # and a missed lookup here costs a "read free" button on the page.
+    results = None
+    for attempt in (1, 2):
+        try:
+            r = httpx.get(GUTENDEX_API, params={"search": record.title},
+                          headers=_UA_HEADERS, timeout=10.0, follow_redirects=True)
+            if r.status_code == 200:
+                results = r.json().get("results") or []
+                break
+            log.warning(f"Gutendex returned {r.status_code} for '{record.title}' (attempt {attempt})")
+        except Exception as e:
+            log.warning(f"Gutendex lookup failed for '{record.title}' (attempt {attempt}): {e}")
+    if results is None:
         return None
 
     want_title = _norm_match(record.title)
@@ -868,6 +875,30 @@ def resolve_wikiquote_quotes(record: book_data.BookRecord, limit: int = 5) -> Op
     }
 
 
+# Cached wrappers shared by the fresh-build path and the cached-read
+# self-heal below. Positives keep the default 30-day TTL; negatives ({})
+# expire after 1h so a transient Gutendex/Wikiquote failure at generation
+# time doesn't hide a "read free" button or the quotes card for a month.
+def _cached_free_ebook(record: book_data.BookRecord) -> Optional[dict]:
+    key = ("free_ebook_v1", record.title, record.author)
+    hit = cache.get(*key)
+    if hit is not None:
+        return hit or None  # {} negative marker → None
+    ebook = resolve_free_ebook(record)
+    cache.set(ebook or {}, *key, ttl=None if ebook else 3600)
+    return ebook
+
+
+def _cached_quotes(record: book_data.BookRecord) -> Optional[dict]:
+    key = ("wikiquote_v1", record.title, record.author)
+    hit = cache.get(*key)
+    if hit is not None:
+        return hit or None
+    quotes = resolve_wikiquote_quotes(record)
+    cache.set(quotes or {}, *key, ttl=None if quotes else 3600)
+    return quotes
+
+
 # ── Route ───────────────────────────────────────────────────
 @router.post("/summary")
 def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
@@ -954,6 +985,32 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
                         cache.set(cached, *cache_key)  # persist the heal
                 except Exception as e:
                     log.warning(f"Ratings self-heal failed for '{cached.get('title')}': {e}")
+
+            # Self-heal free_ebook/quotes the same way: a transient
+            # Gutendex/Wikiquote failure at generation time bakes None into
+            # this 30-day cached response. Both wrappers sit behind their own
+            # 1h negative cache, so a book with genuinely no free edition or
+            # quotes page costs at most one lookup per hour.
+            if cached.get("free_ebook") is None or cached.get("quotes") is None:
+                try:
+                    tmp = book_data.BookRecord(
+                        found=True, title=cached.get("title", ""), author=cached.get("author", ""),
+                    )
+                    healed = False
+                    if cached.get("free_ebook") is None:
+                        fe = _cached_free_ebook(tmp)
+                        if fe:
+                            cached["free_ebook"] = fe
+                            healed = True
+                    if cached.get("quotes") is None:
+                        wq = _cached_quotes(tmp)
+                        if wq:
+                            cached["quotes"] = wq
+                            healed = True
+                    if healed:
+                        cache.set(cached, *cache_key)  # persist the heal
+                except Exception as e:
+                    log.warning(f"Free-ebook/quotes self-heal failed for '{cached.get('title')}': {e}")
         return cached
 
     record = book_data.resolve_book(req.title, req.author, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
@@ -1135,22 +1192,10 @@ Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
         return result_tr
 
     def get_free_ebook():
-        fe_cache_key = ("free_ebook_v1", record.title, record.author)
-        fe_cached = cache.get(*fe_cache_key)
-        if fe_cached is not None:
-            return fe_cached or None  # {} marker → None
-        ebook = resolve_free_ebook(record)
-        cache.set(ebook or {}, *fe_cache_key)  # cache negatives as {} (None won't store)
-        return ebook
+        return _cached_free_ebook(record)
 
     def get_quotes():
-        q_cache_key = ("wikiquote_v1", record.title, record.author)
-        q_cached = cache.get(*q_cache_key)
-        if q_cached is not None:
-            return q_cached or None
-        quotes = resolve_wikiquote_quotes(record)
-        cache.set(quotes or {}, *q_cache_key)
-        return quotes
+        return _cached_quotes(record)
 
     # Execute all 11 tasks concurrently
     with concurrent.futures.ThreadPoolExecutor(max_workers=11) as executor:
