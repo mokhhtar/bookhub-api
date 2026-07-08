@@ -32,4 +32,6 @@ services:
         sync: false        # e.g. main
       - key: GITHUB_PUBLISH_ENABLED
         sync: false        # "true" to enable static-page commits
+      - key: NYT_API_KEY
+        sync: false        # free key from developer.nytimes.com — NYT bestseller badge; omit to disable
     healthCheckPath: /health

@@ -809,6 +809,64 @@ def resolve_free_ebook(record: book_data.BookRecord) -> Optional[dict]:
     return None
 
 
+# ── NYT bestseller history (needs the free NYT_API_KEY) ──────
+NYT_HISTORY_API = "https://api.nytimes.com/svc/books/v3/lists/best-sellers/history.json"
+
+
+def resolve_nyt_bestseller(record: book_data.BookRecord) -> Optional[dict]:
+    """
+    Bestseller-history trust signal ("N weeks on the NYT list", peak rank,
+    review link) from the NYT Books API. Free but key-gated and tightly
+    rate-limited (500/day, 5/min) — returns None when the key is missing,
+    the book never charted, or the limit bites; the page just omits the
+    badge. Same strict title+author matching as the other resolvers.
+    """
+    import os
+    import httpx
+    api_key = os.environ.get("NYT_API_KEY")
+    if not api_key:
+        return None
+    try:
+        r = httpx.get(NYT_HISTORY_API, params={
+            "title": record.title, "author": record.author or "", "api-key": api_key,
+        }, headers=_UA_HEADERS, timeout=8.0)
+        if r.status_code != 200:
+            log.warning(f"NYT history returned {r.status_code} for '{record.title}'")
+            return None
+        results = r.json().get("results") or []
+    except Exception as e:
+        log.warning(f"NYT history lookup failed for '{record.title}': {e}")
+        return None
+
+    want_title = _norm_match(record.title)
+    author_last = _norm_match(record.author).split(" ")[-1] if record.author else ""
+    for item in results[:5]:
+        got_title = _norm_match(item.get("title", ""))
+        if not (want_title == got_title or want_title in got_title or got_title in want_title):
+            continue
+        if author_last and author_last not in _norm_match(item.get("author", "")):
+            continue
+        ranks = item.get("ranks_history") or []
+        if not ranks:
+            continue
+        best = max(ranks, key=lambda x: x.get("weeks_on_list") or 0)
+        weeks = best.get("weeks_on_list") or 0
+        if weeks < 1:
+            continue
+        review_url = next(
+            (rv.get("book_review_link") for rv in item.get("reviews") or [] if rv.get("book_review_link")),
+            None,
+        )
+        return {
+            "source": "nyt",
+            "weeks_on_list": weeks,
+            "list_name": best.get("display_name") or best.get("list_name") or "Best Sellers",
+            "peak_rank": min((x.get("rank") for x in ranks if x.get("rank")), default=None),
+            "review_url": review_url,
+        }
+    return None
+
+
 # ── Real attributed quotes (Wikiquote, CC BY-SA) ─────────────
 WIKIQUOTE_API = "https://en.wikiquote.org/w/api.php"
 
@@ -913,6 +971,18 @@ def _cached_quotes(record: book_data.BookRecord) -> Optional[dict]:
     return quotes
 
 
+def _cached_nyt(record: book_data.BookRecord) -> Optional[dict]:
+    # Negatives kept a full day (not 1h like the others): NYT's 500/day
+    # rate limit is the scarce resource here, and list data moves weekly.
+    key = ("nyt_v1", record.title, record.author)
+    hit = cache.get(*key)
+    if hit is not None:
+        return hit or None
+    data = resolve_nyt_bestseller(record)
+    cache.set(data or {}, *key, ttl=None if data else 86400)
+    return data
+
+
 # ── Route ───────────────────────────────────────────────────
 @router.post("/summary")
 def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
@@ -927,7 +997,8 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
     # v9: added themes/reading_level — stale v8 entries have neither field.
     # v10: added free_ebook (Gutenberg) + quotes (Wikiquote) — stale v9
     # entries have neither field.
-    cache_key = ("summary_v10", req.title, req.author, req.depth, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
+    # v11: added nyt bestseller history + similar_books grew 4 → 10.
+    cache_key = ("summary_v11", req.title, req.author, req.depth, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
     cached = cache.get(*cache_key)
     if cached:
         # Self-healing cache migration: verify if the cached amazon_url is valid and English,
@@ -1118,7 +1189,7 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
 
     def get_similar():
         try:
-            return _similar_books(record, limit=4)
+            return _similar_books(record, limit=10)
         except Exception as e:
             log.warning(f"Similar books search failed for '{record.title}': {e}")
             return []
@@ -1211,8 +1282,11 @@ Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
     def get_quotes():
         return _cached_quotes(record)
 
-    # Execute all 11 tasks concurrently
-    with concurrent.futures.ThreadPoolExecutor(max_workers=11) as executor:
+    def get_nyt():
+        return _cached_nyt(record)
+
+    # Execute all 12 tasks concurrently
+    with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:
         future_summary = executor.submit(get_summary_text)
         future_chapters = executor.submit(get_chapters)
         future_awards = executor.submit(get_awards)
@@ -1224,6 +1298,7 @@ Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
         future_themes = executor.submit(get_themes_reading_level)
         future_free_ebook = executor.submit(get_free_ebook)
         future_quotes = executor.submit(get_quotes)
+        future_nyt = executor.submit(get_nyt)
 
         summary_text = future_summary.result()
         chapters = future_chapters.result()
@@ -1236,6 +1311,7 @@ Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
         themes_reading_level = future_themes.result()
         free_ebook = future_free_ebook.result()
         quotes = future_quotes.result()
+        nyt = future_nyt.result()
 
     book_slug = slug_mod.book_slug(record.title)
     static_ready, actual_slug = github_publisher.resolve_published(
@@ -1280,6 +1356,7 @@ Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
         "reading_level": themes_reading_level["reading_level"],
         "free_ebook": free_ebook,
         "quotes": quotes,
+        "nyt": nyt,
         "google_volume_id": record.google_volume_id,
         "open_library_work_key": record.open_library_work_key,
     }
