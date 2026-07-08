@@ -880,7 +880,9 @@ def resolve_wikiquote_quotes(record: book_data.BookRecord, limit: int = 5) -> Op
 # expire after 1h so a transient Gutendex/Wikiquote failure at generation
 # time doesn't hide a "read free" button or the quotes card for a month.
 def _cached_free_ebook(record: book_data.BookRecord) -> Optional[dict]:
-    key = ("free_ebook_v1", record.title, record.author)
+    # v2: v1 negatives were written with the 30-day default TTL (pre-fix
+    # code), permanently blocking the self-heal — bump past them.
+    key = ("free_ebook_v2", record.title, record.author)
     hit = cache.get(*key)
     if hit is not None:
         return hit or None  # {} negative marker → None
@@ -890,7 +892,8 @@ def _cached_free_ebook(record: book_data.BookRecord) -> Optional[dict]:
 
 
 def _cached_quotes(record: book_data.BookRecord) -> Optional[dict]:
-    key = ("wikiquote_v1", record.title, record.author)
+    # v2: same 30-day-negative poisoning as free_ebook_v1 above.
+    key = ("wikiquote_v2", record.title, record.author)
     hit = cache.get(*key)
     if hit is not None:
         return hit or None
