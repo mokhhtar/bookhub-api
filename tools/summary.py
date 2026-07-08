@@ -972,9 +972,16 @@ def _cached_quotes(record: book_data.BookRecord) -> Optional[dict]:
 
 
 def _cached_nyt(record: book_data.BookRecord) -> Optional[dict]:
+    import os
+    # No key → answer None WITHOUT touching the cache: a "not configured"
+    # miss must not be stored as a 24h "never charted" negative, or the
+    # badge stays suppressed long after the key is finally added.
+    if not os.environ.get("NYT_API_KEY"):
+        return None
+    # v2: v1 negatives include no-key-configured misses — skip past them.
     # Negatives kept a full day (not 1h like the others): NYT's 500/day
     # rate limit is the scarce resource here, and list data moves weekly.
-    key = ("nyt_v1", record.title, record.author)
+    key = ("nyt_v2", record.title, record.author)
     hit = cache.get(*key)
     if hit is not None:
         return hit or None
@@ -1076,7 +1083,7 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
             # this 30-day cached response. Both wrappers sit behind their own
             # 1h negative cache, so a book with genuinely no free edition or
             # quotes page costs at most one lookup per hour.
-            if cached.get("free_ebook") is None or cached.get("quotes") is None:
+            if cached.get("free_ebook") is None or cached.get("quotes") is None or cached.get("nyt") is None:
                 try:
                     tmp = book_data.BookRecord(
                         found=True, title=cached.get("title", ""), author=cached.get("author", ""),
@@ -1092,10 +1099,18 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
                         if wq:
                             cached["quotes"] = wq
                             healed = True
+                    # Also heals summaries generated before NYT_API_KEY was
+                    # configured; the 24h negative cache in _cached_nyt keeps
+                    # this within NYT's 500/day budget.
+                    if cached.get("nyt") is None:
+                        ny = _cached_nyt(tmp)
+                        if ny:
+                            cached["nyt"] = ny
+                            healed = True
                     if healed:
                         cache.set(cached, *cache_key)  # persist the heal
                 except Exception as e:
-                    log.warning(f"Free-ebook/quotes self-heal failed for '{cached.get('title')}': {e}")
+                    log.warning(f"Free-ebook/quotes/nyt self-heal failed for '{cached.get('title')}': {e}")
         return cached
 
     record = book_data.resolve_book(req.title, req.author, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
