@@ -739,6 +739,135 @@ def _similar_books(record: book_data.BookRecord, limit: int = 4) -> list[dict]:
     return results[:limit]
 
 
+# ── Free public-domain ebook (Project Gutenberg via Gutendex) ─
+GUTENDEX_API = "https://gutendex.com/books/"  # trailing slash — /books 301s
+
+_UA_HEADERS = {"User-Agent": "BookHub/1.0 (mokhhtar@github.com)"}
+
+
+def _norm_match(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+
+
+def resolve_free_ebook(record: book_data.BookRecord) -> Optional[dict]:
+    """
+    Public-domain full text via Gutendex (Project Gutenberg's free JSON API,
+    no key needed). Only an exact-ish title match with a matching author
+    surname is accepted — linking the WRONG free ebook is worse than none.
+    """
+    import httpx
+    try:
+        r = httpx.get(GUTENDEX_API, params={"search": record.title},
+                      headers=_UA_HEADERS, timeout=6.0, follow_redirects=True)
+        if r.status_code != 200:
+            return None
+        results = r.json().get("results") or []
+    except Exception as e:
+        log.warning(f"Gutendex lookup failed for '{record.title}': {e}")
+        return None
+
+    want_title = _norm_match(record.title)
+    author_last = _norm_match(record.author).split(" ")[-1] if record.author else ""
+    for item in results[:10]:
+        if item.get("copyright"):  # still under copyright → not free to read
+            continue
+        got_title = _norm_match(item.get("title", ""))
+        if not (want_title == got_title or want_title in got_title or got_title in want_title):
+            continue
+        authors = " ".join(a.get("name", "") for a in item.get("authors") or []).lower()
+        if author_last and author_last not in authors:
+            continue
+        fmts = item.get("formats") or {}
+        read_url = next((u for k, u in fmts.items() if k.startswith("text/html")), None)
+        epub_url = fmts.get("application/epub+zip")
+        if not (read_url or epub_url):
+            continue
+        return {
+            "source": "project_gutenberg",
+            "gutenberg_id": item.get("id"),
+            "page_url": f"https://www.gutenberg.org/ebooks/{item.get('id')}",
+            "read_url": read_url,
+            "epub_url": epub_url,
+            "txt_url": next((u for k, u in fmts.items() if k.startswith("text/plain")), None),
+        }
+    return None
+
+
+# ── Real attributed quotes (Wikiquote, CC BY-SA) ─────────────
+WIKIQUOTE_API = "https://en.wikiquote.org/w/api.php"
+
+# Sections whose bullets are NOT quotes from the book itself.
+_WQ_SKIP_SECTIONS = ("about", "see also", "external links", "cast", "criticism", "reviews")
+
+
+def _clean_wikitext(line: str) -> str:
+    line = re.sub(r"<ref[^>]*>.*?</ref>", "", line)
+    line = re.sub(r"<[^>]+>", "", line)
+    line = re.sub(r"\{\{[^}]*\}\}", "", line)
+    line = re.sub(r"\[\[(?:[^|\]]*\|)?([^\]]+)\]\]", r"\1", line)  # [[target|label]] → label
+    line = line.replace("'''", "").replace("''", "")
+    return re.sub(r"\s+", " ", line).strip()
+
+
+def resolve_wikiquote_quotes(record: book_data.BookRecord, limit: int = 5) -> Optional[dict]:
+    """
+    Real quotes from the book's own Wikiquote page. Same sourcing policy as
+    ratings/awards: quotes are never generated, only fetched — and only when
+    a page clearly matching THIS book's title exists (author pages and
+    near-miss titles are rejected). Returns None when there's no page.
+    """
+    import httpx
+    import urllib.parse
+    try:
+        r = httpx.get(WIKIQUOTE_API, params={
+            "action": "opensearch", "search": record.title, "limit": 5, "format": "json",
+        }, headers=_UA_HEADERS, timeout=6.0)
+        titles = (r.json() or [None, []])[1]
+    except Exception as e:
+        log.warning(f"Wikiquote search failed for '{record.title}': {e}")
+        return None
+
+    want = _norm_match(record.title)
+    page = next((t for t in titles if _norm_match(t) == want), None)
+    if not page:
+        return None
+
+    try:
+        r = httpx.get(WIKIQUOTE_API, params={
+            "action": "parse", "page": page, "prop": "wikitext",
+            "format": "json", "redirects": 1,
+        }, headers=_UA_HEADERS, timeout=8.0)
+        wikitext = r.json()["parse"]["wikitext"]["*"]
+    except Exception as e:
+        log.warning(f"Wikiquote parse failed for '{page}': {e}")
+        return None
+
+    quotes, skip = [], False
+    for raw in wikitext.splitlines():
+        line = raw.strip()
+        if line.startswith("=="):
+            heading = line.strip("= ").lower()
+            skip = any(s in heading for s in _WQ_SKIP_SECTIONS)
+            continue
+        # Top-level bullets are the quotes; ** sub-bullets are attribution notes.
+        if skip or not line.startswith("*") or line.startswith("**"):
+            continue
+        text = _clean_wikitext(line.lstrip("*").strip())
+        if 40 <= len(text) <= 300:
+            quotes.append(text)
+        if len(quotes) >= limit:
+            break
+
+    if not quotes:
+        return None
+    return {
+        "texts": quotes,
+        "source": "wikiquote",
+        "source_url": f"https://en.wikiquote.org/wiki/{urllib.parse.quote(page.replace(' ', '_'))}",
+        "license": "CC BY-SA",
+    }
+
+
 # ── Route ───────────────────────────────────────────────────
 @router.post("/summary")
 def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
@@ -751,7 +880,9 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
     # v8: ratings distribution now gated + author-fallback GR query — stale v7
     # entries carry the 1-rating OL distribution / missing ratings.
     # v9: added themes/reading_level — stale v8 entries have neither field.
-    cache_key = ("summary_v9", req.title, req.author, req.depth, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
+    # v10: added free_ebook (Gutenberg) + quotes (Wikiquote) — stale v9
+    # entries have neither field.
+    cache_key = ("summary_v10", req.title, req.author, req.depth, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
     cached = cache.get(*cache_key)
     if cached:
         # Self-healing cache migration: verify if the cached amazon_url is valid and English,
@@ -1003,8 +1134,26 @@ Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
         cache.set(result_tr, *themes_cache_key)
         return result_tr
 
-    # Execute all 9 tasks concurrently
-    with concurrent.futures.ThreadPoolExecutor(max_workers=9) as executor:
+    def get_free_ebook():
+        fe_cache_key = ("free_ebook_v1", record.title, record.author)
+        fe_cached = cache.get(*fe_cache_key)
+        if fe_cached is not None:
+            return fe_cached or None  # {} marker → None
+        ebook = resolve_free_ebook(record)
+        cache.set(ebook or {}, *fe_cache_key)  # cache negatives as {} (None won't store)
+        return ebook
+
+    def get_quotes():
+        q_cache_key = ("wikiquote_v1", record.title, record.author)
+        q_cached = cache.get(*q_cache_key)
+        if q_cached is not None:
+            return q_cached or None
+        quotes = resolve_wikiquote_quotes(record)
+        cache.set(quotes or {}, *q_cache_key)
+        return quotes
+
+    # Execute all 11 tasks concurrently
+    with concurrent.futures.ThreadPoolExecutor(max_workers=11) as executor:
         future_summary = executor.submit(get_summary_text)
         future_chapters = executor.submit(get_chapters)
         future_awards = executor.submit(get_awards)
@@ -1014,6 +1163,8 @@ Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
         future_categories = executor.submit(get_categories)
         future_ratings = executor.submit(get_ratings)
         future_themes = executor.submit(get_themes_reading_level)
+        future_free_ebook = executor.submit(get_free_ebook)
+        future_quotes = executor.submit(get_quotes)
 
         summary_text = future_summary.result()
         chapters = future_chapters.result()
@@ -1024,6 +1175,8 @@ Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
         categories = future_categories.result()
         ratings = future_ratings.result()
         themes_reading_level = future_themes.result()
+        free_ebook = future_free_ebook.result()
+        quotes = future_quotes.result()
 
     book_slug = slug_mod.book_slug(record.title)
     static_ready, actual_slug = github_publisher.resolve_published(
@@ -1066,6 +1219,8 @@ Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
         "awards": awards,
         "themes": themes_reading_level["themes"],
         "reading_level": themes_reading_level["reading_level"],
+        "free_ebook": free_ebook,
+        "quotes": quotes,
         "google_volume_id": record.google_volume_id,
         "open_library_work_key": record.open_library_work_key,
     }
