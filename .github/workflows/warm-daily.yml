@@ -1,0 +1,27 @@
+name: Warm daily picks cache
+
+# Pre-computes the homepage's /daily payload (book/author/quote of the day —
+# 3 Gemini calls + Wikimedia fetches, ~5-10s per tools/daily.py) shortly after
+# UTC midnight, BEFORE any real visitor's request. Without this, the first
+# homepage load of the day triggers that pipeline inline, and if a visitor
+# searches for a book moments later, their /search or /summary request
+# competes for the same tiny Render free-tier instance's resources — which
+# can push the request past a gateway timeout and surface as a raw HTTP
+# error the frontend can't distinguish from a real failure ("Couldn't
+# generate the summary"). The cached result is stored in Upstash Redis, so
+# it survives the instance sleeping/waking and serves instantly all day.
+
+on:
+  schedule:
+    - cron: "5 0 * * *"  # 00:05 UTC daily
+  workflow_dispatch: {}    # manual trigger for testing
+
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake the instance (free tier sleeps after ~15 min idle)
+        run: curl -sS -m 100 --retry 3 --retry-delay 10 "https://bookhub-api-hnv7.onrender.com/health" || true
+
+      - name: Build and cache today's daily picks
+        run: curl -sS -f -m 100 "https://bookhub-api-hnv7.onrender.com/daily" -o /dev/null

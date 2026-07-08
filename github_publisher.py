@@ -159,6 +159,7 @@ def _book_markdown(result: dict, book_slug: str, a_slug: str) -> str:
     ]
     awards = result.get("awards") or []
     ratings = result.get("ratings")  # dict or None
+    themes = result.get("themes") or []
 
     lines = [
         "---",
@@ -185,6 +186,8 @@ def _book_markdown(result: dict, book_slug: str, a_slug: str) -> str:
         f"similar_books: {_yaml_json(similar_books)}",
         f"awards: {_yaml_json(awards)}",
         f"ratings: {_yaml_json(ratings)}",
+        f"themes: {_yaml_json(themes)}",
+        f"reading_level: {_yaml_str(result.get('reading_level'))}",
         f"date: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S %z')}",
         "---",
         "",

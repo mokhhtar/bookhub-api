@@ -168,9 +168,33 @@ Return ONLY JSON: {{"index": 0, "blurb": "...", "notable_book_title": "..." or n
     return result
 
 
+_QUOTE_HISTORY_KEY = "daily:quote_history"
+
+
+def _normalize_quote(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+
 def _pick_quote_of_day(date_str: str) -> dict | None:
-    """Gemini proposes 3 widely-attested quotes; book verified. Curated fallback."""
+    """
+    Gemini proposes 3 widely-attested quotes; book verified. Curated fallback.
+
+    At temperature 0.3 (see gemini_client.py), asking for "the" famous book
+    quote reliably converges on the single most iconic answer in the
+    language (the Dickens "best of times" opening) regardless of the date —
+    unlike book/author, which are grounded in real per-day Wikimedia feed
+    data, quote selection is unconstrained, so nothing forced variety. We
+    track the last 30 days of served quotes in Redis, tell Gemini to avoid
+    them, and skip any candidate (Gemini or curated) that repeats one —
+    falling back to a repeat only if every candidate is exhausted, so the
+    card never goes blank.
+    """
+    history: list[str] = cache.get_key(_QUOTE_HISTORY_KEY) or []
+    recent = {_normalize_quote(t) for t in history}
+    avoid_listing = "; ".join(t[:100] for t in history[-15:])
+
     prompt = f"""Give 3 famous, widely-attested quotes FROM BOOKS (today is {date_str}, vary your picks by date). Only quotes that are verifiably famous and commonly attributed — no obscure or invented ones.
+{f"Do NOT repeat any of these already-used quotes: {avoid_listing}" if avoid_listing else ""}
 
 Return ONLY JSON: {{"quotes": [{{"text": "...", "book_title": "...", "author": "..."}}]}}"""
     candidates = []
@@ -180,19 +204,28 @@ Return ONLY JSON: {{"quotes": [{{"text": "...", "book_title": "...", "author": "
     except Exception as e:
         log.warning(f"Quote-of-day proposal failed: {e}")
 
-    # Deterministic per-day curated fallback appended last — card never fails.
+    # Curated fallback: walk the whole pool starting from the day-seeded
+    # index (rather than just appending one entry) so a repeat-skip has
+    # somewhere else to go instead of falling straight to None.
     day_index = sum(ord(c) for c in date_str) % len(CURATED_QUOTES)
-    candidates.append(CURATED_QUOTES[day_index])
+    candidates += [CURATED_QUOTES[(day_index + i) % len(CURATED_QUOTES)] for i in range(len(CURATED_QUOTES))]
 
+    repeat_fallback = None
     for q in candidates:
+        text = (q.get("text") or "").strip()
+        if not text:
+            continue
         verified = book_data.verify_book_exists(q.get("book_title", ""), q.get("author", ""))
-        if verified:
-            return {
-                "text": (q.get("text") or "").strip()[:400],
-                "book": verified,
-                "source": "gemini+google_books",
-            }
-    return None
+        if not verified:
+            continue
+        result = {"text": text[:400], "book": verified, "source": "gemini+google_books"}
+        if _normalize_quote(text) not in recent:
+            history.append(text)
+            cache.set_key(_QUOTE_HISTORY_KEY, history[-30:], ttl=60 * 60 * 24 * 45)
+            return result
+        repeat_fallback = repeat_fallback or result
+
+    return repeat_fallback
 
 
 def _build_daily(date_str: str, mm: str, dd: str) -> dict:

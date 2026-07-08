@@ -656,6 +656,36 @@ RULES:
     return out
 
 
+def _build_themes_reading_level_prompt(record: book_data.BookRecord) -> str:
+    """
+    Themes and reading level are subjective judgments, not verifiable facts
+    (unlike awards/ratings), so no external verification step is needed —
+    but they're still grounded in the same verified description/category
+    used by the main summary, to avoid drifting into invented plot details
+    for lesser-known books.
+    """
+    return f"""BOOK: "{record.title}" by {record.author or "Unknown"}
+Category: {record.primary_category or "unspecified"}
+Description: {(record.description or "")[:600]}
+
+TASK 1 — Themes: List 3-5 major themes present in this book. Short noun phrases, 1-4 words each (e.g. "Redemption", "Coming of age", "Power and corruption").
+TASK 2 — Reading level: A short, general-audience label estimating who this book is written for (e.g. "Middle Grade (ages 8-12)", "Young Adult", "Adult / General Fiction", "Academic / Advanced Reader"). This is a rough estimate, not a certified score — pick the closest label a bookstore shelf tag would use.
+
+Return ONLY JSON: {{"themes": ["...", ...], "reading_level": "..."}}"""
+
+
+def _themes_and_reading_level(record: book_data.BookRecord) -> dict:
+    try:
+        raw = gemini_client.generate(_build_themes_reading_level_prompt(record))
+        data = gemini_client.parse_json_response(raw)
+        themes = [t.strip() for t in (data.get("themes") or []) if isinstance(t, str) and t.strip()][:5]
+        reading_level = (data.get("reading_level") or "").strip()[:60]
+        return {"themes": themes, "reading_level": reading_level or None}
+    except Exception as e:
+        log.warning(f"Themes/reading-level generation failed for '{record.title}': {e}")
+        return {"themes": [], "reading_level": None}
+
+
 def _similar_books(record: book_data.BookRecord, limit: int = 4) -> list[dict]:
     """
     Same-genre "similar books": Gemini proposes real titles, each is VERIFIED
@@ -720,7 +750,8 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
     # still carry invented reviews baked into the summary HTML.
     # v8: ratings distribution now gated + author-fallback GR query — stale v7
     # entries carry the 1-rating OL distribution / missing ratings.
-    cache_key = ("summary_v8", req.title, req.author, req.depth, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
+    # v9: added themes/reading_level — stale v8 entries have neither field.
+    cache_key = ("summary_v9", req.title, req.author, req.depth, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
     cached = cache.get(*cache_key)
     if cached:
         # Self-healing cache migration: verify if the cached amazon_url is valid and English,
@@ -963,8 +994,17 @@ Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
             log.warning(f"Ratings lookup failed for '{record.title}': {e}")
             return None
 
-    # Execute all 8 tasks concurrently
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+    def get_themes_reading_level():
+        themes_cache_key = ("themes_v1", record.title, record.author)
+        themes_cached = cache.get(*themes_cache_key)
+        if themes_cached is not None:
+            return themes_cached
+        result_tr = _themes_and_reading_level(record)
+        cache.set(result_tr, *themes_cache_key)
+        return result_tr
+
+    # Execute all 9 tasks concurrently
+    with concurrent.futures.ThreadPoolExecutor(max_workers=9) as executor:
         future_summary = executor.submit(get_summary_text)
         future_chapters = executor.submit(get_chapters)
         future_awards = executor.submit(get_awards)
@@ -973,6 +1013,7 @@ Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
         future_fandom_cover = executor.submit(get_fandom_cover)
         future_categories = executor.submit(get_categories)
         future_ratings = executor.submit(get_ratings)
+        future_themes = executor.submit(get_themes_reading_level)
 
         summary_text = future_summary.result()
         chapters = future_chapters.result()
@@ -982,6 +1023,7 @@ Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
         fandom_cover = future_fandom_cover.result()
         categories = future_categories.result()
         ratings = future_ratings.result()
+        themes_reading_level = future_themes.result()
 
     book_slug = slug_mod.book_slug(record.title)
     static_ready, actual_slug = github_publisher.resolve_published(
@@ -1022,6 +1064,8 @@ Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
         "similar_books": similar,
         "chapters": chapters,
         "awards": awards,
+        "themes": themes_reading_level["themes"],
+        "reading_level": themes_reading_level["reading_level"],
         "google_volume_id": record.google_volume_id,
         "open_library_work_key": record.open_library_work_key,
     }
