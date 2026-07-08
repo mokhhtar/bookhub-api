@@ -739,8 +739,12 @@ def _similar_books(record: book_data.BookRecord, limit: int = 4) -> list[dict]:
     return results[:limit]
 
 
-# ── Free public-domain ebook (Project Gutenberg via Gutendex) ─
-GUTENDEX_API = "https://gutendex.com/books/"  # trailing slash — /books 301s
+# ── Free public-domain ebook (Open Library → Gutenberg/Archive links) ─
+# Gutendex (Project Gutenberg's own JSON API) 403s requests from Render's
+# datacenter IP, so availability is resolved through Open Library's search
+# API instead — already used throughout this codebase and never blocked.
+# The Gutenberg/Archive URLs built here are only ever opened by the
+# READER's browser; the server never fetches them.
 
 _UA_HEADERS = {"User-Agent": "BookHub/1.0 (mokhhtar@github.com)"}
 
@@ -751,52 +755,57 @@ def _norm_match(s: str) -> str:
 
 def resolve_free_ebook(record: book_data.BookRecord) -> Optional[dict]:
     """
-    Public-domain full text via Gutendex (Project Gutenberg's free JSON API,
-    no key needed). Only an exact-ish title match with a matching author
-    surname is accepted — linking the WRONG free ebook is worse than none.
+    Free-to-read edition via Open Library: a Project Gutenberg ebook when
+    the record carries one (public domain by definition), else a public
+    Internet Archive scan (ebook_access == "public"). Only an exact-ish
+    title match with a matching author surname is accepted — linking the
+    WRONG free ebook is worse than none.
     """
     import httpx
-    # Two attempts with a generous timeout — gutendex.com is noticeably
-    # slower from Render's datacenter IP than from residential connections,
-    # and a missed lookup here costs a "read free" button on the page.
-    results = None
-    for attempt in (1, 2):
-        try:
-            r = httpx.get(GUTENDEX_API, params={"search": record.title},
-                          headers=_UA_HEADERS, timeout=10.0, follow_redirects=True)
-            if r.status_code == 200:
-                results = r.json().get("results") or []
-                break
-            log.warning(f"Gutendex returned {r.status_code} for '{record.title}' (attempt {attempt})")
-        except Exception as e:
-            log.warning(f"Gutendex lookup failed for '{record.title}' (attempt {attempt}): {e}")
-    if results is None:
+    try:
+        r = httpx.get("https://openlibrary.org/search.json", params={
+            "title": record.title,
+            "author": record.author or "",
+            "fields": "title,author_name,ebook_access,ia,id_project_gutenberg",
+            "limit": 5,
+        }, headers=_UA_HEADERS, timeout=8.0)
+        if r.status_code != 200:
+            log.warning(f"OL free-ebook lookup returned {r.status_code} for '{record.title}'")
+            return None
+        docs = r.json().get("docs") or []
+    except Exception as e:
+        log.warning(f"OL free-ebook lookup failed for '{record.title}': {e}")
         return None
 
     want_title = _norm_match(record.title)
     author_last = _norm_match(record.author).split(" ")[-1] if record.author else ""
-    for item in results[:10]:
-        if item.get("copyright"):  # still under copyright → not free to read
-            continue
-        got_title = _norm_match(item.get("title", ""))
+    for doc in docs:
+        got_title = _norm_match(doc.get("title", ""))
         if not (want_title == got_title or want_title in got_title or got_title in want_title):
             continue
-        authors = " ".join(a.get("name", "") for a in item.get("authors") or []).lower()
+        authors = _norm_match(" ".join(doc.get("author_name") or []))
         if author_last and author_last not in authors:
             continue
-        fmts = item.get("formats") or {}
-        read_url = next((u for k, u in fmts.items() if k.startswith("text/html")), None)
-        epub_url = fmts.get("application/epub+zip")
-        if not (read_url or epub_url):
-            continue
-        return {
-            "source": "project_gutenberg",
-            "gutenberg_id": item.get("id"),
-            "page_url": f"https://www.gutenberg.org/ebooks/{item.get('id')}",
-            "read_url": read_url,
-            "epub_url": epub_url,
-            "txt_url": next((u for k, u in fmts.items() if k.startswith("text/plain")), None),
-        }
+        gut_ids = doc.get("id_project_gutenberg") or []
+        if gut_ids:
+            gid = gut_ids[0]
+            return {
+                "source": "project_gutenberg",
+                "gutenberg_id": gid,
+                "page_url": f"https://www.gutenberg.org/ebooks/{gid}",
+                "read_url": f"https://www.gutenberg.org/ebooks/{gid}.html.images",
+                "epub_url": f"https://www.gutenberg.org/ebooks/{gid}.epub3.images",
+                "txt_url": f"https://www.gutenberg.org/ebooks/{gid}.txt.utf-8",
+            }
+        if doc.get("ebook_access") == "public" and doc.get("ia"):
+            ia_id = doc["ia"][0]
+            return {
+                "source": "internet_archive",
+                "page_url": f"https://archive.org/details/{ia_id}",
+                "read_url": f"https://archive.org/details/{ia_id}",
+                "epub_url": None,
+                "txt_url": None,
+            }
     return None
 
 
@@ -882,7 +891,9 @@ def resolve_wikiquote_quotes(record: book_data.BookRecord, limit: int = 5) -> Op
 def _cached_free_ebook(record: book_data.BookRecord) -> Optional[dict]:
     # v2: v1 negatives were written with the 30-day default TTL (pre-fix
     # code), permanently blocking the self-heal — bump past them.
-    key = ("free_ebook_v2", record.title, record.author)
+    # v3: v2 negatives are all Gutendex 403s (blocked from Render's IP);
+    # the resolver now goes through Open Library instead.
+    key = ("free_ebook_v3", record.title, record.author)
     hit = cache.get(*key)
     if hit is not None:
         return hit or None  # {} negative marker → None
