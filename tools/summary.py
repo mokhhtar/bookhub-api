@@ -45,6 +45,7 @@ class SummaryRequest(BaseModel):
     google_id: Optional[str] = Field(default=None, max_length=50)
     openlibrary_id: Optional[str] = Field(default=None, max_length=100)
     bookwyrm_id: Optional[str] = Field(default=None, max_length=255)
+    language: str = Field(default="en", pattern="^(en|ar)$")
 
 
 class SearchResponseItem(BaseModel):
@@ -76,11 +77,13 @@ def search_books(q: str, offset: int = 0):
 
 
 # ── Prompt (kept local to this tool — not shared) ──────────
-def _build_prompt(record: book_data.BookRecord, depth: str = "deep") -> str:
+def _build_prompt(record: book_data.BookRecord, depth: str = "deep", language: str = "en") -> str:
     """
     The prompt embeds VERIFIED data as mandatory context and explicitly
     forbids the model from adding plot details, quotes, or facts that
     are not present in — or directly inferable from — that context.
+    language="ar" keeps the exact same structure and grounding rules but
+    writes the content in Modern Standard Arabic (section headers too).
     """
     description_block = (
         record.description
@@ -118,7 +121,8 @@ RULES:
 - No preamble like "Here is a summary" — start directly with the HTML content of the first section.
 - Output clean, valid, semantic HTML tags ONLY. Do NOT wrap the output in markdown code blocks like ```html ```. Start directly with `<h2>1. Core Premise & Overview</h2>`.
 - Do not use markdown syntax (like #, ** or *). Use HTML tags (`<h2>`, `<h3>`, `<p>`, `<ul>`, `<li>`, `<strong>`, `<div>`, `<span>`).
-- Ensure the output is detailed, substantial, and reads like a premium-quality study guide."""
+- Ensure the output is detailed, substantial, and reads like a premium-quality study guide.{'''
+- WRITE THE ENTIRE GUIDE IN MODERN STANDARD ARABIC (الفصحى). Translate the section headers too (e.g. `<h2>1. الفكرة الجوهرية ونظرة عامة</h2>`). Keep the book title and author name in their original language, followed by an Arabic transliteration in parentheses on first mention. All grounding rules above still apply — never add facts beyond the verified data.''' if language == "ar" else ''}"""
 
 
 
@@ -1339,8 +1343,9 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
     # v10: added free_ebook (Gutenberg) + quotes (Wikiquote) — stale v9
     # entries have neither field.
     # v11: added nyt bestseller history + similar_books grew 4 → 10.
-    # v12: added editions/translations stats.
-    cache_key = ("summary_v12", req.title, req.author, req.depth, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
+    # v12: added editions/translations stats; language ("en"/"ar") joined
+    # the key when Arabic summaries shipped.
+    cache_key = ("summary_v12", req.title, req.author, req.depth, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id, req.language)
     cached = cache.get(*cache_key)
     if cached:
         # Self-healing cache migration: verify if the cached amazon_url is valid and English,
@@ -1476,7 +1481,7 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
     # as the old single 13-task pool.
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as outer:
         future_summary = outer.submit(
-            lambda: gemini_client.generate(_build_prompt(record, req.depth)))
+            lambda: gemini_client.generate(_build_prompt(record, req.depth, req.language)))
         future_extras = outer.submit(_gather_extras, record)
         summary_text = future_summary.result()
         extras = future_extras.result()
@@ -1485,8 +1490,9 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
     cache.set(result, *cache_key)
 
     # Publish the static SEO pages in the background — commit failures are
-    # logged inside the publisher and never affect this response.
-    if github_publisher.is_enabled():
+    # logged inside the publisher and never affect this response. English
+    # only: Arabic summaries are an on-page toggle, not separate /ar/ pages.
+    if github_publisher.is_enabled() and req.language == "en":
         background_tasks.add_task(github_publisher.publish_book, result)
         background_tasks.add_task(github_publisher.publish_author, record.author, record.title)
 
@@ -1513,7 +1519,7 @@ def summary_stream(req: SummaryRequest, background_tasks: BackgroundTasks):
 
     def gen():
         cache_key = ("summary_v12", req.title, req.author, req.depth, req.isbn,
-                     req.google_id, req.openlibrary_id, req.bookwyrm_id)
+                     req.google_id, req.openlibrary_id, req.bookwyrm_id, req.language)
         cached = cache.get(*cache_key)
         if cached:
             yield sse({"done": cached})
@@ -1540,7 +1546,7 @@ def summary_stream(req: SummaryRequest, background_tasks: BackgroundTasks):
             future_extras = executor.submit(_gather_extras, record)
             parts = []
             try:
-                for chunk in gemini_client.generate_stream(_build_prompt(record, req.depth)):
+                for chunk in gemini_client.generate_stream(_build_prompt(record, req.depth, req.language)):
                     parts.append(chunk)
                     yield sse({"t": chunk})
             except Exception as e:
@@ -1553,7 +1559,7 @@ def summary_stream(req: SummaryRequest, background_tasks: BackgroundTasks):
             summary_text = "".join(parts)
             result = _assemble_result(record, req.depth, summary_text, future_extras.result())
             cache.set(result, *cache_key)
-            if github_publisher.is_enabled():
+            if github_publisher.is_enabled() and req.language == "en":
                 background_tasks.add_task(github_publisher.publish_book, result)
                 background_tasks.add_task(github_publisher.publish_author, record.author, record.title)
             yield sse({"done": result})
