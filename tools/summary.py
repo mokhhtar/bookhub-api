@@ -954,6 +954,83 @@ def _cached_nyt(record: book_data.BookRecord) -> Optional[dict]:
     return resolve_nyt_bestseller(record)
 
 
+# ── More by this author (Open Library, lazy-loaded) ──────────
+# Deliberately NOT part of the /summary task pool: the frontend fetches it
+# AFTER the summary renders, so it never slows the main response and needs
+# no summary-cache version bump.
+
+@router.get("/author/works")
+def author_works(name: str, exclude: str = "", exclude_key: str = ""):
+    """Up to 8 other works by this author, real catalog data only."""
+    import httpx
+    name = (name or "").strip()
+    if not name or name.lower() in ("unknown", "author"):
+        return {"works": []}
+
+    cache_key = ("author_works_v1", name)
+    cached = cache.get(*cache_key)
+    if cached is None:
+        docs = []
+        try:
+            r = httpx.get("https://openlibrary.org/search.json", params={
+                "author": name,
+                # readinglog ≈ popularity — surfaces the author's known works
+                # instead of obscure pamphlets.
+                "sort": "readinglog",
+                "limit": 20,
+                "fields": "title,author_name,cover_i,first_publish_year,key,language",
+            }, headers=_UA_HEADERS, timeout=8.0)
+            if r.status_code == 200:
+                docs = r.json().get("docs") or []
+        except Exception as e:
+            log.warning(f"OL author-works lookup failed for '{name}': {e}")
+
+        author_last = _norm_match(name).split(" ")[-1] if name else ""
+        works, seen = [], set()
+        for d in docs:
+            title = (d.get("title") or "").strip()
+            if not title or not d.get("cover_i"):
+                continue
+            if book_data.is_companion_material(title):
+                continue
+            # Skip non-English editions (e.g. the Swedish original of a
+            # translated hit) — but keep docs with NO language metadata.
+            langs = d.get("language") or []
+            if langs and "eng" not in langs:
+                continue
+            authors = _norm_match(" ".join(d.get("author_name") or []))
+            if author_last and author_last not in authors:
+                continue
+            base = book_data.get_base_title(title) or _norm_match(title)
+            if base in seen:
+                continue
+            seen.add(base)
+            works.append({
+                "title": title,
+                "author": (d.get("author_name") or [name])[0],
+                "cover_url": f"https://covers.openlibrary.org/b/id/{d['cover_i']}-M.jpg",
+                "year": d.get("first_publish_year"),
+                "openlibrary_id": d.get("key"),
+            })
+        cached = works
+        cache.set(cached, *cache_key)  # 30d — an author's back catalog is stable
+
+    # Exclude the CURRENT book per-request (not baked into the cached list,
+    # so one cached lookup serves every book by this author). Title match
+    # catches same-language duplicates; the OL work key catches the same
+    # work under a foreign original title ("En man som heter Ove").
+    ex = _norm_match(exclude)
+    out = []
+    for w in cached:
+        if exclude_key and w.get("openlibrary_id") == exclude_key:
+            continue
+        wt = _norm_match(w["title"])
+        if ex and (ex in wt or wt in ex):
+            continue
+        out.append(w)
+    return {"works": out[:8]}
+
+
 # ── Route ───────────────────────────────────────────────────
 @router.post("/summary")
 def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
