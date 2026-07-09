@@ -88,6 +88,32 @@ def weekly_head():
     return Response(status_code=200)
 
 
+@router.options("/nyt/leaders")
+def leaders_options():
+    return Response(status_code=204)
+
+
+@router.head("/nyt/leaders")
+def leaders_head():
+    return Response(status_code=200)
+
+
+@router.get("/nyt/leaders")
+def leaders():
+    """
+    Every list's current #1 (~18 books) for the /bestsellers/ page.
+    Same cached snapshot as everything else — zero extra NYT requests.
+    """
+    flat = overview()
+    books, seen_lists = [], set()
+    for b in flat:
+        if b.get("rank") != 1 or b["list_name_encoded"] in seen_lists:
+            continue
+        seen_lists.add(b["list_name_encoded"])
+        books.append(b)
+    return {"books": books}
+
+
 @router.get("/nyt/weekly")
 def weekly():
     """
