@@ -88,6 +88,20 @@ def weekly_head():
     return Response(status_code=200)
 
 
+@router.get("/nyt/current")
+def current():
+    """
+    Slim full snapshot (~240 entries, title/author/rank/weeks/list only) —
+    used by category pages to stamp "on the NYT list now" badges onto
+    matching book cards client-side.
+    """
+    return {"books": [
+        {"title": b["title"], "author": b["author"], "rank": b["rank"],
+         "weeks_on_list": b["weeks_on_list"], "list_name": b["list_name"]}
+        for b in overview()
+    ]}
+
+
 @router.options("/nyt/leaders")
 def leaders_options():
     return Response(status_code=204)
