@@ -219,7 +219,12 @@ Return ONLY JSON: {{"quotes": [{{"text": "...", "book_title": "...", "author": "
         if not verified:
             continue
         result = {"text": text[:400], "book": verified, "source": "gemini+google_books"}
-        if _normalize_quote(text) not in recent:
+        # Containment, not equality: Gemini re-proposes famous quotes in
+        # longer/shorter variants ("...best of times." vs "...age of
+        # foolishness...") — any overlap with a recent entry is a repeat.
+        norm_new = _normalize_quote(text)
+        is_repeat = any(norm_new == r or norm_new in r or r in norm_new for r in recent if r)
+        if not is_repeat:
             history.append(text)
             cache.set_key(_QUOTE_HISTORY_KEY, history[-30:], ttl=60 * 60 * 24 * 45)
             return result

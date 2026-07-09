@@ -809,62 +809,77 @@ def resolve_free_ebook(record: book_data.BookRecord) -> Optional[dict]:
     return None
 
 
-# ── NYT bestseller history (needs the free NYT_API_KEY) ──────
-NYT_HISTORY_API = "https://api.nytimes.com/svc/books/v3/lists/best-sellers/history.json"
+# ── NYT bestseller badge (needs the free NYT_API_KEY) ────────
+# The per-title best-sellers/history endpoint is broken on NYT's side as of
+# mid-2026 (returns "invalid date" for every request, even bare ones), so
+# the badge is driven by lists/overview.json instead: the CURRENT week's
+# snapshot of every NYT list. One request covers every book on the site —
+# exactly what NYT's tight 500/day budget wants — cached 24h under one key.
+NYT_OVERVIEW_API = "https://api.nytimes.com/svc/books/v3/lists/overview.json"
+
+
+def _nyt_overview() -> list[dict]:
+    """Flattened current-week snapshot of all NYT bestseller lists."""
+    import os
+    import httpx
+    cached = cache.get_key("nyt:overview:v1")
+    if cached is not None:
+        return cached
+    api_key = os.environ.get("NYT_API_KEY")
+    if not api_key:
+        return []  # not configured — never cache this as an empty snapshot
+    flat = []
+    try:
+        r = httpx.get(NYT_OVERVIEW_API, params={"api-key": api_key},
+                      headers=_UA_HEADERS, timeout=10.0)
+        if r.status_code != 200:
+            log.warning(f"NYT overview returned {r.status_code}")
+            cache.set_key("nyt:overview:v1", [], ttl=3600)  # brief backoff (incl. 429)
+            return []
+        for lst in (r.json().get("results") or {}).get("lists") or []:
+            for b in lst.get("books") or []:
+                flat.append({
+                    "title": b.get("title") or "",
+                    "author": b.get("author") or "",
+                    "rank": b.get("rank"),
+                    "weeks_on_list": b.get("weeks_on_list"),
+                    "list_name": lst.get("display_name") or lst.get("list_name") or "Best Sellers",
+                    "review_url": b.get("book_review_link") or None,
+                })
+        cache.set_key("nyt:overview:v1", flat, ttl=86400)
+    except Exception as e:
+        log.warning(f"NYT overview fetch failed: {e}")
+    return flat
 
 
 def resolve_nyt_bestseller(record: book_data.BookRecord) -> Optional[dict]:
     """
-    Bestseller-history trust signal ("N weeks on the NYT list", peak rank,
-    review link) from the NYT Books API. Free but key-gated and tightly
-    rate-limited (500/day, 5/min) — returns None when the key is missing,
-    the book never charted, or the limit bites; the page just omits the
-    badge. Same strict title+author matching as the other resolvers.
+    "N weeks on the NYT list · currently #R" trust signal for books on the
+    CURRENT week's lists (weeks_on_list is cumulative). Same strict
+    title+author matching as the other resolvers; None → no badge.
     """
-    import os
-    import httpx
-    api_key = os.environ.get("NYT_API_KEY")
-    if not api_key:
-        return None
-    try:
-        r = httpx.get(NYT_HISTORY_API, params={
-            "title": record.title, "author": record.author or "", "api-key": api_key,
-        }, headers=_UA_HEADERS, timeout=8.0)
-        if r.status_code != 200:
-            log.warning(f"NYT history returned {r.status_code} for '{record.title}'")
-            return None
-        results = r.json().get("results") or []
-    except Exception as e:
-        log.warning(f"NYT history lookup failed for '{record.title}': {e}")
-        return None
-
     want_title = _norm_match(record.title)
     author_last = _norm_match(record.author).split(" ")[-1] if record.author else ""
-    for item in results[:5]:
-        got_title = _norm_match(item.get("title", ""))
+    best = None
+    for b in _nyt_overview():
+        got_title = _norm_match(b["title"])
         if not (want_title == got_title or want_title in got_title or got_title in want_title):
             continue
-        if author_last and author_last not in _norm_match(item.get("author", "")):
+        if author_last and author_last not in _norm_match(b["author"]):
             continue
-        ranks = item.get("ranks_history") or []
-        if not ranks:
+        if not b.get("weeks_on_list"):
             continue
-        best = max(ranks, key=lambda x: x.get("weeks_on_list") or 0)
-        weeks = best.get("weeks_on_list") or 0
-        if weeks < 1:
-            continue
-        review_url = next(
-            (rv.get("book_review_link") for rv in item.get("reviews") or [] if rv.get("book_review_link")),
-            None,
-        )
-        return {
-            "source": "nyt",
-            "weeks_on_list": weeks,
-            "list_name": best.get("display_name") or best.get("list_name") or "Best Sellers",
-            "peak_rank": min((x.get("rank") for x in ranks if x.get("rank")), default=None),
-            "review_url": review_url,
-        }
-    return None
+        if best is None or b["weeks_on_list"] > best["weeks_on_list"]:
+            best = b
+    if not best:
+        return None
+    return {
+        "source": "nyt",
+        "weeks_on_list": best["weeks_on_list"],
+        "list_name": best["list_name"],
+        "rank": best["rank"],
+        "review_url": best["review_url"],
+    }
 
 
 # ── Real attributed quotes (Wikiquote, CC BY-SA) ─────────────
@@ -972,22 +987,9 @@ def _cached_quotes(record: book_data.BookRecord) -> Optional[dict]:
 
 
 def _cached_nyt(record: book_data.BookRecord) -> Optional[dict]:
-    import os
-    # No key → answer None WITHOUT touching the cache: a "not configured"
-    # miss must not be stored as a 24h "never charted" negative, or the
-    # badge stays suppressed long after the key is finally added.
-    if not os.environ.get("NYT_API_KEY"):
-        return None
-    # v2: v1 negatives include no-key-configured misses — skip past them.
-    # Negatives kept a full day (not 1h like the others): NYT's 500/day
-    # rate limit is the scarce resource here, and list data moves weekly.
-    key = ("nyt_v2", record.title, record.author)
-    hit = cache.get(*key)
-    if hit is not None:
-        return hit or None
-    data = resolve_nyt_bestseller(record)
-    cache.set(data or {}, *key, ttl=None if data else 86400)
-    return data
+    # No per-book cache needed: the shared 24h overview snapshot underneath
+    # is the only NYT request, and matching against it is pure CPU.
+    return resolve_nyt_bestseller(record)
 
 
 # ── Route ───────────────────────────────────────────────────
