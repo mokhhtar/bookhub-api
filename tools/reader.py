@@ -109,6 +109,47 @@ def _ingest(gid: int) -> dict | None:
     return meta
 
 
+# Registered BEFORE /read/{gid}/{page} so "search" isn't parsed as a page number.
+@router.get("/read/{gid}/search")
+def read_search(gid: int, q: str):
+    """
+    Case-insensitive whole-book search. Scans the cached page bundles
+    (L1-memoized after the first scan) and returns up to 50 matches as
+    {page, snippet} — one hit per page, ±60 chars of context.
+    """
+    q = (q or "").strip()
+    if gid <= 0 or len(q) < 2 or len(q) > 100:
+        raise HTTPException(status_code=400, detail="Query must be 2-100 characters.")
+
+    meta = cache.get_key(f"read:{gid}:meta")
+    if not meta:
+        cache.acquire_lock(f"read:lock:{gid}", ttl=60)
+        meta = _ingest(gid)
+        if not meta:
+            raise HTTPException(status_code=503, detail="Text unavailable right now.")
+
+    needle = q.lower()
+    total, bundle_size = meta["pages"], meta["bundle"]
+    results = []
+    for b in range((total + bundle_size - 1) // bundle_size):
+        bundle = cache.get_key(f"read:{gid}:{b}")
+        if not bundle:
+            continue
+        for i, page_text in enumerate(bundle):
+            pos = page_text.lower().find(needle)
+            if pos == -1:
+                continue
+            start = max(0, pos - 60)
+            end = min(len(page_text), pos + len(q) + 60)
+            snippet = (("…" if start else "")
+                       + re.sub(r"\s+", " ", page_text[start:end]).strip()
+                       + ("…" if end < len(page_text) else ""))
+            results.append({"page": b * bundle_size + i, "snippet": snippet})
+            if len(results) >= 50:
+                return {"query": q, "results": results, "truncated": True}
+    return {"query": q, "results": results, "truncated": False}
+
+
 @router.options("/read/{gid}/{page}")
 def read_options(gid: int, page: int):
     return Response(status_code=204)
