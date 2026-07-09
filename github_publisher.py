@@ -191,6 +191,7 @@ def _book_markdown(result: dict, book_slug: str, a_slug: str) -> str:
         f"free_ebook: {_yaml_json(result.get('free_ebook'))}",
         f"quotes: {_yaml_json(result.get('quotes'))}",
         f"nyt: {_yaml_json(result.get('nyt'))}",
+        f"editions: {_yaml_json(result.get('editions'))}",
         f"date: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S %z')}",
         "---",
         "",

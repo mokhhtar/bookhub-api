@@ -954,6 +954,60 @@ def _cached_nyt(record: book_data.BookRecord) -> Optional[dict]:
     return resolve_nyt_bestseller(record)
 
 
+# ── Editions & translations stats (Open Library) ─────────────
+
+def resolve_editions_stats(record: book_data.BookRecord) -> Optional[dict]:
+    """
+    "N editions · translated into M languages" credibility line. One
+    search.json request; by work key when we have it (exact), else
+    title+author with the usual strict matching. None unless the numbers
+    are actually interesting (≥2 editions or ≥2 languages).
+    """
+    import httpx
+    params = {"fields": "title,author_name,edition_count,language"}
+    if record.open_library_work_key:
+        params["q"] = f"key:{record.open_library_work_key}"
+    else:
+        params["title"] = record.title
+        params["author"] = record.author or ""
+        params["limit"] = 3
+    try:
+        r = httpx.get("https://openlibrary.org/search.json", params=params,
+                      headers=_UA_HEADERS, timeout=8.0)
+        if r.status_code != 200:
+            return None
+        docs = r.json().get("docs") or []
+    except Exception as e:
+        log.warning(f"OL editions lookup failed for '{record.title}': {e}")
+        return None
+
+    want_title = _norm_match(record.title)
+    author_last = _norm_match(record.author).split(" ")[-1] if record.author else ""
+    for d in docs:
+        if not record.open_library_work_key:  # searched by title → verify match
+            got = _norm_match(d.get("title", ""))
+            if not (want_title == got or want_title in got or got in want_title):
+                continue
+            if author_last and author_last not in _norm_match(" ".join(d.get("author_name") or [])):
+                continue
+        editions = int(d.get("edition_count") or 0)
+        languages = len(d.get("language") or [])
+        if editions >= 2 or languages >= 2:
+            return {"editions": editions, "languages": languages}
+        return None
+    return None
+
+
+def _cached_editions(record: book_data.BookRecord) -> Optional[dict]:
+    key = ("editions_v1", record.title, record.author)
+    hit = cache.get(*key)
+    if hit is not None:
+        return hit or None
+    stats = resolve_editions_stats(record)
+    cache.set(stats or {}, *key, ttl=None if stats else 3600)
+    return stats
+
+
 # ── More by this author (Open Library, lazy-loaded) ──────────
 # Deliberately NOT part of the /summary task pool: the frontend fetches it
 # AFTER the summary renders, so it never slows the main response and needs
@@ -1046,7 +1100,8 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
     # v10: added free_ebook (Gutenberg) + quotes (Wikiquote) — stale v9
     # entries have neither field.
     # v11: added nyt bestseller history + similar_books grew 4 → 10.
-    cache_key = ("summary_v11", req.title, req.author, req.depth, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
+    # v12: added editions/translations stats.
+    cache_key = ("summary_v12", req.title, req.author, req.depth, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
     cached = cache.get(*cache_key)
     if cached:
         # Self-healing cache migration: verify if the cached amazon_url is valid and English,
@@ -1124,10 +1179,12 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
             # this 30-day cached response. Both wrappers sit behind their own
             # 1h negative cache, so a book with genuinely no free edition or
             # quotes page costs at most one lookup per hour.
-            if cached.get("free_ebook") is None or cached.get("quotes") is None or cached.get("nyt") is None:
+            if (cached.get("free_ebook") is None or cached.get("quotes") is None
+                    or cached.get("nyt") is None or cached.get("editions") is None):
                 try:
                     tmp = book_data.BookRecord(
                         found=True, title=cached.get("title", ""), author=cached.get("author", ""),
+                        open_library_work_key=cached.get("open_library_work_key"),
                     )
                     healed = False
                     if cached.get("free_ebook") is None:
@@ -1147,6 +1204,11 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
                         ny = _cached_nyt(tmp)
                         if ny:
                             cached["nyt"] = ny
+                            healed = True
+                    if cached.get("editions") is None:
+                        ed = _cached_editions(tmp)
+                        if ed:
+                            cached["editions"] = ed
                             healed = True
                     if healed:
                         cache.set(cached, *cache_key)  # persist the heal
@@ -1341,8 +1403,11 @@ Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
     def get_nyt():
         return _cached_nyt(record)
 
-    # Execute all 12 tasks concurrently
-    with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:
+    def get_editions():
+        return _cached_editions(record)
+
+    # Execute all 13 tasks concurrently
+    with concurrent.futures.ThreadPoolExecutor(max_workers=13) as executor:
         future_summary = executor.submit(get_summary_text)
         future_chapters = executor.submit(get_chapters)
         future_awards = executor.submit(get_awards)
@@ -1355,6 +1420,7 @@ Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
         future_free_ebook = executor.submit(get_free_ebook)
         future_quotes = executor.submit(get_quotes)
         future_nyt = executor.submit(get_nyt)
+        future_editions = executor.submit(get_editions)
 
         summary_text = future_summary.result()
         chapters = future_chapters.result()
@@ -1368,6 +1434,7 @@ Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
         free_ebook = future_free_ebook.result()
         quotes = future_quotes.result()
         nyt = future_nyt.result()
+        editions_stats = future_editions.result()
 
     book_slug = slug_mod.book_slug(record.title)
     static_ready, actual_slug = github_publisher.resolve_published(
@@ -1413,6 +1480,7 @@ Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
         "free_ebook": free_ebook,
         "quotes": quotes,
         "nyt": nyt,
+        "editions": editions_stats,
         "google_volume_id": record.google_volume_id,
         "open_library_work_key": record.open_library_work_key,
     }
