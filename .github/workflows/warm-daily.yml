@@ -25,3 +25,6 @@ jobs:
 
       - name: Build and cache today's daily picks
         run: curl -sS -f -m 100 "https://bookhub-api-hnv7.onrender.com/daily" -o /dev/null
+
+      - name: Warm the NYT weekly snapshot (homepage rail + badges)
+        run: curl -sS -m 100 "https://bookhub-api-hnv7.onrender.com/nyt/weekly" -o /dev/null || true

@@ -809,48 +809,9 @@ def resolve_free_ebook(record: book_data.BookRecord) -> Optional[dict]:
     return None
 
 
-# ── NYT bestseller badge (needs the free NYT_API_KEY) ────────
-# The per-title best-sellers/history endpoint is broken on NYT's side as of
-# mid-2026 (returns "invalid date" for every request, even bare ones), so
-# the badge is driven by lists/overview.json instead: the CURRENT week's
-# snapshot of every NYT list. One request covers every book on the site —
-# exactly what NYT's tight 500/day budget wants — cached 24h under one key.
-NYT_OVERVIEW_API = "https://api.nytimes.com/svc/books/v3/lists/overview.json"
-
-
-def _nyt_overview() -> list[dict]:
-    """Flattened current-week snapshot of all NYT bestseller lists."""
-    import os
-    import httpx
-    cached = cache.get_key("nyt:overview:v1")
-    if cached is not None:
-        return cached
-    api_key = os.environ.get("NYT_API_KEY")
-    if not api_key:
-        return []  # not configured — never cache this as an empty snapshot
-    flat = []
-    try:
-        r = httpx.get(NYT_OVERVIEW_API, params={"api-key": api_key},
-                      headers=_UA_HEADERS, timeout=10.0)
-        if r.status_code != 200:
-            log.warning(f"NYT overview returned {r.status_code}")
-            cache.set_key("nyt:overview:v1", [], ttl=3600)  # brief backoff (incl. 429)
-            return []
-        for lst in (r.json().get("results") or {}).get("lists") or []:
-            for b in lst.get("books") or []:
-                flat.append({
-                    "title": b.get("title") or "",
-                    "author": b.get("author") or "",
-                    "rank": b.get("rank"),
-                    "weeks_on_list": b.get("weeks_on_list"),
-                    "list_name": lst.get("display_name") or lst.get("list_name") or "Best Sellers",
-                    "review_url": b.get("book_review_link") or None,
-                })
-        cache.set_key("nyt:overview:v1", flat, ttl=86400)
-    except Exception as e:
-        log.warning(f"NYT overview fetch failed: {e}")
-    return flat
-
+# ── NYT bestseller badge ──────────────────────────────────────
+# Snapshot fetching/caching lives in tools/nyt.py (shared with the
+# homepage /nyt/weekly rail); this is just the per-book match.
 
 def resolve_nyt_bestseller(record: book_data.BookRecord) -> Optional[dict]:
     """
@@ -858,10 +819,11 @@ def resolve_nyt_bestseller(record: book_data.BookRecord) -> Optional[dict]:
     CURRENT week's lists (weeks_on_list is cumulative). Same strict
     title+author matching as the other resolvers; None → no badge.
     """
+    from tools import nyt as nyt_mod
     want_title = _norm_match(record.title)
     author_last = _norm_match(record.author).split(" ")[-1] if record.author else ""
     best = None
-    for b in _nyt_overview():
+    for b in nyt_mod.overview():
         got_title = _norm_match(b["title"])
         if not (want_title == got_title or want_title in got_title or got_title in want_title):
             continue
