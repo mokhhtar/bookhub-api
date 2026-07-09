@@ -1085,6 +1085,245 @@ def author_works(name: str, exclude: str = "", exclude_key: str = ""):
     return {"works": out[:8]}
 
 
+# ── Shared assembly (used by /summary and /summary/stream) ──
+
+def _gather_extras(record: book_data.BookRecord) -> dict:
+    """
+    Everything in the summary payload EXCEPT the Gemini summary text —
+    12 independent lookups run concurrently. Shared by the classic route
+    (which runs it in parallel with the text generation) and the streaming
+    route (which runs it while the text is streaming to the client).
+    """
+    import concurrent.futures
+
+    def get_chapters():
+        try:
+            from tools.fandom import (
+                resolve_series_config_first,
+                resolve_fandom_subdomain,
+                extract_chapters_from_fandom,
+            )
+            # Try the structured catalog FIRST — it disambiguates books that
+            # share one Fandom subdomain (e.g. "Lord of the Mysteries" vs
+            # "Circle of Inevitability", same wiki, different series) via
+            # series_filter/exclude_series_patterns. The older
+            # resolve_fandom_subdomain has no way to express that distinction
+            # and would silently merge them, which is what caused wrong
+            # volumes/covers to show up for the wrong title.
+            series_config = resolve_series_config_first(record.title)
+            subdomain = series_config.subdomain if series_config else resolve_fandom_subdomain(record.title)
+            if subdomain:
+                chapters = extract_chapters_from_fandom(subdomain, record.title)
+                if chapters:
+                    return chapters
+        except Exception as e:
+            log.warning(f"Error fetching Fandom chapters for '{record.title}': {e}")
+
+        # Regular (non-Fandom) books: use Open Library's table of contents when
+        # it exists — web/light novels go through Fandom above; mainstream books
+        # get their real chapter list here instead of showing none.
+        try:
+            ol_chapters = book_data.fetch_chapters_from_open_library(
+                record.isbn_13, record.isbn_10, record.open_library_work_key
+            )
+            if ol_chapters:
+                return ol_chapters
+        except Exception as e:
+            log.warning(f"Error fetching Open Library chapters for '{record.title}': {e}")
+        return []
+
+    def get_fandom_cover():
+        """
+        If this title resolves to a cataloged series, prefer its
+        hand-verified per-series cover over whatever book_data.py's
+        Google Books / Open Library lookup found — those general sources
+        often lack correct art for web novels, or (worse) return a cover
+        for the wrong edition/series entirely.
+        """
+        try:
+            from tools.fandom import resolve_series_config_first
+            series_config = resolve_series_config_first(record.title)
+            if series_config and series_config.cover_url:
+                return series_config.cover_url
+        except Exception as e:
+            log.warning(f"Error fetching Fandom cover for '{record.title}': {e}")
+        return None
+
+    def get_awards():
+        awards_cache_key = ("awards", record.title, record.author)
+        awards_cached = cache.get(*awards_cache_key)
+        if awards_cached is not None:
+            return awards_cached
+
+        try:
+            awards = resolve_factual_awards(record)
+        except Exception as e:
+            log.warning(f"Wikidata awards query failed for '{record.title}': {e}")
+            awards = []
+
+        cache.set(awards, *awards_cache_key)
+        return awards
+
+    def get_similar():
+        try:
+            return _similar_books(record, limit=10)
+        except Exception as e:
+            log.warning(f"Similar books search failed for '{record.title}': {e}")
+            return []
+
+    def get_amazon():
+        import os
+        import urllib.parse
+        amazon_url = _get_amazon_url_from_api(record.title, record.author)
+        if not amazon_url:
+            tag = os.environ.get("AMAZON_TAG", "oceansidehair-20")
+            if record.isbn_10 and (record.isbn_10.startswith("0") or record.isbn_10.startswith("1")):
+                amazon_url = f"https://www.amazon.com/dp/{record.isbn_10}?tag={tag}"
+            else:
+                q = urllib.parse.quote(f"{record.title} {record.author}".strip())
+                amazon_url = f"https://www.amazon.com/s?k={q}&tag={tag}"
+        return amazon_url
+
+    def get_categories():
+        """Gemini picks 1-3 slugs FROM OUR FIXED TAXONOMY ONLY (validated);
+        falls back to a keyword-mapped default so no book ends up uncategorized.
+
+        Categorized on the SERIES (base) title, not the individual volume, and
+        cached by that title — so every volume of one series shares ONE set of
+        categories instead of Gemini drifting ("Adventure" on vol 3,
+        "Magic & Supernatural" on vol 4) for the same work."""
+        # Use the base/series title for volumes so the genre signal is stable.
+        cat_title = record.title
+        if book_data.extract_volume_number(record.title):
+            base = book_data.get_base_title(record.title)
+            if base:
+                cat_title = base
+
+        # Stored under a RAW key (not the hashed response cache) so a series'
+        # categories stay identical across its volumes EVEN when the dev switch
+        # DISABLE_RESPONSE_CACHE is on — category consistency is a correctness
+        # property, not a perf cache. Bump the version to re-derive after a
+        # taxonomy change.
+        norm = re.sub(r"[^a-z0-9]+", "-", f"{cat_title}|{record.author}".lower()).strip("-")
+        cat_key = f"cat:v1:{norm}"
+        cached_cats = cache.get_key(cat_key)
+        if cached_cats:
+            return cached_cats
+
+        result_cats = None
+        try:
+            prompt = f"""Assign categories to this book. Choose 1 to 3 category slugs FROM THIS LIST ONLY:
+
+{taxonomy.prompt_list()}
+
+BOOK: "{cat_title}" by {record.author or "Unknown"}
+Publisher category: {record.primary_category or "N/A"}
+Description: {(record.description or "")[:500]}
+
+Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
+            # temperature 0 → the first (cached) computation is as stable as
+            # Gemini allows, minimizing drift before the cache is populated.
+            from google.genai import types as _gt
+            raw = gemini_client.generate(prompt, _gt.GenerateContentConfig(temperature=0.0, max_output_tokens=256))
+            data = gemini_client.parse_json_response(raw)
+            validated = taxonomy.validate_categories(data.get("categories") or [])
+            if validated:
+                result_cats = validated
+        except Exception as e:
+            log.warning(f"Category assignment failed for '{cat_title}': {e}")
+
+        if not result_cats:
+            result_cats = [taxonomy.fallback_category(record.primary_category)]
+        cache.set_key(cat_key, result_cats)
+        return result_cats
+
+    def get_ratings():
+        try:
+            return resolve_ratings(record)
+        except Exception as e:
+            log.warning(f"Ratings lookup failed for '{record.title}': {e}")
+            return None
+
+    def get_themes_reading_level():
+        themes_cache_key = ("themes_v1", record.title, record.author)
+        themes_cached = cache.get(*themes_cache_key)
+        if themes_cached is not None:
+            return themes_cached
+        result_tr = _themes_and_reading_level(record)
+        cache.set(result_tr, *themes_cache_key)
+        return result_tr
+
+    tasks = {
+        "chapters": get_chapters,
+        "awards": get_awards,
+        "similar": get_similar,
+        "amazon_url": get_amazon,
+        "fandom_cover": get_fandom_cover,
+        "categories": get_categories,
+        "ratings": get_ratings,
+        "themes_reading_level": get_themes_reading_level,
+        "free_ebook": lambda: _cached_free_ebook(record),
+        "quotes": lambda: _cached_quotes(record),
+        "nyt": lambda: _cached_nyt(record),
+        "editions": lambda: _cached_editions(record),
+    }
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+        futures = {name: executor.submit(fn) for name, fn in tasks.items()}
+        return {name: f.result() for name, f in futures.items()}
+
+
+def _assemble_result(record: book_data.BookRecord, depth: str, summary_text: str, extras: dict) -> dict:
+    book_slug = slug_mod.book_slug(record.title)
+    static_ready, actual_slug = github_publisher.resolve_published(
+        book_slug, record.google_volume_id or record.isbn_13 or ""
+    )
+
+    # Volume-specific page count from Goodreads when our sources had none
+    # (fandom_series volumes deliberately carry page_count=None — the base
+    # title's count applied to every volume was wrong).
+    ratings = extras["ratings"]
+    page_count = record.page_count
+    if not page_count and ratings and ratings.get("pages"):
+        page_count = ratings["pages"]
+
+    return {
+        "found": True,
+        "source": record.source,
+        "title": record.title,
+        "author": record.author,
+        "author_slug": slug_mod.author_slug(record.author),
+        "depth": depth,
+        "summary": summary_text,
+        "category": record.primary_category,
+        "categories": extras["categories"],
+        "slug": actual_slug,
+        # True only once the static page was published >5 min ago (rebuild
+        # buffer) — gates the frontend's history.replaceState to the clean URL.
+        "static_page": static_ready,
+        "page_count": page_count,
+        "published_year": record.published_year,
+        # Prefer the catalog's hand-verified per-series cover when this
+        # title resolved to one — see get_fandom_cover() for why.
+        "cover_url": extras["fandom_cover"] or record.cover_url,
+        "average_rating": record.average_rating,
+        "ratings": ratings,
+        "isbn_13": record.isbn_13,
+        "isbn_10": record.isbn_10,
+        "amazon_url": extras["amazon_url"],
+        "similar_books": extras["similar"],
+        "chapters": extras["chapters"],
+        "awards": extras["awards"],
+        "themes": extras["themes_reading_level"]["themes"],
+        "reading_level": extras["themes_reading_level"]["reading_level"],
+        "free_ebook": extras["free_ebook"],
+        "quotes": extras["quotes"],
+        "nyt": extras["nyt"],
+        "editions": extras["editions"],
+        "google_volume_id": record.google_volume_id,
+        "open_library_work_key": record.open_library_work_key,
+    }
+
+
 # ── Route ───────────────────────────────────────────────────
 @router.post("/summary")
 def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
@@ -1233,257 +1472,16 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
 
     import concurrent.futures
 
-    def get_summary_text():
-        prompt = _build_prompt(record, req.depth)
-        return gemini_client.generate(prompt)
-
-    def get_chapters():
-        try:
-            from tools.fandom import (
-                resolve_series_config_first,
-                resolve_fandom_subdomain,
-                extract_chapters_from_fandom,
-            )
-            # Try the structured catalog FIRST — it disambiguates books that
-            # share one Fandom subdomain (e.g. "Lord of the Mysteries" vs
-            # "Circle of Inevitability", same wiki, different series) via
-            # series_filter/exclude_series_patterns. The older
-            # resolve_fandom_subdomain has no way to express that distinction
-            # and would silently merge them, which is what caused wrong
-            # volumes/covers to show up for the wrong title.
-            series_config = resolve_series_config_first(record.title)
-            subdomain = series_config.subdomain if series_config else resolve_fandom_subdomain(record.title)
-            if subdomain:
-                chapters = extract_chapters_from_fandom(subdomain, record.title)
-                if chapters:
-                    return chapters
-        except Exception as e:
-            log.warning(f"Error fetching Fandom chapters for '{record.title}': {e}")
-
-        # Regular (non-Fandom) books: use Open Library's table of contents when
-        # it exists — web/light novels go through Fandom above; mainstream books
-        # get their real chapter list here instead of showing none.
-        try:
-            ol_chapters = book_data.fetch_chapters_from_open_library(
-                record.isbn_13, record.isbn_10, record.open_library_work_key
-            )
-            if ol_chapters:
-                return ol_chapters
-        except Exception as e:
-            log.warning(f"Error fetching Open Library chapters for '{record.title}': {e}")
-        return []
-
-    def get_fandom_cover():
-        """
-        If this title resolves to a cataloged series, prefer its
-        hand-verified per-series cover over whatever book_data.py's
-        Google Books / Open Library lookup found — those general sources
-        often lack correct art for web novels, or (worse) return a cover
-        for the wrong edition/series entirely.
-        """
-        try:
-            from tools.fandom import resolve_series_config_first
-            series_config = resolve_series_config_first(record.title)
-            if series_config and series_config.cover_url:
-                return series_config.cover_url
-        except Exception as e:
-            log.warning(f"Error fetching Fandom cover for '{record.title}': {e}")
-        return None
-
-    def get_awards():
-        awards_cache_key = ("awards", record.title, record.author)
-        awards_cached = cache.get(*awards_cache_key)
-        if awards_cached is not None:
-            return awards_cached
-        
-        try:
-            awards = resolve_factual_awards(record)
-        except Exception as e:
-            log.warning(f"Wikidata awards query failed for '{record.title}': {e}")
-            awards = []
-
-        cache.set(awards, *awards_cache_key)
-        return awards
-
-    def get_similar():
-        try:
-            return _similar_books(record, limit=10)
-        except Exception as e:
-            log.warning(f"Similar books search failed for '{record.title}': {e}")
-            return []
-
-    def get_amazon():
-        import os
-        import urllib.parse
-        amazon_url = _get_amazon_url_from_api(record.title, record.author)
-        if not amazon_url:
-            tag = os.environ.get("AMAZON_TAG", "oceansidehair-20")
-            if record.isbn_10 and (record.isbn_10.startswith("0") or record.isbn_10.startswith("1")):
-                amazon_url = f"https://www.amazon.com/dp/{record.isbn_10}?tag={tag}"
-            else:
-                q = urllib.parse.quote(f"{record.title} {record.author}".strip())
-                amazon_url = f"https://www.amazon.com/s?k={q}&tag={tag}"
-        return amazon_url
-
-    def get_categories():
-        """Gemini picks 1-3 slugs FROM OUR FIXED TAXONOMY ONLY (validated);
-        falls back to a keyword-mapped default so no book ends up uncategorized.
-
-        Categorized on the SERIES (base) title, not the individual volume, and
-        cached by that title — so every volume of one series shares ONE set of
-        categories instead of Gemini drifting ("Adventure" on vol 3,
-        "Magic & Supernatural" on vol 4) for the same work."""
-        # Use the base/series title for volumes so the genre signal is stable.
-        cat_title = record.title
-        if book_data.extract_volume_number(record.title):
-            base = book_data.get_base_title(record.title)
-            if base:
-                cat_title = base
-
-        # Stored under a RAW key (not the hashed response cache) so a series'
-        # categories stay identical across its volumes EVEN when the dev switch
-        # DISABLE_RESPONSE_CACHE is on — category consistency is a correctness
-        # property, not a perf cache. Bump the version to re-derive after a
-        # taxonomy change.
-        norm = re.sub(r"[^a-z0-9]+", "-", f"{cat_title}|{record.author}".lower()).strip("-")
-        cat_key = f"cat:v1:{norm}"
-        cached_cats = cache.get_key(cat_key)
-        if cached_cats:
-            return cached_cats
-
-        result_cats = None
-        try:
-            prompt = f"""Assign categories to this book. Choose 1 to 3 category slugs FROM THIS LIST ONLY:
-
-{taxonomy.prompt_list()}
-
-BOOK: "{cat_title}" by {record.author or "Unknown"}
-Publisher category: {record.primary_category or "N/A"}
-Description: {(record.description or "")[:500]}
-
-Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
-            # temperature 0 → the first (cached) computation is as stable as
-            # Gemini allows, minimizing drift before the cache is populated.
-            from google.genai import types as _gt
-            raw = gemini_client.generate(prompt, _gt.GenerateContentConfig(temperature=0.0, max_output_tokens=256))
-            data = gemini_client.parse_json_response(raw)
-            validated = taxonomy.validate_categories(data.get("categories") or [])
-            if validated:
-                result_cats = validated
-        except Exception as e:
-            log.warning(f"Category assignment failed for '{cat_title}': {e}")
-
-        if not result_cats:
-            result_cats = [taxonomy.fallback_category(record.primary_category)]
-        cache.set_key(cat_key, result_cats)
-        return result_cats
-
-    def get_ratings():
-        try:
-            return resolve_ratings(record)
-        except Exception as e:
-            log.warning(f"Ratings lookup failed for '{record.title}': {e}")
-            return None
-
-    def get_themes_reading_level():
-        themes_cache_key = ("themes_v1", record.title, record.author)
-        themes_cached = cache.get(*themes_cache_key)
-        if themes_cached is not None:
-            return themes_cached
-        result_tr = _themes_and_reading_level(record)
-        cache.set(result_tr, *themes_cache_key)
-        return result_tr
-
-    def get_free_ebook():
-        return _cached_free_ebook(record)
-
-    def get_quotes():
-        return _cached_quotes(record)
-
-    def get_nyt():
-        return _cached_nyt(record)
-
-    def get_editions():
-        return _cached_editions(record)
-
-    # Execute all 13 tasks concurrently
-    with concurrent.futures.ThreadPoolExecutor(max_workers=13) as executor:
-        future_summary = executor.submit(get_summary_text)
-        future_chapters = executor.submit(get_chapters)
-        future_awards = executor.submit(get_awards)
-        future_similar = executor.submit(get_similar)
-        future_amazon = executor.submit(get_amazon)
-        future_fandom_cover = executor.submit(get_fandom_cover)
-        future_categories = executor.submit(get_categories)
-        future_ratings = executor.submit(get_ratings)
-        future_themes = executor.submit(get_themes_reading_level)
-        future_free_ebook = executor.submit(get_free_ebook)
-        future_quotes = executor.submit(get_quotes)
-        future_nyt = executor.submit(get_nyt)
-        future_editions = executor.submit(get_editions)
-
+    # Summary text and the 12 extras run in parallel — same total latency
+    # as the old single 13-task pool.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as outer:
+        future_summary = outer.submit(
+            lambda: gemini_client.generate(_build_prompt(record, req.depth)))
+        future_extras = outer.submit(_gather_extras, record)
         summary_text = future_summary.result()
-        chapters = future_chapters.result()
-        awards = future_awards.result()
-        similar = future_similar.result()
-        amazon_url = future_amazon.result()
-        fandom_cover = future_fandom_cover.result()
-        categories = future_categories.result()
-        ratings = future_ratings.result()
-        themes_reading_level = future_themes.result()
-        free_ebook = future_free_ebook.result()
-        quotes = future_quotes.result()
-        nyt = future_nyt.result()
-        editions_stats = future_editions.result()
+        extras = future_extras.result()
 
-    book_slug = slug_mod.book_slug(record.title)
-    static_ready, actual_slug = github_publisher.resolve_published(
-        book_slug, record.google_volume_id or record.isbn_13 or ""
-    )
-
-    # Volume-specific page count from Goodreads when our sources had none
-    # (fandom_series volumes deliberately carry page_count=None — the base
-    # title's count applied to every volume was wrong).
-    page_count = record.page_count
-    if not page_count and ratings and ratings.get("pages"):
-        page_count = ratings["pages"]
-
-    result = {
-        "found": True,
-        "source": record.source,
-        "title": record.title,
-        "author": record.author,
-        "author_slug": slug_mod.author_slug(record.author),
-        "depth": req.depth,
-        "summary": summary_text,
-        "category": record.primary_category,
-        "categories": categories,
-        "slug": actual_slug,
-        # True only once the static page was published >5 min ago (rebuild
-        # buffer) — gates the frontend's history.replaceState to the clean URL.
-        "static_page": static_ready,
-        "page_count": page_count,
-        "published_year": record.published_year,
-        # Prefer the catalog's hand-verified per-series cover when this
-        # title resolved to one — see get_fandom_cover() for why.
-        "cover_url": fandom_cover or record.cover_url,
-        "average_rating": record.average_rating,
-        "ratings": ratings,
-        "isbn_13": record.isbn_13,
-        "isbn_10": record.isbn_10,
-        "amazon_url": amazon_url,
-        "similar_books": similar,
-        "chapters": chapters,
-        "awards": awards,
-        "themes": themes_reading_level["themes"],
-        "reading_level": themes_reading_level["reading_level"],
-        "free_ebook": free_ebook,
-        "quotes": quotes,
-        "nyt": nyt,
-        "editions": editions_stats,
-        "google_volume_id": record.google_volume_id,
-        "open_library_work_key": record.open_library_work_key,
-    }
+    result = _assemble_result(record, req.depth, summary_text, extras)
     cache.set(result, *cache_key)
 
     # Publish the static SEO pages in the background — commit failures are
@@ -1493,6 +1491,79 @@ Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
         background_tasks.add_task(github_publisher.publish_author, record.author, record.title)
 
     return result
+
+
+@router.post("/summary/stream")
+def summary_stream(req: SummaryRequest, background_tasks: BackgroundTasks):
+    """
+    SSE variant of /summary: streams the Gemini summary text as it
+    generates (events {"t": chunk}), then one final {"done": payload}
+    with the complete assembled response. Shares the same cache key as
+    /summary — a cached book answers with a single done event, and a
+    fresh build is cached for both routes. The 12 extras run concurrently
+    WHILE the text streams, so total time matches the classic route but
+    the reader sees text within seconds.
+    """
+    import json as _json
+    import concurrent.futures
+    from fastapi.responses import StreamingResponse
+
+    def sse(obj) -> str:
+        return f"data: {_json.dumps(obj, ensure_ascii=False)}\n\n"
+
+    def gen():
+        cache_key = ("summary_v12", req.title, req.author, req.depth, req.isbn,
+                     req.google_id, req.openlibrary_id, req.bookwyrm_id)
+        cached = cache.get(*cache_key)
+        if cached:
+            yield sse({"done": cached})
+            return
+
+        record = book_data.resolve_book(req.title, req.author, req.isbn,
+                                        req.google_id, req.openlibrary_id, req.bookwyrm_id)
+        if not record.found:
+            payload = {
+                "found": False,
+                "title": req.title,
+                "author": req.author,
+                "message": (
+                    f"We couldn't verify \"{req.title}\" in our book sources (Google Books "
+                    f"or Open Library). Please check the spelling, or try adding the author's name."
+                ),
+            }
+            cache.set(payload, *cache_key, ttl=3600)
+            yield sse({"done": payload})
+            return
+
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
+            future_extras = executor.submit(_gather_extras, record)
+            parts = []
+            try:
+                for chunk in gemini_client.generate_stream(_build_prompt(record, req.depth)):
+                    parts.append(chunk)
+                    yield sse({"t": chunk})
+            except Exception as e:
+                # Mid-stream failure: tell the client to fall back to the
+                # classic route rather than caching a truncated summary.
+                log.warning(f"Summary stream failed for '{record.title}': {e}")
+                yield sse({"error": "stream_failed"})
+                return
+
+            summary_text = "".join(parts)
+            result = _assemble_result(record, req.depth, summary_text, future_extras.result())
+            cache.set(result, *cache_key)
+            if github_publisher.is_enabled():
+                background_tasks.add_task(github_publisher.publish_book, result)
+                background_tasks.add_task(github_publisher.publish_author, record.author, record.title)
+            yield sse({"done": result})
+        finally:
+            executor.shutdown(wait=False)
+
+    return StreamingResponse(gen(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",  # tell proxies not to buffer the stream
+    })
 
 
 class ChatRequest(BaseModel):

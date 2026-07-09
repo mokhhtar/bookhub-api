@@ -63,6 +63,31 @@ def generate(prompt: str, config: genai_types.GenerateContentConfig = None) -> s
         raise HTTPException(status_code=502, detail=f"AI generation failed: {str(e)}")
 
 
+def generate_stream(prompt: str, config: genai_types.GenerateContentConfig = None):
+    """
+    Streaming variant of generate(): yields text chunks as Gemini produces
+    them. Used by /summary/stream so the reader sees text within seconds
+    instead of waiting for the full generation. Raises HTTPException on
+    setup failure; mid-stream errors propagate to the caller, which decides
+    how to surface a partial stream.
+    """
+    if not _client:
+        raise HTTPException(status_code=503, detail="AI service not configured.")
+    try:
+        stream = _client.models.generate_content_stream(
+            model=MODEL_NAME,
+            contents=prompt,
+            config=config or DEFAULT_CONFIG,
+        )
+    except Exception as e:
+        log.error(f"Gemini stream setup failed: {e}")
+        raise HTTPException(status_code=502, detail=f"AI generation failed: {str(e)}")
+    for chunk in stream:
+        text = getattr(chunk, "text", None)
+        if text:
+            yield text
+
+
 def parse_json_response(text: str):
     """Gemini sometimes wraps JSON in ```json fences — strip them before parsing."""
     import json
