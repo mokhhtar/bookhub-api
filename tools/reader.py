@@ -109,6 +109,35 @@ def _ingest(gid: int) -> dict | None:
     return meta
 
 
+def get_full_text_pages(gid: int) -> list[str] | None:
+    """
+    Every stored page of the book, in order — the quiz route's grounding
+    source. Ensures ingest has run (idempotent, same lock as read_page);
+    None when the text can't be fetched/stored. Library function, not a
+    route: tools/quiz.py concatenates + re-chunks these via quiz_core's
+    paragraph/sentence-aware _chunk_text (reader pagination is a reading-UX
+    boundary, not a semantic one).
+    """
+    meta = cache.get_key(f"read:{gid}:meta")
+    if not meta:
+        cache.acquire_lock(f"read:lock:{gid}", ttl=60)
+        meta = _ingest(gid)
+        if not meta:
+            return None
+    pages: list[str] = []
+    total, bundle_size = meta["pages"], meta["bundle"]
+    for b in range((total + bundle_size - 1) // bundle_size):
+        bundle = cache.get_key(f"read:{gid}:{b}")
+        if not isinstance(bundle, list):
+            # Bundle evicted while meta survived — one re-ingest attempt.
+            meta = _ingest(gid)
+            bundle = cache.get_key(f"read:{gid}:{b}") if meta else None
+            if not isinstance(bundle, list):
+                return None
+        pages.extend(bundle)
+    return pages or None
+
+
 # Registered BEFORE /read/{gid}/{page} so "search" isn't parsed as a page number.
 @router.get("/read/{gid}/search")
 def read_search(gid: int, q: str):
