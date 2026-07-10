@@ -32,3 +32,9 @@ def author_slug(author: str) -> str:
     """First author only — 'Miya Kazuki, You Shiina' → 'miya-kazuki'."""
     first = (author or "").split(",")[0].strip()
     return slugify(first)
+
+
+def character_slug(name: str) -> str:
+    """Character names are single entities — no author-style comma splitting
+    ('Klein Moretti' and even 'Ahab, Captain of the Pequod' stay whole)."""
+    return slugify(name)
