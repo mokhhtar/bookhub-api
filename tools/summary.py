@@ -1219,6 +1219,32 @@ def _gather_extras(record: book_data.BookRecord) -> dict:
             log.warning(f"Error fetching Open Library chapters for '{record.title}': {e}")
         return []
 
+    def get_characters():
+        """Fandom wiki first (web novels), Wikidata P674 fallback (classics) —
+        the same source split as get_chapters. Every entry carries name/slug/
+        description/source; None when neither source knows this book."""
+        try:
+            from tools.fandom import (
+                resolve_series_config_first,
+                resolve_fandom_subdomain,
+                extract_characters_from_fandom,
+            )
+            series_config = resolve_series_config_first(record.title)
+            subdomain = series_config.subdomain if series_config else resolve_fandom_subdomain(record.title)
+            if subdomain:
+                chars = extract_characters_from_fandom(subdomain, record.title)
+                if chars:
+                    for c in chars:  # fandom path doesn't slug — normalize here
+                        c.setdefault("slug", slug_mod.character_slug(c.get("name", "")))
+                    return [c for c in chars if c.get("slug")]
+        except Exception as e:
+            log.warning(f"Error fetching Fandom characters for '{record.title}': {e}")
+        try:
+            return resolve_wikidata_characters(record)
+        except Exception as e:
+            log.warning(f"Wikidata characters failed for '{record.title}': {e}")
+        return None
+
     def get_fandom_cover():
         """
         If this title resolves to a cataloged series, prefer its
@@ -1353,6 +1379,7 @@ Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
         "quotes": lambda: _cached_quotes(record),
         "nyt": lambda: _cached_nyt(record),
         "editions": lambda: _cached_editions(record),
+        "characters": get_characters,
     }
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(tasks)) as executor:
         futures = {name: executor.submit(fn) for name, fn in tasks.items()}
@@ -1406,6 +1433,7 @@ def _assemble_result(record: book_data.BookRecord, depth: str, summary_text: str
         "quotes": extras["quotes"],
         "nyt": extras["nyt"],
         "editions": extras["editions"],
+        "characters": extras["characters"],
         "google_volume_id": record.google_volume_id,
         "open_library_work_key": record.open_library_work_key,
     }
@@ -1428,7 +1456,8 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
     # v11: added nyt bestseller history + similar_books grew 4 → 10.
     # v12: added editions/translations stats; language ("en"/"ar") joined
     # the key when Arabic summaries shipped.
-    cache_key = ("summary_v12", req.title, req.author, req.depth, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id, req.language)
+    # v13: added characters (Fandom wiki / Wikidata P674).
+    cache_key = ("summary_v13", req.title, req.author, req.depth, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id, req.language)
     cached = cache.get(*cache_key)
     if cached:
         # Self-healing cache migration: verify if the cached amazon_url is valid and English,
@@ -1537,6 +1566,15 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
                         if ed:
                             cached["editions"] = ed
                             healed = True
+                    # Characters: heal only when the KEY is absent (an entry
+                    # written before v13's shape) — a present None means both
+                    # sources were already checked; re-probing Wikidata/Fandom
+                    # on every cached read of every characterless book would
+                    # be wasted latency.
+                    if "characters" not in cached:
+                        wd = resolve_wikidata_characters(tmp)
+                        cached["characters"] = wd
+                        healed = True
                     if healed:
                         cache.set(cached, *cache_key)  # persist the heal
                 except Exception as e:
@@ -1601,7 +1639,7 @@ def summary_stream(req: SummaryRequest, background_tasks: BackgroundTasks):
         return f"data: {_json.dumps(obj, ensure_ascii=False)}\n\n"
 
     def gen():
-        cache_key = ("summary_v12", req.title, req.author, req.depth, req.isbn,
+        cache_key = ("summary_v13", req.title, req.author, req.depth, req.isbn,
                      req.google_id, req.openlibrary_id, req.bookwyrm_id, req.language)
         cached = cache.get(*cache_key)
         if cached:
