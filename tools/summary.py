@@ -397,6 +397,78 @@ def resolve_factual_awards(record: book_data.BookRecord) -> list[dict]:
     return []
 
 
+# ── Characters (Wikidata P674 — verified entities only) ──────
+
+def resolve_wikidata_characters(record: book_data.BookRecord) -> Optional[list[dict]]:
+    """
+    Real characters from the book's Wikidata entry (property P674), each with
+    an enwiki sitelink — only well-documented classics have this claim, and
+    that's the point: no P674 → None → no characters card, never a guess.
+    Reuses _fetch_wikidata_qid's existing P31/P50-gated book resolution.
+    Lightweight by design: name + description + wikipedia title only — the
+    full grounded bio is written later, in the background, at publish time.
+    """
+    import httpx
+
+    qid = _fetch_wikidata_qid(record)
+    if not qid:
+        return None
+
+    cache_key = ("wd_characters_v1", qid)
+    cached = cache.get(*cache_key)
+    if cached is not None:
+        return cached or None  # [] negative marker → None
+
+    try:
+        r = httpx.get(_WIKIDATA_URL, params={
+            "action": "wbgetentities", "ids": qid,
+            "props": "claims", "format": "json",
+        }, headers=_WIKIDATA_HEADERS, timeout=8.0)
+        if r.status_code != 200:
+            return None
+        claims = (r.json().get("entities", {}).get(qid, {}) or {}).get("claims", {})
+        char_qids = []
+        for c in claims.get("P674", [])[:20]:
+            try:
+                char_qids.append(c["mainsnak"]["datavalue"]["value"]["id"])
+            except (KeyError, TypeError):
+                continue
+        if not char_qids:
+            cache.set([], *cache_key, ttl=86400 * 7)
+            return None
+
+        # One batch call resolves every character's label/description/sitelink.
+        r = httpx.get(_WIKIDATA_URL, params={
+            "action": "wbgetentities", "ids": "|".join(char_qids),
+            "props": "labels|descriptions|sitelinks", "languages": "en",
+            "sitefilter": "enwiki", "format": "json",
+        }, headers=_WIKIDATA_HEADERS, timeout=8.0)
+        if r.status_code != 200:
+            return None
+        entities = r.json().get("entities", {})
+    except Exception as e:
+        log.warning(f"Wikidata P674 lookup failed for '{record.title}': {e}")
+        return None
+
+    characters = []
+    for cq in char_qids:
+        e = entities.get(cq) or {}
+        name = ((e.get("labels") or {}).get("en") or {}).get("value", "")
+        wiki_title = ((e.get("sitelinks") or {}).get("enwiki") or {}).get("title", "")
+        if not name or not wiki_title:
+            continue  # no enwiki page → no grounded bio possible → skip
+        characters.append({
+            "name": name,
+            "slug": slug_mod.character_slug(name),
+            "description": ((e.get("descriptions") or {}).get("en") or {}).get("value", ""),
+            "wikipedia_title": wiki_title,
+            "source": "wikidata",
+        })
+
+    cache.set(characters, *cache_key, ttl=None if characters else 86400 * 7)
+    return characters or None
+
+
 # ── Ratings (Goodreads-first, Open Library fallback) ─────────
 def _normalize_title_for_match(s: str) -> str:
     return re.sub(r"[^a-z0-9]", "", (s or "").lower())

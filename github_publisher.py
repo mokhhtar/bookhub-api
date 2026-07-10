@@ -220,11 +220,15 @@ def _author_markdown(name: str, a_slug: str, photo_url: str, wikipedia_url: str,
 
 # ── Author grounding (Wikipedia + Gemini rewrite) ────────────
 
-def _fetch_wikipedia_author(name: str) -> dict:
+def _fetch_wikipedia_author(name: str, gate_re=_WRITER_RE) -> dict:
     """
     Wikipedia REST page summary for the author. Accepted ONLY if the page's
-    short description says the person is a writer — the gate against grabbing
-    a same-named athlete/politician. Returns {} when no qualifying page.
+    short description matches gate_re (default: the person is a writer — the
+    gate against grabbing a same-named athlete/politician). Pass gate_re=None
+    to skip the gate when provenance is already verified upstream (e.g.
+    character pages arriving via a Wikidata P674 claim's own enwiki
+    sitelink — the exact-title link IS the confidence signal there).
+    Returns {} when no qualifying page.
     """
     try:
         title = urllib.parse.quote((name or "").split(",")[0].strip().replace(" ", "_"))
@@ -238,7 +242,7 @@ def _fetch_wikipedia_author(name: str) -> dict:
         data = r.json()
         desc = data.get("description", "") or ""
         extract = data.get("extract", "") or ""
-        if not _WRITER_RE.search(desc) and not _WRITER_RE.search(extract[:200]):
+        if gate_re is not None and not gate_re.search(desc) and not gate_re.search(extract[:200]):
             return {}
         return {
             "extract": extract,
