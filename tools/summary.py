@@ -1025,7 +1025,9 @@ def author_works(name: str, exclude: str = "", exclude_key: str = ""):
     if not name or name.lower() in ("unknown", "author"):
         return {"works": []}
 
-    cache_key = ("author_works_v1", name)
+    # v2: v1 let multi-contributor anthologies (a work misattributed to
+    # every author whose story appears inside it) slip through.
+    cache_key = ("author_works_v2", name)
     cached = cache.get(*cache_key)
     if cached is None:
         docs = []
@@ -1056,7 +1058,16 @@ def author_works(name: str, exclude: str = "", exclude_key: str = ""):
             langs = d.get("language") or []
             if langs and "eng" not in langs:
                 continue
-            authors = _norm_match(" ".join(d.get("author_name") or []))
+            authors_list = d.get("author_name") or []
+            # Anthologies/textbooks ("The Story and Its Writer") list every
+            # contributing author — sometimes 15-45 names — so a plain
+            # substring check on the joined list matches them even though
+            # the target author only contributed ONE story, not the book.
+            # A real (co-)authored work rarely credits more than a few
+            # people, so cap it and require the match among those few.
+            if len(authors_list) > 4:
+                continue
+            authors = _norm_match(" ".join(authors_list))
             if author_last and author_last not in authors:
                 continue
             base = book_data.get_base_title(title) or _norm_match(title)
