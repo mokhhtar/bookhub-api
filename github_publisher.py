@@ -192,6 +192,10 @@ def _book_markdown(result: dict, book_slug: str, a_slug: str) -> str:
         f"quotes: {_yaml_json(result.get('quotes'))}",
         f"nyt: {_yaml_json(result.get('nyt'))}",
         f"editions: {_yaml_json(result.get('editions'))}",
+        "characters: " + _yaml_json([
+            {"name": c.get("name"), "slug": c.get("slug"), "role": c.get("role") or ""}
+            for c in (result.get("characters") or []) if c.get("slug")
+        ]),
         f"date: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S %z')}",
         "---",
         "",
@@ -331,6 +335,94 @@ def _mark_published(book_slug: str, gid: str) -> None:
     cache.set_key(f"published:{book_slug}", {"gid": gid, "ts": ts})
     if gid:
         cache.set_key(f"published_gid:{gid}", {"slug": book_slug, "ts": ts})
+
+
+def _character_markdown(character: dict, photo_url: str, wikipedia_url: str,
+                        bio: str, books: list[dict]) -> str:
+    lines = [
+        "---",
+        "layout: character",
+        f"name: {_yaml_str(character.get('name'))}",
+        f"slug: {_yaml_str(character.get('slug'))}",
+        f"role: {_yaml_str(character.get('role') or '')}",
+        f"source: {_yaml_str(character.get('source') or '')}",
+        f"photo_url: {_yaml_str(photo_url)}",
+        f"wikipedia_url: {_yaml_str(wikipedia_url)}",
+        f"books: {_yaml_json(books)}",
+        f"date: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S %z')}",
+        "---",
+        "",
+        bio,
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def publish_character(character: dict, book_title: str, book_slug: str) -> None:
+    """
+    Commits _characters/<slug>.md the first time a character appears.
+    Mirrors publish_author exactly (dedupe flags, file-exists gate, never
+    raises — runs in BackgroundTasks). Known v1 limitation, same as
+    authors: publish-once — a recurring character's "books" list freezes
+    at first publish.
+
+    Grounding per source:
+    - wikidata: Wikipedia extract (fetched by the P674 sitelink's exact
+      title, no text gate needed — the claim IS the provenance) rewritten
+      by Gemini strictly from that extract.
+    - fandom:  the wiki-extracted description is used as-is (already
+      extraction-only, never invented — see fandom.py's prompt contract).
+    """
+    try:
+        if not is_enabled():
+            return
+        name = (character.get("name") or "").strip()
+        c_slug = character.get("slug") or slug_mod.character_slug(name)
+        if not name or not c_slug:
+            return
+
+        if cache.get_key(f"published_character:{c_slug}"):
+            return
+        path = f"_characters/{c_slug}.md"
+        exists, _ = _file_exists(path)
+        if exists:
+            cache.set_key(f"published_character:{c_slug}", {"ts": datetime.now(timezone.utc).timestamp()})
+            return
+
+        photo_url, wikipedia_url, bio = "", "", ""
+        if character.get("source") == "wikidata" and character.get("wikipedia_title"):
+            wiki = _fetch_wikipedia_author(character["wikipedia_title"], gate_re=None)
+            if wiki.get("extract"):
+                bio = _write_character_bio(name, book_title, wiki["extract"])
+                photo_url = wiki.get("photo_url", "")
+                wikipedia_url = wiki.get("wikipedia_url", "")
+        if not bio:
+            # Fandom description (extraction-only) or the neutral template —
+            # never an invented bio.
+            bio = (character.get("description") or "").strip() \
+                or f"{name} is a character in {book_title}."
+
+        books = [{"title": book_title, "slug": book_slug}]
+        md = _character_markdown(character, photo_url, wikipedia_url, bio, books)
+        if _create_file(path, md, f"Add character page: {name}"):
+            log.info(f"Published character page: {path}")
+        cache.set_key(f"published_character:{c_slug}", {"ts": datetime.now(timezone.utc).timestamp()})
+    except Exception as e:
+        log.warning(f"publish_character failed (non-fatal): {e}")
+
+
+def _write_character_bio(name: str, book_title: str, extract: str) -> str:
+    """Gemini rewrite grounded STRICTLY on the Wikipedia extract."""
+    import gemini_client
+    prompt = f"""Rewrite the following Wikipedia extract as a clean 1-2 paragraph description of the fictional character {name} (from "{book_title}") for a book website. Use ONLY facts present in the extract — do not add anything from outside it. Plain text, no markdown, no headings.
+
+EXTRACT:
+\"\"\"{extract[:2000]}\"\"\""""
+    try:
+        return gemini_client.generate(prompt).strip()
+    except Exception as e:
+        log.warning(f"Character bio generation failed for '{name}': {e}")
+        return ""
 
 
 def publish_author(name: str, book_title: str) -> None:

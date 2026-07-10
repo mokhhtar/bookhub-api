@@ -1616,6 +1616,9 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
     if github_publisher.is_enabled() and req.language == "en":
         background_tasks.add_task(github_publisher.publish_book, result)
         background_tasks.add_task(github_publisher.publish_author, record.author, record.title)
+        for ch in (result.get("characters") or [])[:12]:
+            background_tasks.add_task(github_publisher.publish_character,
+                                      ch, record.title, result.get("slug") or "")
 
     return result
 
@@ -1683,6 +1686,9 @@ def summary_stream(req: SummaryRequest, background_tasks: BackgroundTasks):
             if github_publisher.is_enabled() and req.language == "en":
                 background_tasks.add_task(github_publisher.publish_book, result)
                 background_tasks.add_task(github_publisher.publish_author, record.author, record.title)
+                for ch in (result.get("characters") or [])[:12]:
+                    background_tasks.add_task(github_publisher.publish_character,
+                                              ch, record.title, result.get("slug") or "")
             yield sse({"done": result})
         finally:
             executor.shutdown(wait=False)
