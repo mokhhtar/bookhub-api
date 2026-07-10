@@ -1003,6 +1003,126 @@ def extract_chapters_from_fandom(subdomain: str, book_title: str) -> list[str]:
     return []
 
 
+def extract_characters_from_fandom(subdomain: str, book_title: str) -> list[dict]:
+    """
+    Finds the wiki page(s) most likely to list this book's characters and
+    hands their RAW TEXT to Gemini for extraction — the same
+    search→clean_wiki_html→LLM-extraction shape as extract_chapters_from_fandom,
+    and for the same reason (every wiki formats character pages differently;
+    parsing HTML structure is a special-case treadmill). Gemini is instructed
+    to return nothing rather than invent characters not in the text.
+    """
+    cache_key = ("fandom_characters_v1", subdomain, book_title)
+    cached = cache.get(*cache_key)
+    if cached is not None:
+        return cached
+
+    url = f"https://{subdomain}.fandom.com/api.php"
+    headers = {"User-Agent": "BookHub/1.0 (mokhhtar@github.com)"}
+
+    search_queries = [
+        f"{book_title} characters",
+        "List of characters",
+        "Characters",
+        "Main characters",
+    ]
+    page_titles = []
+    for q in search_queries:
+        params = {"action": "query", "list": "search", "srsearch": q, "format": "json", "srlimit": 3}
+        try:
+            r = httpx.get(url, params=params, headers=headers, timeout=3.0)
+            if r.status_code == 200:
+                for res in r.json().get("query", {}).get("search", []):
+                    t = res.get("title")
+                    if t not in page_titles:
+                        page_titles.append(t)
+        except Exception:
+            pass
+
+    def page_priority(t):
+        t_low = t.lower()
+        penalty = 10 if "/" in t else 0
+        if "list of characters" in t_low or "character list" in t_low:
+            return 0 + penalty
+        if t_low.endswith("characters") or t_low == "characters":
+            return 1 + penalty
+        if "character" in t_low:
+            return 2 + penalty
+        if book_title.lower() in t_low:
+            return 3 + penalty
+        return 5 + penalty
+
+    page_titles.sort(key=page_priority)
+
+    MAX_CHARS_PER_PAGE = 6000
+    candidate_texts = []
+    for page_title in page_titles[:3]:
+        params = {"action": "parse", "page": page_title, "prop": "text", "format": "json"}
+        try:
+            r = httpx.get(url, params=params, headers=headers, timeout=4.0)
+            if r.status_code != 200:
+                continue
+            html = r.json().get("parse", {}).get("text", {}).get("*", "")
+            text = clean_wiki_html(html)
+            if text:
+                candidate_texts.append((page_title, text[:MAX_CHARS_PER_PAGE]))
+        except Exception as e:
+            log.warning(f"Failed fetching character page '{page_title}' on wiki '{subdomain}': {e}")
+
+    if not candidate_texts:
+        cache.set([], *cache_key, ttl=86400)  # short negative — wiki may grow
+        return []
+
+    combined = "\n\n".join(f"=== Wiki page: {t} ===\n{txt}" for t, txt in candidate_texts)
+    prompt = _build_character_extraction_prompt(book_title, combined)
+
+    characters: list[dict] = []
+    try:
+        raw = gemini_client.generate(prompt)
+        data = gemini_client.parse_json_response(raw)
+        if data.get("confident") and isinstance(data.get("characters"), list):
+            for c in data["characters"][:15]:
+                if not isinstance(c, dict):
+                    continue
+                name = str(c.get("name") or "").strip()
+                if not name or len(name) > 80:
+                    continue
+                characters.append({
+                    "name": name,
+                    "description": str(c.get("description") or "").strip()[:400],
+                    "role": str(c.get("role") or "").strip()[:60],
+                    "source": "fandom",
+                })
+    except Exception as e:
+        log.warning(f"Character extraction via Gemini failed for '{book_title}' on wiki '{subdomain}': {e}")
+
+    cache.set(characters, *cache_key, ttl=None if characters else 86400)
+    return characters
+
+
+def _build_character_extraction_prompt(book_title: str, wiki_text: str) -> str:
+    """Pure extraction — same contract as _build_chapter_extraction_prompt:
+    read ONLY the supplied text, return nothing rather than invent."""
+    return f"""You are extracting a character list from raw wiki page text. You are NOT summarizing the story and NOT using any outside knowledge of it — only read the text below.
+
+BOOK/SERIES: "{book_title}"
+
+RAW WIKI PAGE TEXT (may mix navigation, categories, or unrelated page furniture with real content):
+\"\"\"
+{wiki_text}
+\"\"\"
+
+TASK: Extract the main characters of this book/series, IF this text clearly describes them. For each: their name, a 1-3 sentence description of who they are (based ONLY on this text), and their role if stated (e.g. "protagonist", "antagonist", "supporting").
+
+RULES:
+- Extract only — do not invent characters or facts not explicitly present in the text above.
+- If the text does not clearly describe this book's characters, return an empty list with "confident": false. Never fall back on general knowledge.
+- Skip navigation clutter, category names, actor/voice-actor names, and non-character entries.
+- Most important characters first. Maximum 12 characters.
+- Return ONLY a JSON object, nothing else:
+{{"confident": true_or_false, "characters": [{{"name": "...", "description": "...", "role": "..."}}]}}"""
+
+
 def _build_chapter_extraction_prompt(book_title: str, req_vol: Optional[str], wiki_text: str) -> str:
     """
     Pure extraction prompt — Gemini reads TEXT WE GIVE IT and pulls out a
