@@ -19,7 +19,6 @@ Grounding-first, like every tool here:
 Self-contained module (tools do not import each other).
 """
 import hashlib
-import json
 import logging
 import math
 import os
@@ -33,6 +32,9 @@ from google.genai import types as genai_types
 
 import cache
 import gemini_client
+# Quiz core (chunking, quote-verified MCQ generation, rate limiting) moved to
+# tools/quiz_core.py so the per-BOOK quiz route (tools/quiz.py) can share it.
+from tools.quiz_core import _chunk_text, _generate_quiz, _rate_limit
 
 log = logging.getLogger("bookhub-api.tools.pdfchat")
 
@@ -42,10 +44,9 @@ router = APIRouter(prefix="/pdfchat")
 TTL_SECONDS = int(os.environ.get("PDFCHAT_TTL_SECONDS", 172800))  # 48h
 MAX_TEXT_CHARS = int(os.environ.get("PDFCHAT_MAX_TEXT_CHARS", 1_200_000))
 MIN_TEXT_CHARS = 500
-CHUNK_CHARS = 3000
+# CHUNK_CHARS / QUIZ_SAMPLE_CHUNKS now live in tools/quiz_core.py
 CHUNKS_PER_BLOCK = 64          # ~192KB JSON per key — under Upstash's ~1MB cap
 RETRIEVAL_TOP_K = 8
-QUIZ_SAMPLE_CHUNKS = 16
 QUIZ_MAX_COUNT = 10
 MAX_QUESTION_CHARS = 500
 MAX_HISTORY_TURNS = 8
@@ -111,56 +112,6 @@ def _validate_ids(doc_id: str, client_id: str) -> str:
     if not _CLIENT_ID_RE.match(client_id or ""):
         raise _err(400, "bad_request", "Invalid client id.")
     return doc_id[:32]
-
-
-def _rate_limit(kind: str, limit: int, client_id: str) -> None:
-    """Daily per-client counter. Fail-open: Redis trouble => allow."""
-    day = datetime.now(timezone.utc).strftime("%Y%m%d")
-    count = cache.incr_key(f"pdf:rl:{kind}:{day}:{client_id}", ttl=90000)
-    if count is not None and count > limit:
-        raise _err(429, "rate_limited",
-                   f"Daily {kind} limit reached ({limit}). Please come back tomorrow.",
-                   kind=kind, limit=limit)
-
-
-def _chunk_text(text: str) -> list[str]:
-    """Normalize whitespace, then greedy-pack paragraphs into ~3000-char chunks."""
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    text = re.sub(r"[^\S\n\t]+", " ", text)          # collapse spaces (keep \n\t)
-    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-
-    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-    chunks: list[str] = []
-    current = ""
-    for para in paragraphs:
-        while len(para) > CHUNK_CHARS:
-            # Oversized paragraph: split at the last sentence boundary in range.
-            cut = para.rfind(". ", 0, CHUNK_CHARS)
-            cut = cut + 1 if cut > CHUNK_CHARS // 4 else CHUNK_CHARS
-            piece, para = para[:cut].strip(), para[cut:].strip()
-            if current:
-                chunks.append(current)
-                current = ""
-            chunks.append(piece)
-        if not para:
-            continue
-        if current and len(current) + len(para) + 2 > CHUNK_CHARS:
-            chunks.append(current)
-            current = para
-        else:
-            current = f"{current}\n\n{para}" if current else para
-    if current:
-        chunks.append(current)
-
-    # Merge tiny trailing chunks into their predecessor.
-    merged: list[str] = []
-    for c in chunks:
-        if merged and len(c) < 500 and len(merged[-1]) + len(c) < CHUNK_CHARS + 600:
-            merged[-1] = f"{merged[-1]}\n\n{c}"
-        else:
-            merged.append(c)
-    return merged
 
 
 def _load_doc(did: str) -> tuple[dict, list[str]]:
@@ -305,90 +256,6 @@ CONVERSATION HISTORY:
 USER QUESTION: {question}
 
 ASSISTANT:"""
-
-
-def _normalize_for_match(s: str) -> str:
-    s = s.lower()
-    s = (s.replace("‘", "'").replace("’", "'")
-          .replace("“", '"').replace("”", '"')
-          .replace("–", "-").replace("—", "-")
-          .replace("…", "..."))
-    return re.sub(r"\s+", " ", s).strip()
-
-
-def _generate_quiz(digest: str, chunks: list[str], count: int) -> list[dict]:
-    """Generate count+3 MCQs from evenly-spread chunks, then verify quotes."""
-    n = len(chunks)
-    take = min(QUIZ_SAMPLE_CHUNKS, n)
-    indices = sorted({round(i * (n - 1) / max(take - 1, 1)) for i in range(take)})
-    sampled = {i: chunks[i] for i in indices}
-    excerpts = "\n\n".join(f"[Chunk {i}]\n{c}" for i, c in sampled.items())
-
-    prompt = f"""Create {count + 3} multiple-choice quiz questions about this book, based ONLY on the excerpts below.
-
-BOOK DIGEST:
-{digest or "(no digest)"}
-
-EXCERPTS:
-{excerpts}
-
-REQUIREMENTS for every question:
-- Answerable purely from the excerpts (no outside knowledge).
-- Exactly 4 answer options, one correct, three plausible but wrong.
-- "supporting_quote": a VERBATIM quote (max 200 characters) copied EXACTLY from one excerpt, proving the correct answer.
-- "chunk_index": the [Chunk N] number the quote came from.
-
-Return ONLY a JSON array:
-[{{"question": "...", "options": ["...","...","...","..."], "answer_index": 0, "supporting_quote": "...", "chunk_index": 0}}]"""
-    config = genai_types.GenerateContentConfig(
-        temperature=0.4, max_output_tokens=4096, response_mime_type="application/json"
-    )
-    raw = gemini_client.generate(prompt, config)
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        data = gemini_client.parse_json_response(raw)
-    if isinstance(data, dict):  # model may wrap the array
-        data = data.get("questions") or next((v for v in data.values() if isinstance(v, list)), [])
-
-    normalized_sampled = {i: _normalize_for_match(c) for i, c in sampled.items()}
-    verified: list[dict] = []
-    dropped = 0
-    for q in data if isinstance(data, list) else []:
-        if not isinstance(q, dict):
-            continue
-        options = q.get("options")
-        answer_index = q.get("answer_index")
-        quote = _normalize_for_match(str(q.get("supporting_quote", "")))
-        if (not isinstance(options, list) or len(options) != 4
-                or len({str(o).strip() for o in options}) != 4
-                or any(not str(o).strip() for o in options)
-                or not isinstance(answer_index, int) or not (0 <= answer_index <= 3)
-                or len(quote) < 15 or not q.get("question")):
-            dropped += 1
-            continue
-        # Verify the quote genuinely appears in the source chunks.
-        ci = q.get("chunk_index")
-        found_in = None
-        if isinstance(ci, int) and ci in normalized_sampled and quote in normalized_sampled[ci]:
-            found_in = ci
-        else:
-            found_in = next((i for i, nc in normalized_sampled.items() if quote in nc), None)
-        if found_in is None:
-            dropped += 1
-            continue
-        verified.append({
-            "question": str(q["question"])[:500],
-            "options": [str(o)[:300] for o in options],
-            "answer_index": answer_index,
-            "supporting_quote": str(q.get("supporting_quote", ""))[:250],
-            "chunk_index": found_in,
-        })
-        if len(verified) >= count:
-            break
-    if dropped:
-        log.info(f"Quiz verification dropped {dropped} ungrounded/malformed question(s).")
-    return verified
 
 
 # ── Endpoints ────────────────────────────────────────────────
