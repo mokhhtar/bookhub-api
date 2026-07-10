@@ -28,6 +28,7 @@ from tools import daily as daily_tool
 from tools import pdfchat as pdfchat_tool
 from tools import nyt as nyt_tool
 from tools import reader as reader_tool
+from tools import quiz as quiz_tool
 # from tools import recommend as recommend_tool   # pending rebuild
 # from tools import questions as questions_tool   # pending rebuild
 # from tools import compare as compare_tool       # pending rebuild
@@ -61,6 +62,7 @@ app.include_router(daily_tool.router, tags=["daily"])
 app.include_router(pdfchat_tool.router, tags=["pdfchat"])
 app.include_router(nyt_tool.router, tags=["nyt"])
 app.include_router(reader_tool.router, tags=["reader"])
+app.include_router(quiz_tool.router, tags=["quiz"])
 
 
 @app.get("/health")

@@ -1100,6 +1100,72 @@ def extract_characters_from_fandom(subdomain: str, book_title: str) -> list[dict
     return characters
 
 
+def fetch_fandom_quiz_text(subdomain: str, book_title: str) -> Optional[str]:
+    """
+    Grounding text for the per-book quiz: the wiki's own PLOT/RECAP prose
+    (fan-written summaries — Fandom never hosts the original novel text,
+    which is also why this is the legally safe source). Deliberately
+    on-demand and cached separately from chapter extraction: chapters run
+    on every summary view, quiz text only when someone actually asks for
+    a quiz. Returns one big text blob (quiz_core chunks it) or None.
+    """
+    cache_key = ("fandom_quiz_text_v1", subdomain, book_title)
+    cached = cache.get(*cache_key)
+    if cached is not None:
+        return cached or None
+
+    url = f"https://{subdomain}.fandom.com/api.php"
+    headers = {"User-Agent": "BookHub/1.0 (mokhhtar@github.com)"}
+
+    search_queries = [
+        f"{book_title} plot",
+        f"{book_title} synopsis",
+        "Plot",
+        "Synopsis",
+        "Story arc",
+        book_title,
+        "Volume 1",
+    ]
+    page_titles: list[str] = []
+    for q in search_queries:
+        params = {"action": "query", "list": "search", "srsearch": q, "format": "json", "srlimit": 4}
+        try:
+            r = httpx.get(url, params=params, headers=headers, timeout=3.0)
+            if r.status_code == 200:
+                for res in r.json().get("query", {}).get("search", []):
+                    t = res.get("title")
+                    if t not in page_titles:
+                        page_titles.append(t)
+        except Exception:
+            pass
+
+    MAX_TOTAL = 60_000        # ~20 chunks — plenty for 16-sample generation
+    MIN_PAGE_TEXT = 600       # skip stubs/navigation-only pages
+    parts: list[str] = []
+    total = 0
+    for page_title in page_titles[:8]:
+        if total >= MAX_TOTAL:
+            break
+        params = {"action": "parse", "page": page_title, "prop": "text", "format": "json"}
+        try:
+            r = httpx.get(url, params=params, headers=headers, timeout=4.0)
+            if r.status_code != 200:
+                continue
+            html = r.json().get("parse", {}).get("text", {}).get("*", "")
+            text = clean_wiki_html(html)
+            if len(text) < MIN_PAGE_TEXT:
+                continue
+            take = text[:MAX_TOTAL - total]
+            parts.append(f"=== Wiki page: {page_title} ===\n{take}")
+            total += len(take)
+        except Exception as e:
+            log.warning(f"Quiz-text fetch failed for page '{page_title}' on '{subdomain}': {e}")
+
+    combined = "\n\n".join(parts) if total >= 3000 else ""  # too thin → no quiz
+    cache.set(combined, *cache_key, ttl=(86400 * 7) if combined else 86400)
+    return combined or None
+
+
 def _build_character_extraction_prompt(book_title: str, wiki_text: str) -> str:
     """Pure extraction — same contract as _build_chapter_extraction_prompt:
     read ONLY the supplied text, return nothing rather than invent."""
