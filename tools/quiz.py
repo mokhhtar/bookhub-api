@@ -82,7 +82,8 @@ def quiz_book(req: BookQuizRequest, request: Request):
         else f"ip:{getattr(request.client, 'host', 'unknown')}"
     _rate_limit("bookquiz", LIMIT_BOOK_QUIZ_DAILY, client, namespace="bq")
 
-    cache_key = ("book_quiz_v1", req.title, req.author, str(req.count))
+    # v2: self-contained-question prompt + main-story-first fandom text.
+    cache_key = ("book_quiz_v2", req.title, req.author, str(req.count))
     cached = cache.get(*cache_key)
     if cached:
         return cached

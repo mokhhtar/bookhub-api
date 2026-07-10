@@ -1100,6 +1100,157 @@ def extract_characters_from_fandom(subdomain: str, book_title: str) -> list[dict
     return characters
 
 
+# Infobox fields worth showing on a character card, in display order.
+_INFOBOX_FIELDS = [
+    ("age", "Age"), ("date_of_birth", "Born"), ("sex", "Sex"),
+    ("gender", "Gender"), ("species", "Species"), ("race", "Race"),
+    ("nationality", "Nationality"), ("origin", "Origin"),
+    ("occupation", "Occupation"), ("affiliation", "Affiliation"),
+    ("status", "Status"),
+]
+
+
+def _clean_infobox_value(val: str, max_len: int = 120) -> str:
+    val = re.sub(r'<[^>]+>', ' ', val)
+    val = html_lib.unescape(val)
+    val = re.sub(r'\[\s*\d+\s*\]', '', val)          # [1] refs
+    val = re.sub(r'\[\s*Show Spoilers?\s*\]', '', val, flags=re.IGNORECASE)
+    val = re.sub(r'\s+', ' ', val).strip(' ,;')
+    return val[:max_len]
+
+
+def fetch_fandom_character_details(subdomain: str, character_name: str) -> Optional[dict]:
+    """
+    The character's own wiki page, structured: portable-infobox image +
+    whitelisted facts (age/sex/species/...) + the first real prose
+    paragraph. Pure parsing of the wiki's own data — nothing generated.
+    """
+    cache_key = ("fandom_char_details_v1", subdomain, character_name)
+    cached = cache.get(*cache_key)
+    if cached is not None:
+        return cached or None
+
+    url = f"https://{subdomain}.fandom.com/api.php"
+    headers = {"User-Agent": "BookHub/1.0 (mokhhtar@github.com)"}
+
+    # Find the character's page (exact-ish title first).
+    page_title = None
+    try:
+        r = httpx.get(url, params={"action": "query", "list": "search",
+                                   "srsearch": character_name, "format": "json", "srlimit": 5},
+                      headers=headers, timeout=4.0)
+        if r.status_code == 200:
+            want = re.sub(r"[^a-z0-9]+", " ", character_name.lower()).strip()
+            exact, partial = None, None
+            for res in r.json().get("query", {}).get("search", []):
+                t = res.get("title") or ""
+                if "/" in t:  # subpages (Image Gallery, Relationships…) never carry the infobox
+                    continue
+                got = re.sub(r"[^a-z0-9]+", " ", t.lower()).strip()
+                if got == want and not exact:
+                    exact = t
+                elif want in got and not partial:
+                    partial = t
+            page_title = exact or partial
+    except Exception as e:
+        log.warning(f"Character page search failed for '{character_name}' on '{subdomain}': {e}")
+    if not page_title:
+        cache.set({}, *cache_key, ttl=86400)
+        return None
+
+    try:
+        r = httpx.get(url, params={"action": "parse", "page": page_title,
+                                   "prop": "text", "format": "json"},
+                      headers=headers, timeout=6.0)
+        html = r.json().get("parse", {}).get("text", {}).get("*", "") if r.status_code == 200 else ""
+    except Exception as e:
+        log.warning(f"Character page fetch failed for '{page_title}' on '{subdomain}': {e}")
+        html = ""
+    if not html:
+        cache.set({}, *cache_key, ttl=86400)
+        return None
+
+    # Portable-infobox image (strip the /revision/... suffix for a clean URL).
+    image_url = None
+    m = re.search(r'<figure[^>]*pi-image[^>]*>.*?<img[^>]+src="([^"]+)"', html, re.DOTALL)
+    if m:
+        image_url = m.group(1).split("/revision/")[0]
+
+    facts = {}
+    for src, label in _INFOBOX_FIELDS:
+        fm = re.search(
+            rf'<div[^>]*class="pi-item pi-data[^"]*"[^>]*data-source="{src}"[^>]*>.*?'
+            rf'<div[^>]*pi-data-value[^>]*>(.*?)</div>',
+            html, re.DOTALL)
+        if fm:
+            val = _clean_infobox_value(fm.group(1))
+            if val and len(val) > 1:
+                facts[label] = val
+
+    # First real prose paragraph AFTER the infobox (paragraphs inside the
+    # <aside> are stat rows, not prose).
+    description = ""
+    aside_end = html.find("</aside>")
+    prose_html = html[aside_end + 8:] if aside_end != -1 else html
+    for pm in re.finditer(r'<p[^>]*>(.*?)</p>', prose_html, re.DOTALL):
+        text = _clean_infobox_value(pm.group(1), max_len=500)
+        if len(text) > 80:
+            description = text
+            break
+
+    details = {
+        "name": character_name,
+        "page": page_title,
+        "image_url": image_url,
+        "facts": facts,
+        "description": description,
+        "wiki_url": f"https://{subdomain}.fandom.com/wiki/{page_title.replace(' ', '_')}",
+        "source": "fandom",
+    }
+    cache.set(details, *cache_key)
+    return details
+
+
+class CharacterDetailsRequest(BaseModel):
+    book_title: str
+    name: str
+    wikipedia_title: str = ""
+    source: str = ""
+
+
+@router.post("/character/details")
+def character_details(req: CharacterDetailsRequest):
+    """
+    On-demand character card data — no static page needed (fixes the
+    404-on-click: the frontend expands details in place instead of
+    navigating). Fandom books → infobox facts/photo; classics → the
+    Wikipedia page summary behind the character's P674 sitelink.
+    """
+    if req.source == "wikidata" and req.wikipedia_title:
+        try:
+            import github_publisher
+            wiki = github_publisher._fetch_wikipedia_author(req.wikipedia_title, gate_re=None)
+            if wiki.get("extract"):
+                return {"found": True, "name": req.name, "source": "wikipedia",
+                        "image_url": wiki.get("photo_url") or None, "facts": {},
+                        "description": wiki["extract"][:600],
+                        "wiki_url": wiki.get("wikipedia_url") or ""}
+        except Exception as e:
+            log.warning(f"Wikipedia character details failed for '{req.name}': {e}")
+        return {"found": False}
+
+    try:
+        series_config = resolve_series_config_first(req.book_title)
+        subdomain = series_config.subdomain if series_config else resolve_fandom_subdomain(req.book_title)
+        if subdomain:
+            details = fetch_fandom_character_details(subdomain, req.name)
+            if details:
+                return {"found": True, **details}
+    except Exception as e:
+        log.warning(f"Fandom character details failed for '{req.name}': {e}")
+    return {"found": False}
+
+
 def fetch_fandom_quiz_text(subdomain: str, book_title: str) -> Optional[str]:
     """
     Grounding text for the per-book quiz: the wiki's own PLOT/RECAP prose
@@ -1109,7 +1260,8 @@ def fetch_fandom_quiz_text(subdomain: str, book_title: str) -> Optional[str]:
     on every summary view, quiz text only when someone actually asks for
     a quiz. Returns one big text blob (quiz_core chunks it) or None.
     """
-    cache_key = ("fandom_quiz_text_v1", subdomain, book_title)
+    # v2: main-story-first page ordering (v1 let side stories dominate).
+    cache_key = ("fandom_quiz_text_v2", subdomain, book_title)
     cached = cache.get(*cache_key)
     if cached is not None:
         return cached or None
@@ -1138,6 +1290,23 @@ def fetch_fandom_quiz_text(subdomain: str, book_title: str) -> Optional[str]:
                         page_titles.append(t)
         except Exception:
             pass
+
+    # Main-story pages first: quizzing readers on a side story or an
+    # author's note produces "out of context" questions (seen empirically
+    # with LOTM's "In Modern Day" side story dominating the sample).
+    def quiz_page_priority(t: str) -> int:
+        t_low = t.lower()
+        if any(x in t_low for x in ("side story", "author's note", "authors note",
+                                    "extra", "gallery", "trivia")):
+            return 5
+        if "/" in t:
+            return 4
+        if book_title.lower() in t_low or "plot" in t_low or "synopsis" in t_low:
+            return 0
+        if "volume" in t_low or "arc" in t_low:
+            return 1
+        return 2
+    page_titles.sort(key=quiz_page_priority)
 
     MAX_TOTAL = 60_000        # ~20 chunks — plenty for 16-sample generation
     MIN_PAGE_TEXT = 600       # skip stubs/navigation-only pages

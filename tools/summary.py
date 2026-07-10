@@ -1097,6 +1097,32 @@ def author_works(name: str, exclude: str = "", exclude_key: str = ""):
     if not name or name.lower() in ("unknown", "author"):
         return {"works": []}
 
+    # Fandom-cataloged series FIRST: web-novel authors are essentially
+    # invisible to Open Library (LOTM's author has "Circle of Inevitability"
+    # in our own hand-verified catalog but no usable OL record), so the
+    # catalog is the authoritative source for them.
+    catalog_works = []
+    try:
+        from tools.fandom_catalog import CATALOG_SERIES
+        a_norm = _norm_match(name)
+        seen_series = set()
+        for cfg in CATALOG_SERIES.values():
+            if not cfg.author or _norm_match(cfg.author) != a_norm:
+                continue
+            s_norm = _norm_match(cfg.series_display_name)
+            if s_norm in seen_series:
+                continue
+            seen_series.add(s_norm)
+            catalog_works.append({
+                "title": cfg.series_display_name,
+                "author": cfg.author,
+                "cover_url": cfg.cover_url or "",
+                "year": None,
+                "openlibrary_id": None,
+            })
+    except Exception as e:
+        log.warning(f"Catalog author-works lookup failed for '{name}': {e}")
+
     # v2: v1 let multi-contributor anthologies (a work misattributed to
     # every author whose story appears inside it) slip through.
     cache_key = ("author_works_v2", name)
@@ -1162,10 +1188,14 @@ def author_works(name: str, exclude: str = "", exclude_key: str = ""):
     # work under a foreign original title ("En man som heter Ove").
     ex = _norm_match(exclude)
     out = []
-    for w in cached:
+    seen_out: set = set()
+    for w in catalog_works + cached:
         if exclude_key and w.get("openlibrary_id") == exclude_key:
             continue
         wt = _norm_match(w["title"])
+        if wt in seen_out:
+            continue
+        seen_out.add(wt)
         if ex and (ex in wt or wt in ex):
             continue
         out.append(w)

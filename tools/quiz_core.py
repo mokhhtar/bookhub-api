@@ -111,6 +111,8 @@ EXCERPTS:
 
 REQUIREMENTS for every question:
 - Answerable purely from the excerpts (no outside knowledge).
+- SELF-CONTAINED: a reader who has read the book but CANNOT see these excerpts must fully understand the question. Never write "in the excerpt", "in this passage", "according to the text", "in Chunk N", or refer to any page/section structure. Name the characters, places, and events explicitly instead.
+- Prefer memorable, significant story content — major events, character motivations, relationships, settings — over incidental trivia that only makes sense right next to its source sentence.
 - Exactly 4 answer options, one correct, three plausible but wrong.
 - "supporting_quote": a VERBATIM quote (max 200 characters) copied EXACTLY from one excerpt, proving the correct answer.
 - "chunk_index": the [Chunk N] number the quote came from.
