@@ -969,8 +969,19 @@ def resolve_wikiquote_quotes(record: book_data.BookRecord, limit: int = 5) -> Op
         log.warning(f"Wikiquote parse failed for '{page}': {e}")
         return None
 
-    quotes, skip = [], False
-    for raw in wikitext.splitlines():
+    # Wikiquote's ** sub-bullets often carry the SPEAKER in a trailing
+    # parenthetical — "** p. 181 (Ahab to Starbuck)" — which we previously
+    # threw away. Captured now so quotes can be attributed/filtered by who
+    # says them (the SparkNotes-style feature). Purely parsed, never guessed:
+    # quotes with no attested speaker get "".
+    _speaker_re = re.compile(r"\(([^()]{2,60})\)\s*$")
+    _not_speakers = ("last words", "colloquy", "lit.", "translation", "narrator note")
+
+    candidates, skip = [], False  # (text, speaker) over the WHOLE page
+    lines = wikitext.splitlines()
+    for idx, raw in enumerate(lines):
+        if len(candidates) >= 60:
+            break
         line = raw.strip()
         if line.startswith("=="):
             heading = line.strip("= ").lower()
@@ -980,15 +991,33 @@ def resolve_wikiquote_quotes(record: book_data.BookRecord, limit: int = 5) -> Op
         if skip or not line.startswith("*") or line.startswith("**"):
             continue
         text = _clean_wikitext(line.lstrip("*").strip())
-        if 40 <= len(text) <= 300:
-            quotes.append(text)
-        if len(quotes) >= limit:
-            break
+        if not (40 <= len(text) <= 300):
+            continue
+        speaker = ""
+        nxt = lines[idx + 1].strip() if idx + 1 < len(lines) else ""
+        if nxt.startswith("**"):
+            m = _speaker_re.search(_clean_wikitext(nxt.lstrip("*").strip()))
+            if m:
+                cand = m.group(1).strip()
+                if not any(x in cand.lower() for x in _not_speakers):
+                    # "Ahab to Starbuck" / "Stubb, to himself…" — kept
+                    # verbatim (it IS the attribution), just capped.
+                    speaker = cand[:60]
+        candidates.append((text, speaker))
 
-    if not quotes:
+    if not candidates:
         return None
+
+    # Selection: attributed quotes are the character-defining ones and live
+    # deep in the page (dialogue chapters) — reserve up to 3 slots for them,
+    # fill the rest with the earliest narrator quotes, then restore page order.
+    attributed = [i for i, (_, s) in enumerate(candidates) if s][:3]
+    unattributed = [i for i, (_, s) in enumerate(candidates) if not s]
+    chosen = sorted(set(attributed + unattributed[:max(0, limit - len(attributed))]))[:limit]
+
     return {
-        "texts": quotes,
+        "texts": [candidates[i][0] for i in chosen],
+        "speakers": [candidates[i][1] for i in chosen],  # "" = narrator/unattested
         "source": "wikiquote",
         "source_url": f"https://en.wikiquote.org/wiki/{urllib.parse.quote(page.replace(' ', '_'))}",
         "license": "CC BY-SA",
@@ -1015,7 +1044,8 @@ def _cached_free_ebook(record: book_data.BookRecord) -> Optional[dict]:
 
 def _cached_quotes(record: book_data.BookRecord) -> Optional[dict]:
     # v2: same 30-day-negative poisoning as free_ebook_v1 above.
-    key = ("wikiquote_v2", record.title, record.author)
+    # v3: quotes gained parallel "speakers" attribution.
+    key = ("wikiquote_v3", record.title, record.author)
     hit = cache.get(*key)
     if hit is not None:
         return hit or None
