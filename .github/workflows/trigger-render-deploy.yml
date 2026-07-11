@@ -1,0 +1,31 @@
+name: Trigger Render deploy
+
+# Render's own GitHub webhook stopped delivering (auto-deploy is set to
+# "On Commit" yet pushes go unnoticed — the service sat 2 days behind main).
+# This bypasses it entirely: every push to main hits the service's Deploy
+# Hook URL, which Render treats exactly like a manual "Deploy latest commit".
+#
+# Setup (once): Render Dashboard → bookhub-api → Settings → Deploy Hook →
+# copy the URL → GitHub repo → Settings → Secrets and variables → Actions →
+# New repository secret named RENDER_DEPLOY_HOOK with that URL as the value.
+# Until the secret exists this workflow no-ops harmlessly.
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hit the Render deploy hook
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "RENDER_DEPLOY_HOOK secret not set yet — skipping (see workflow header)."
+            exit 0
+          fi
+          curl -fsS -m 30 "$HOOK" -o /dev/null
+          echo "Render deploy triggered."
