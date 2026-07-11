@@ -1628,7 +1628,11 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
             # this 30-day cached response. Both wrappers sit behind their own
             # 1h negative cache, so a book with genuinely no free edition or
             # quotes page costs at most one lookup per hour.
-            if (cached.get("free_ebook") is None or cached.get("quotes") is None
+            # Quotes cached before the speakers field shipped get refreshed
+            # too (the wikiquote_v3 sub-cache already carries speakers).
+            _q = cached.get("quotes")
+            _quotes_stale = _q is None or (isinstance(_q, dict) and "speakers" not in _q)
+            if (cached.get("free_ebook") is None or _quotes_stale
                     or cached.get("nyt") is None or cached.get("editions") is None):
                 try:
                     tmp = book_data.BookRecord(
@@ -1641,7 +1645,7 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
                         if fe:
                             cached["free_ebook"] = fe
                             healed = True
-                    if cached.get("quotes") is None:
+                    if _quotes_stale:
                         wq = _cached_quotes(tmp)
                         if wq:
                             cached["quotes"] = wq
