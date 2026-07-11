@@ -414,7 +414,8 @@ def resolve_wikidata_characters(record: book_data.BookRecord) -> Optional[list[d
     if not qid:
         return None
 
-    cache_key = ("wd_characters_v1", qid)
+    # v2: slug now derives from the canonical enwiki title (cross-book identity).
+    cache_key = ("wd_characters_v2", qid)
     cached = cache.get(*cache_key)
     if cached is not None:
         return cached or None  # [] negative marker → None
@@ -459,7 +460,10 @@ def resolve_wikidata_characters(record: book_data.BookRecord) -> Optional[list[d
             continue  # no enwiki page → no grounded bio possible → skip
         characters.append({
             "name": name,
-            "slug": slug_mod.character_slug(name),
+            # Slug from the CANONICAL enwiki title, not the listing name —
+            # "Poirot" in one book and "Hercule Poirot" in another must be
+            # ONE identity (one page, one favorites doc), not two.
+            "slug": slug_mod.character_slug(wiki_title),
             "description": ((e.get("descriptions") or {}).get("en") or {}).get("value", ""),
             "wikipedia_title": wiki_title,
             "source": "wikidata",
