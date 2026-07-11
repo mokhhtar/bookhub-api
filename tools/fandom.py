@@ -1125,7 +1125,9 @@ def fetch_fandom_character_details(subdomain: str, character_name: str) -> Optio
     whitelisted facts (age/sex/species/...) + the first real prose
     paragraph. Pure parsing of the wiki's own data — nothing generated.
     """
-    cache_key = ("fandom_char_details_v1", subdomain, character_name)
+    # v2: description skips flavor quotes/blockquotes (was returning
+    # quotations by/about the character instead of who they are).
+    cache_key = ("fandom_char_details_v2", subdomain, character_name)
     cached = cache.get(*cache_key)
     if cached is not None:
         return cached or None
@@ -1188,15 +1190,24 @@ def fetch_fandom_character_details(subdomain: str, character_name: str) -> Optio
                 facts[label] = val
 
     # First real prose paragraph AFTER the infobox (paragraphs inside the
-    # <aside> are stat rows, not prose).
+    # <aside> are stat rows, not prose). Character pages often OPEN with a
+    # flavor quote (blockquote/quote templates) — that's a quotation, not a
+    # description, so strip quote blocks and skip quote-looking paragraphs.
     description = ""
     aside_end = html.find("</aside>")
     prose_html = html[aside_end + 8:] if aside_end != -1 else html
+    prose_html = re.sub(r'<blockquote[^>]*>.*?</blockquote>', ' ', prose_html, flags=re.DOTALL)
+    prose_html = re.sub(r'<(?:table|figure)[^>]*>.*?</(?:table|figure)>', ' ', prose_html, flags=re.DOTALL)
     for pm in re.finditer(r'<p[^>]*>(.*?)</p>', prose_html, re.DOTALL):
         text = _clean_infobox_value(pm.group(1), max_len=500)
-        if len(text) > 80:
-            description = text
-            break
+        if len(text) <= 80:
+            continue
+        # Quote heuristics: opens with a quotation mark/dash, or ends with a
+        # spoken-by attribution ("— Klein", "―Amber to Sunny").
+        if text[0] in "\"'“”‘’«—―" or re.search(r'[—―–]\s*[A-Z][\w .]{1,40}$', text):
+            continue
+        description = text
+        break
 
     details = {
         "name": character_name,
