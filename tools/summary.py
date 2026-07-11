@@ -1452,6 +1452,22 @@ def _assemble_result(record: book_data.BookRecord, depth: str, summary_text: str
         book_slug, record.google_volume_id or record.isbn_13 or ""
     )
 
+    # Clean shareable URL support: /summary/?b=<share_slug> instead of the
+    # q/author/isbn/google_id/direct query soup. The slug→identifiers map
+    # lives in Redis (long TTL, refreshed on every summary); GET /resolve
+    # turns it back into an exact-edition request. Author joins the slug so
+    # same-title books by different authors don't collide.
+    a_slug = slug_mod.author_slug(record.author)
+    share_slug = "-".join(p for p in (book_slug, a_slug) if p)[:120]
+    if share_slug:
+        cache.set_key(f"urlmap:{share_slug}", {
+            "title": record.title,
+            "author": record.author,
+            "isbn": record.isbn_13,
+            "google_id": record.google_volume_id,
+            "openlibrary_id": record.open_library_work_key,
+        }, ttl=60 * 60 * 24 * 90)
+
     # Volume-specific page count from Goodreads when our sources had none
     # (fandom_series volumes deliberately carry page_count=None — the base
     # title's count applied to every volume was wrong).
@@ -1494,9 +1510,26 @@ def _assemble_result(record: book_data.BookRecord, depth: str, summary_text: str
         "nyt": extras["nyt"],
         "editions": extras["editions"],
         "characters": extras["characters"],
+        "share_slug": share_slug,
         "google_volume_id": record.google_volume_id,
         "open_library_work_key": record.open_library_work_key,
     }
+
+
+@router.get("/resolve/{share_slug}")
+def resolve_share_slug(share_slug: str):
+    """
+    Clean-URL support: turns /summary/?b=<share_slug> back into the exact
+    identifiers the original summary used. 404-shaped body (not an error)
+    when the map expired — the frontend then falls back to a title search
+    built from the slug's words.
+    """
+    if not re.fullmatch(r"[a-z0-9-]{3,120}", share_slug or ""):
+        return {"found": False}
+    m = cache.get_key(f"urlmap:{share_slug}")
+    if not isinstance(m, dict) or not m.get("title"):
+        return {"found": False}
+    return {"found": True, **m}
 
 
 # ── Route ───────────────────────────────────────────────────
