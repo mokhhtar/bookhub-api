@@ -18,8 +18,9 @@ has actually been hardened.
 import os
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 import gemini_client
 from tools import summary as summary_tool
@@ -54,6 +55,61 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
+# Compress responses >1KB (summary payloads are large HTML/JSON — typically
+# 70%+ smaller gzipped, a big win on Render's small free-tier egress).
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+
+class _NoGzipForStream:
+    """
+    Strip Accept-Encoding for the SSE route BEFORE GZipMiddleware sees it.
+    Gzip buffers streamed chunks (in the middleware and at proxies), which
+    defeats the whole point of /summary/stream — first tokens on screen in
+    seconds. Added AFTER GZipMiddleware so it wraps it (outermost runs first).
+    """
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope.get("path", "").endswith("/summary/stream"):
+            scope = dict(scope)
+            scope["headers"] = [
+                (k, v) for (k, v) in scope["headers"] if k.lower() != b"accept-encoding"
+            ]
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(_NoGzipForStream)
+
+# Browser/CDN cache windows for cacheable GET endpoints (first matching
+# prefix wins). These mirror how volatile each payload actually is; the
+# server-side Redis cache stays the source of truth — this just stops the
+# SAME browser re-downloading an identical response on every visit.
+_CACHE_RULES: list[tuple[str, int]] = [
+    ("/read/", 7 * 86400),       # public-domain book text — immutable
+    ("/resolve/", 7 * 86400),    # share-slug → book mapping — stable
+    ("/search", 86400),          # catalog search results
+    ("/author/works", 86400),    # back-catalogs are stable (server caches 30d)
+    ("/nyt/", 3600),             # weekly lists; hourly is plenty
+    ("/daily", 3600),            # day-scoped payload; re-check hourly
+]
+
+
+@app.middleware("http")
+async def _cache_headers(request: Request, call_next):
+    response = await call_next(request)
+    if (
+        request.method == "GET"
+        and response.status_code == 200
+        and "cache-control" not in response.headers
+    ):
+        path = request.url.path
+        for prefix, ttl in _CACHE_RULES:
+            if path.startswith(prefix):
+                response.headers["Cache-Control"] = f"public, max-age={ttl}"
+                break
+    return response
 
 # ── Mount each tool's router independently ─────────────────
 app.include_router(summary_tool.router, tags=["summary"])
