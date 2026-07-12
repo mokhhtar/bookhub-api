@@ -1123,6 +1123,56 @@ def _cached_editions(record: book_data.BookRecord) -> Optional[dict]:
 # AFTER the summary renders, so it never slows the main response and needs
 # no summary-cache version bump.
 
+# Broader identity gate than github_publisher._WRITER_RE: dynamic-author-page
+# visitors arrive FROM a book byline, so the person definitely wrote a book —
+# but nonfiction authors are described by profession ("psychologist and
+# economist" for Kahneman), not as "writer". Scholarly/book-adjacent
+# professions pass; athletes/actors/musicians (the classic same-name
+# collisions) still don't.
+_AUTHOR_PAGE_GATE = re.compile(
+    r"writer|novelist|author|poet|playwright|essayist|journalist|historian|"
+    r"biographer|philosopher|psycholog|econom|scientist|physicist|"
+    r"professor|academic|scholar|critic|memoirist|screenwriter",
+    re.IGNORECASE,
+)
+
+
+@router.get("/author/info")
+def author_info(name: str):
+    """
+    Wikipedia-grounded author bio/photo for the DYNAMIC author page: static
+    /authors/<slug>/ pages only exist once a book by that author has been
+    published, so every earlier author link 404s — the frontend's 404
+    fallback sends those to /authors/?a=<name>, which calls this. Grounding:
+    the writer-gate in _fetch_wikipedia_author rejects same-named
+    non-writers; when Wikipedia has no confident match we return
+    found=False and the page shows works only — never an invented bio.
+    """
+    name = (name or "").strip()
+    if not name or len(name) > 200:
+        return {"found": False}
+    cache_key = ("author_info_v1", name.lower())
+    cached = cache.get(*cache_key)
+    if cached is not None:
+        return cached
+    try:
+        wiki = github_publisher._fetch_wikipedia_author(name, gate_re=_AUTHOR_PAGE_GATE)
+    except Exception as e:
+        log.warning(f"author_info lookup failed for '{name}': {e}")
+        return {"found": False}   # transient failure — don't cache
+    result = {"found": False}
+    if wiki.get("extract"):
+        result = {
+            "found": True,
+            "name": name,
+            "bio": wiki["extract"][:1200],
+            "photo_url": wiki.get("photo_url") or "",
+            "wikipedia_url": wiki.get("wikipedia_url") or "",
+        }
+    cache.set(result, *cache_key, ttl=86400 * 30)  # bios are stable
+    return result
+
+
 @router.get("/author/works")
 def author_works(name: str, exclude: str = "", exclude_key: str = ""):
     """Up to 8 other works by this author, real catalog data only."""

@@ -90,7 +90,7 @@ _CACHE_RULES: list[tuple[str, int]] = [
     ("/read/", 7 * 86400),       # public-domain book text — immutable
     ("/resolve/", 7 * 86400),    # share-slug → book mapping — stable
     ("/search", 86400),          # catalog search results
-    ("/author/works", 86400),    # back-catalogs are stable (server caches 30d)
+    ("/author/", 86400),         # /author/works + /author/info — both stable
     ("/nyt/", 3600),             # weekly lists; hourly is plenty
     ("/daily", 3600),            # day-scoped payload; re-check hourly
 ]
