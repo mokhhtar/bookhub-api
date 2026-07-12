@@ -1,0 +1,31 @@
+name: Keep Render instance awake
+
+# Render's free tier sleeps the instance after ~15 min without traffic, and
+# the wake-up (cold start) takes 30-60s — long enough that a visitor's first
+# summary/search request looks broken. This pings /health every 10 minutes so
+# the instance simply never sleeps.
+#
+# Budget check (why this is safe to run 24/7):
+#  - GitHub Actions: this repo is PUBLIC → scheduled workflow minutes are
+#    free. Note: GitHub auto-disables schedules after 60 days without repo
+#    activity — re-enable from the Actions tab if development ever pauses.
+#  - Render free tier: 750 instance-hours/month; one service awake all
+#    month uses ~730, so continuous wakefulness fits within the free quota.
+#
+# GitHub cron can lag a few minutes under load; a 10-min cadence still stays
+# safely inside the ~15-min sleep threshold even with typical delay.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}    # manual trigger for testing
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /health (cold start can take up to ~90s)
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" -m 100 --retry 2 --retry-delay 15 \
+            "https://bookhub-api-hnv7.onrender.com/health" || echo "000")
+          echo "health returned HTTP $code"
