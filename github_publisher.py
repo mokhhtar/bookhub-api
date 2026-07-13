@@ -168,6 +168,10 @@ def _book_markdown(result: dict, book_slug: str, a_slug: str) -> str:
         f"author: {_yaml_str(result.get('author'))}",
         f"author_slug: {_yaml_str(a_slug)}",
         f"slug: {_yaml_str(book_slug)}",
+        # Edition-independent key for community data (ratings/comments/recs) —
+        # NOT the URL slug. Falls back to the URL slug if the API response
+        # predates the field. See tools/summary.py _canonical_id_from.
+        f"canonical_id: {_yaml_str(result.get('canonical_id') or book_slug)}",
         "categories: [" + ", ".join(_yaml_str(c) for c in categories) + "]",
         f"cover_url: {_yaml_str(result.get('cover_url'))}",
         f"isbn_13: {_yaml_str(result.get('isbn_13'))}",
