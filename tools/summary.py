@@ -1500,28 +1500,34 @@ Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
         return {name: f.result() for name, f in futures.items()}
 
 
-def _canonical_id_from(title: str, work_key: str) -> str:
+def _canonical_id_from(title: str, author: str) -> str:
     """
     Stable, edition-INDEPENDENT identity for community data
     (ratings / comments / recommendations / recommend-votes). Decoupled
-    from the URL `slug`, which is title-derived and therefore varies per
-    edition/subtitle/translation — keying community data on the slug would
-    fragment it across editions of the same book.
+    from the URL `slug`, which is the FULL-title slug and varies per
+    edition/subtitle — keying community data on it fragments the data
+    across editions of the same book.
 
-    Prefer the Open Library WORK key (every edition & translation of a work
-    shares it → "w-ol17930368w"). Fall back to a subtitle- and volume-
-    stripped title slug when no work key resolved (rare); this at least
-    unifies "Title" with "Title: A Subtitle". Never empty for a Latin title;
-    for a fully non-Latin title with no work key it can be "" and the caller
-    simply gets no community keyspace (acceptable edge — no data beats a
-    wrong, unshared key).
+    Formula: base-title slug + author slug (e.g. "the-great-gatsby-f-scott-
+    fitzgerald"). Deliberately NOT the Open Library work key: OL carries
+    MULTIPLE duplicate work records for popular books ("The Great Gatsby"
+    resolves to 5+ distinct /works/OL…W keys), so the work key is neither
+    canonical nor path-stable — keying on it would fragment worse than the
+    slug. Base-title + author instead is:
+      • edition/printing stable (all editions share one title+author),
+      • subtitle-insensitive (get_base_title + ':' split → "Atomic Habits"
+        and "Atomic Habits: An Easy…" collapse to the same id),
+      • author-disambiguated (two different books sharing a title don't merge),
+      • path-independent (depends only on the resolved title+author, not on
+        which catalog record a given lookup happened to hit).
+    Empty only for a fully non-Latin title (slug folds to "") — caller then
+    gets no community keyspace (acceptable edge).
     """
-    wk = (work_key or "").strip("/").replace("works/", "").strip().lower()
-    if wk:
-        return "w-" + wk
     base = (title or "").split(":")[0]
     base = book_data.get_base_title(base) or base
-    return slug_mod.book_slug(base) or slug_mod.book_slug(title or "")
+    t = slug_mod.book_slug(base) or slug_mod.book_slug(title or "")
+    a = slug_mod.author_slug(author or "")
+    return "-".join(p for p in (t, a) if p)
 
 
 def _assemble_result(record: book_data.BookRecord, depth: str, summary_text: str, extras: dict) -> dict:
@@ -1567,7 +1573,7 @@ def _assemble_result(record: book_data.BookRecord, depth: str, summary_text: str
         "slug": actual_slug,
         # Edition-independent key for community data (ratings/comments/recs) —
         # NOT the URL slug. See _canonical_id_from.
-        "canonical_id": _canonical_id_from(record.title, record.open_library_work_key),
+        "canonical_id": _canonical_id_from(record.title, record.author),
         # True only once the static page was published >5 min ago (rebuild
         # buffer) — gates the frontend's history.replaceState to the clean URL.
         "static_page": static_ready,
@@ -1687,7 +1693,7 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
             # existed, so ratings/comments/recs land under the stable id.
             if not cached.get("canonical_id"):
                 cached["canonical_id"] = _canonical_id_from(
-                    cached.get("title", ""), cached.get("open_library_work_key", ""))
+                    cached.get("title", ""), cached.get("author", ""))
 
             # Self-heal ratings/page_count: a past Goodreads throttle (common
             # from Render's datacenter IP) can leave these empty in an otherwise
