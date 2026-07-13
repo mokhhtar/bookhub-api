@@ -1500,6 +1500,30 @@ Return ONLY JSON: {{"categories": ["slug1", "slug2"]}}"""
         return {name: f.result() for name, f in futures.items()}
 
 
+def _canonical_id_from(title: str, work_key: str) -> str:
+    """
+    Stable, edition-INDEPENDENT identity for community data
+    (ratings / comments / recommendations / recommend-votes). Decoupled
+    from the URL `slug`, which is title-derived and therefore varies per
+    edition/subtitle/translation — keying community data on the slug would
+    fragment it across editions of the same book.
+
+    Prefer the Open Library WORK key (every edition & translation of a work
+    shares it → "w-ol17930368w"). Fall back to a subtitle- and volume-
+    stripped title slug when no work key resolved (rare); this at least
+    unifies "Title" with "Title: A Subtitle". Never empty for a Latin title;
+    for a fully non-Latin title with no work key it can be "" and the caller
+    simply gets no community keyspace (acceptable edge — no data beats a
+    wrong, unshared key).
+    """
+    wk = (work_key or "").strip("/").replace("works/", "").strip().lower()
+    if wk:
+        return "w-" + wk
+    base = (title or "").split(":")[0]
+    base = book_data.get_base_title(base) or base
+    return slug_mod.book_slug(base) or slug_mod.book_slug(title or "")
+
+
 def _assemble_result(record: book_data.BookRecord, depth: str, summary_text: str, extras: dict) -> dict:
     book_slug = slug_mod.book_slug(record.title)
     static_ready, actual_slug = github_publisher.resolve_published(
@@ -1541,6 +1565,9 @@ def _assemble_result(record: book_data.BookRecord, depth: str, summary_text: str
         "category": record.primary_category,
         "categories": extras["categories"],
         "slug": actual_slug,
+        # Edition-independent key for community data (ratings/comments/recs) —
+        # NOT the URL slug. See _canonical_id_from.
+        "canonical_id": _canonical_id_from(record.title, record.open_library_work_key),
         # True only once the static page was published >5 min ago (rebuild
         # buffer) — gates the frontend's history.replaceState to the clean URL.
         "static_page": static_ready,
@@ -1656,6 +1683,11 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
             cached["static_page"] = ready
             if not cached.get("author_slug"):
                 cached["author_slug"] = slug_mod.author_slug(cached.get("author", ""))
+            # Backfill the community-data key for responses cached before it
+            # existed, so ratings/comments/recs land under the stable id.
+            if not cached.get("canonical_id"):
+                cached["canonical_id"] = _canonical_id_from(
+                    cached.get("title", ""), cached.get("open_library_work_key", ""))
 
             # Self-heal ratings/page_count: a past Goodreads throttle (common
             # from Render's datacenter IP) can leave these empty in an otherwise
