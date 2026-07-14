@@ -234,6 +234,16 @@ COMPANION_KEYWORDS = [
     "calendar", "fanbook", "fan book", "artbook", "art book",
     "official guide", "guide book", "short story collection",
     "side story", "spin-off", "companion", "illustration",
+    # Third-party STUDY AIDS that ride a popular book's title — workbooks,
+    # unofficial summaries, trackers, trivia. Almost never the book the user
+    # wants to summarize; they flood results for bestsellers (e.g. dozens of
+    # "Summary of / Workbook for Atomic Habits"). Filtered from search AND
+    # resolution — unless the query itself names one (see query_is_companion).
+    "workbook", "tracker", "study guide", "summary of", "summary :",
+    "summary:", "analysis of", "conversation starters", "trivia",
+    "key takeaways", "book summary",
+    # Blank-book merch riding a title (journals/diaries/notebooks/coloring).
+    "journal", "diary", "notebook", "coloring book", "colouring book",
 ]
 
 
@@ -1411,7 +1421,7 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
     query_for_search = normalize_book_query(query_clean)
 
     results = []
-    seen = set()
+    seen = {}  # normalized "title|author" -> index in results (for cover upgrade)
 
     # If the user's own query names a companion item (e.g. "... Fanbook 2"),
     # don't filter it out — they're explicitly looking for it.
@@ -1444,27 +1454,35 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
         title_norm = re.sub(r'[^a-z0-9]', '', title.lower())
         author_norm = re.sub(r'[^a-z0-9]', '', author.lower()) if author else ""
         key = f"{title_norm}|{author_norm}"
-        if key not in seen:
-            seen.add(key)
-            entry = {
-                "title": title,
-                "author": author,
-                "cover_url": cover_url,
-                "isbn_10": isbn_10,
-                "isbn_13": isbn_13,
-                "published_year": published_year,
-                "google_id": google_id,
-                "openlibrary_id": openlibrary_id,
-                "bookwyrm_id": bookwyrm_id,
-                "source": source,
-            }
-            if fandom_series_key:
-                entry["fandom_series_key"] = fandom_series_key
-            if fandom_wiki_page:
-                entry["fandom_wiki_page"] = fandom_wiki_page
-            if fandom_volume_number is not None:
-                entry["fandom_volume_number"] = fandom_volume_number
-            results.append(entry)
+        entry = {
+            "title": title,
+            "author": author,
+            "cover_url": cover_url,
+            "isbn_10": isbn_10,
+            "isbn_13": isbn_13,
+            "published_year": published_year,
+            "google_id": google_id,
+            "openlibrary_id": openlibrary_id,
+            "bookwyrm_id": bookwyrm_id,
+            "source": source,
+        }
+        if fandom_series_key:
+            entry["fandom_series_key"] = fandom_series_key
+        if fandom_wiki_page:
+            entry["fandom_wiki_page"] = fandom_wiki_page
+        if fandom_volume_number is not None:
+            entry["fandom_volume_number"] = fandom_volume_number
+        if key in seen:
+            # Same title+author already listed (Google + Open Library often
+            # both return it). Upgrade the shown one to the edition that has a
+            # cover if the first didn't — the covered edition reads as the
+            # "real" book to the user.
+            idx = seen[key]
+            if cover_url and not results[idx].get("cover_url"):
+                results[idx] = entry
+            return
+        seen[key] = len(results)
+        results.append(entry)
 
     # ── Tier 1: Fandom Wiki Search ──
     fandom_found = False
@@ -1799,7 +1817,26 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
                 
         if not is_duplicate:
             deduped_results.append(item)
-            
+
+    # Knockoff pass: bestsellers attract cover-less clones under the exact
+    # same title by obscure different authors (Open Library is full of them —
+    # "Atomic Habits" by "Dan Builfford", etc.). The edition-dedup above keeps
+    # them because authors_match() is false. When a base title already has a
+    # COVERED edition, drop its cover-less same-title siblings. Series volumes
+    # (distinct volume number) and fandom results are never touched.
+    def _is_plain(it):
+        return it.get("source") != "fandom" and extract_volume_number(it.get("title", "")) is None
+    def _knock_base(it):  # subtitle- and volume-stripped, matches canonical_id logic
+        return get_base_title(it.get("title", "").split(":")[0])
+    covered_bases = {
+        _knock_base(it)
+        for it in deduped_results if _is_plain(it) and it.get("cover_url")
+    }
+    deduped_results = [
+        it for it in deduped_results
+        if not (_is_plain(it) and not it.get("cover_url") and _knock_base(it) in covered_bases)
+    ]
+
     # Sort the deduplicated results by match score in descending order
     deduped_results.sort(key=get_match_score, reverse=True)
     return deduped_results[:limit]
