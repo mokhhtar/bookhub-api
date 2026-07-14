@@ -1530,6 +1530,18 @@ def _canonical_id_from(title: str, author: str) -> str:
     return "-".join(p for p in (t, a) if p)
 
 
+def _refresh_canonical(cached: dict) -> None:
+    """
+    Recompute the community-data key on a cached summary IN PLACE. Applied
+    on every cached read (both /summary and /summary/stream) — it's a pure,
+    cheap function of title+author, so a formula change reaches already-
+    cached responses without a cache-version bump (Gemini regeneration).
+    """
+    if isinstance(cached, dict) and cached.get("found"):
+        cached["canonical_id"] = _canonical_id_from(
+            cached.get("title", ""), cached.get("author", ""))
+
+
 def _assemble_result(record: book_data.BookRecord, depth: str, summary_text: str, extras: dict) -> dict:
     book_slug = slug_mod.book_slug(record.title)
     static_ready, actual_slug = github_publisher.resolve_published(
@@ -1689,12 +1701,7 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
             cached["static_page"] = ready
             if not cached.get("author_slug"):
                 cached["author_slug"] = slug_mod.author_slug(cached.get("author", ""))
-            # (Re)compute the community-data key on every read — it's a pure,
-            # cheap function of title+author, so recomputing (rather than a
-            # cache-version bump that would force Gemini regeneration) lets a
-            # change to the formula propagate to already-cached responses.
-            cached["canonical_id"] = _canonical_id_from(
-                cached.get("title", ""), cached.get("author", ""))
+            _refresh_canonical(cached)  # keep the community key formula-current
 
             # Self-heal ratings/page_count: a past Goodreads throttle (common
             # from Render's datacenter IP) can leave these empty in an otherwise
@@ -1836,6 +1843,7 @@ def summary_stream(req: SummaryRequest, background_tasks: BackgroundTasks):
                      req.google_id, req.openlibrary_id, req.bookwyrm_id, req.language)
         cached = cache.get(*cache_key)
         if cached:
+            _refresh_canonical(cached)  # classic route self-heals this too
             yield sse({"done": cached})
             return
 
