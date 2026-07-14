@@ -1776,6 +1776,13 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
                         cache.set(cached, *cache_key)  # persist the heal
                 except Exception as e:
                     log.warning(f"Free-ebook/quotes/nyt self-heal failed for '{cached.get('title')}': {e}")
+
+            # Refresh the static page on VIEW, not just on regeneration: a page
+            # published in an older content format gets rewritten by
+            # publish_book (version-gated → a cheap Redis-flag no-op once the
+            # page is current). Runs in the background; never blocks the read.
+            if github_publisher.is_enabled() and req.language == "en":
+                background_tasks.add_task(github_publisher.publish_book, cached)
         return cached
 
     record = book_data.resolve_book(req.title, req.author, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
@@ -1844,6 +1851,11 @@ def summary_stream(req: SummaryRequest, background_tasks: BackgroundTasks):
         cached = cache.get(*cache_key)
         if cached:
             _refresh_canonical(cached)  # classic route self-heals this too
+            # Refresh a stale-format static page on view (version-gated; cheap
+            # no-op once current). Background task runs after the stream ends.
+            if isinstance(cached, dict) and cached.get("found") \
+                    and github_publisher.is_enabled() and req.language == "en":
+                background_tasks.add_task(github_publisher.publish_book, cached)
             yield sse({"done": cached})
             return
 

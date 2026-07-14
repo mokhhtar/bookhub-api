@@ -63,6 +63,16 @@ _CHAPTER_NUM_RE = re.compile(
 # public page — not a quality bar, just a "did this actually work" guard.
 MIN_SUMMARY_CHARS = 300
 
+# Content-format version for BOOK pages. Bump when _book_markdown starts
+# emitting materially richer front-matter/body, so already-published pages
+# (create-only otherwise) get REWRITTEN with the new content on the next
+# summarize instead of staying frozen at an old, sparse format forever.
+# History:
+#   1 — implicit original format (pre-versioning: description-only body,
+#       none of chapters/quotes/similar/characters/awards/themes)
+#   2 — full summary body + enriched front-matter + canonical_id
+PUBLISH_CONTENT_VERSION = 2
+
 
 def is_enabled() -> bool:
     return PUBLISH_ENABLED and bool(GITHUB_PAT)
@@ -74,18 +84,18 @@ def _contents_url(path: str) -> str:
     return f"{GITHUB_API}/repos/{GITHUB_REPO}/contents/{urllib.parse.quote(path)}"
 
 
-def _file_exists(path: str) -> tuple[bool, str]:
-    """Returns (exists, decoded_content). decoded_content only on exists=True."""
+def _file_exists(path: str) -> tuple[bool, str, str]:
+    """Returns (exists, decoded_content, blob_sha). content/sha only on exists."""
     try:
         r = httpx.get(_contents_url(path), headers=_HEADERS,
                       params={"ref": GITHUB_BRANCH}, timeout=10.0)
         if r.status_code == 200:
             data = r.json()
             content = base64.b64decode(data.get("content", "") or "").decode("utf-8", errors="replace")
-            return True, content
+            return True, content, data.get("sha", "") or ""
     except Exception as e:
         log.warning(f"Contents GET failed for '{path}': {e}")
-    return False, ""
+    return False, "", ""
 
 
 def _create_file(path: str, content: str, message: str) -> bool:
@@ -107,6 +117,39 @@ def _create_file(path: str, content: str, message: str) -> bool:
     except Exception as e:
         log.warning(f"Contents PUT failed for '{path}': {e}")
     return False
+
+
+def _update_file(path: str, content: str, message: str, sha: str) -> bool:
+    """
+    Overwrite an existing file (PUT WITH its blob sha). Used only to refresh
+    a stale-format book page in place. Returns True on success. Deliberately
+    separate from _create_file so overwriting is always an explicit choice —
+    only version-gated republish (below) ever calls it.
+    """
+    try:
+        payload = {
+            "message": message,
+            "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+            "branch": GITHUB_BRANCH,
+            "sha": sha,
+        }
+        r = httpx.put(_contents_url(path), headers=_HEADERS, json=payload, timeout=10.0)
+        if r.status_code in (200, 201):
+            return True
+        log.warning(f"Contents update PUT failed ({r.status_code}) for '{path}': {r.text[:200]}")
+    except Exception as e:
+        log.warning(f"Contents update PUT failed for '{path}': {e}")
+    return False
+
+
+_CONTENT_VERSION_RE = re.compile(r"^content_version:\s*(\d+)", re.MULTILINE)
+
+
+def _page_content_version(markdown: str) -> int:
+    """Parse `content_version:` from a page's front-matter. Absent → 1 (the
+    original pre-versioning format)."""
+    m = _CONTENT_VERSION_RE.search(markdown or "")
+    return int(m.group(1)) if m else 1
 
 
 # ── Front-matter emission ────────────────────────────────────
@@ -164,6 +207,9 @@ def _book_markdown(result: dict, book_slug: str, a_slug: str) -> str:
     lines = [
         "---",
         "layout: book",
+        # Content-format version — drives version-gated republish of stale
+        # pages (see PUBLISH_CONTENT_VERSION / publish_book).
+        f"content_version: {PUBLISH_CONTENT_VERSION}",
         f"title: {_yaml_str(result.get('title'))}",
         f"author: {_yaml_str(result.get('author'))}",
         f"author_slug: {_yaml_str(a_slug)}",
@@ -295,28 +341,43 @@ def publish_book(result: dict) -> None:
             return
         gid = result.get("google_volume_id") or result.get("isbn_13") or ""
 
-        # Dedupe layer 1: Redis flags.
-        if gid and cache.get_key(f"published_gid:{gid}"):
+        # Dedupe layer 1: Redis flags — but only trust a flag that records a
+        # content version AT LEAST the current one. A stale-version (or pre-
+        # versioning) flag falls through to the repo check, which rewrites.
+        if gid and _flag_is_current(cache.get_key(f"published_gid:{gid}")):
             return
-        if cache.get_key(f"published:{book_slug}"):
+        if _flag_is_current(cache.get_key(f"published:{book_slug}")):
             return
 
         a_slug = slug_mod.author_slug(result.get("author") or "")
 
         # Dedupe layer 2 + collision handling: the repo itself.
         path = f"_books/{book_slug}.md"
-        exists, content = _file_exists(path)
+        exists, content, sha = _file_exists(path)
         if exists:
-            if gid and gid in content:
+            if (gid and gid in content) or _same_book(content, title, a_slug):
+                # Same book already published. Refresh it in place only if its
+                # content format is older than the current version; otherwise
+                # it's up to date.
+                if _page_content_version(content) < PUBLISH_CONTENT_VERSION:
+                    md = _book_markdown(result, book_slug, a_slug)
+                    if _update_file(path, md,
+                                    f"Refresh book page to v{PUBLISH_CONTENT_VERSION}: {title}", sha):
+                        log.info(f"Refreshed stale book page ({path}) to v{PUBLISH_CONTENT_VERSION}")
                 _mark_published(book_slug, gid)
-                return  # same book already published
+                return
             # Different book shares the slug — suffix with author, then -2.
             for candidate in (f"{book_slug}-{a_slug}", f"{book_slug}-2"):
                 if not candidate:
                     continue
-                c_exists, c_content = _file_exists(f"_books/{candidate}.md")
+                c_exists, c_content, c_sha = _file_exists(f"_books/{candidate}.md")
                 if c_exists:
-                    if gid and gid in c_content:
+                    if (gid and gid in c_content) or _same_book(c_content, title, a_slug):
+                        if _page_content_version(c_content) < PUBLISH_CONTENT_VERSION:
+                            md = _book_markdown(result, candidate, a_slug)
+                            if _update_file(f"_books/{candidate}.md", md,
+                                            f"Refresh book page to v{PUBLISH_CONTENT_VERSION}: {title}", c_sha):
+                                log.info(f"Refreshed stale book page (_books/{candidate}.md)")
                         _mark_published(candidate, gid)
                         return
                     continue
@@ -334,11 +395,34 @@ def publish_book(result: dict) -> None:
         log.warning(f"publish_book failed (non-fatal): {e}")
 
 
+def _flag_is_current(flag) -> bool:
+    """A published:* / published_gid:* flag counts as 'done' only if it records
+    a content version >= the current one. Absent flag or a pre-versioning flag
+    (no 'v', treated as 1) is stale → allow the repo check to refresh."""
+    return isinstance(flag, dict) and flag.get("v", 1) >= PUBLISH_CONTENT_VERSION
+
+
+def _same_book(content: str, title: str, a_slug: str) -> bool:
+    """Is an existing page the SAME book (not just a slug collision)? Matches
+    when its front-matter title + author_slug both equal this book's — the
+    reliable signal when there's no google/isbn id to compare (front-matter
+    values are json.dumps'd, so json.loads round-trips them)."""
+    try:
+        tm = re.search(r'^title:\s*(.+)$', content, re.MULTILINE)
+        am = re.search(r'^author_slug:\s*(.+)$', content, re.MULTILINE)
+        t = json.loads(tm.group(1)) if tm else ""
+        a = json.loads(am.group(1)) if am else ""
+        return bool(t) and t.strip().lower() == (title or "").strip().lower() and a == a_slug
+    except Exception:
+        return False
+
+
 def _mark_published(book_slug: str, gid: str) -> None:
     ts = datetime.now(timezone.utc).timestamp()
-    cache.set_key(f"published:{book_slug}", {"gid": gid, "ts": ts})
+    v = PUBLISH_CONTENT_VERSION
+    cache.set_key(f"published:{book_slug}", {"gid": gid, "ts": ts, "v": v})
     if gid:
-        cache.set_key(f"published_gid:{gid}", {"slug": book_slug, "ts": ts})
+        cache.set_key(f"published_gid:{gid}", {"slug": book_slug, "ts": ts, "v": v})
 
 
 def _character_markdown(character: dict, photo_url: str, wikipedia_url: str,
@@ -388,7 +472,7 @@ def publish_character(character: dict, book_title: str, book_slug: str) -> None:
         if cache.get_key(f"published_character:{c_slug}"):
             return
         path = f"_characters/{c_slug}.md"
-        exists, _ = _file_exists(path)
+        exists, _, _ = _file_exists(path)
         if exists:
             cache.set_key(f"published_character:{c_slug}", {"ts": datetime.now(timezone.utc).timestamp()})
             return
@@ -442,7 +526,7 @@ def publish_author(name: str, book_title: str) -> None:
         if cache.get_key(f"published_author:{a_slug}"):
             return
         path = f"_authors/{a_slug}.md"
-        exists, _ = _file_exists(path)
+        exists, _, _ = _file_exists(path)
         if exists:
             cache.set_key(f"published_author:{a_slug}", {"ts": datetime.now(timezone.utc).timestamp()})
             return
