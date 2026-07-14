@@ -1689,11 +1689,12 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
             cached["static_page"] = ready
             if not cached.get("author_slug"):
                 cached["author_slug"] = slug_mod.author_slug(cached.get("author", ""))
-            # Backfill the community-data key for responses cached before it
-            # existed, so ratings/comments/recs land under the stable id.
-            if not cached.get("canonical_id"):
-                cached["canonical_id"] = _canonical_id_from(
-                    cached.get("title", ""), cached.get("author", ""))
+            # (Re)compute the community-data key on every read — it's a pure,
+            # cheap function of title+author, so recomputing (rather than a
+            # cache-version bump that would force Gemini regeneration) lets a
+            # change to the formula propagate to already-cached responses.
+            cached["canonical_id"] = _canonical_id_from(
+                cached.get("title", ""), cached.get("author", ""))
 
             # Self-heal ratings/page_count: a past Goodreads throttle (common
             # from Render's datacenter IP) can leave these empty in an otherwise
