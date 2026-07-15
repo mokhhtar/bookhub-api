@@ -38,7 +38,7 @@ from tools import quiz as quiz_tool
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("bookhub-api")
 
-app = FastAPI(title="BookHub API", version="2.0.0")
+app = FastAPI(title="Litheca API", version="2.0.0")
 
 raw_origins = os.environ.get("ALLOWED_ORIGINS", "*")
 if not raw_origins or raw_origins.strip() in ("", "*"):
@@ -154,7 +154,7 @@ def list_models():
 @app.get("/")
 def root():
     return {
-        "name": "BookHub API",
+        "name": "Litheca API",
         "version": "2.0.0",
         "active_endpoints": ["/summary", "/daily", "/pdfchat/check", "/pdfchat/ingest", "/pdfchat/chat", "/pdfchat/quiz", "/fandom/resolve", "/fandom/universe", "/health", "/models"],
         "note": "Other tools (recommend, questions, compare) are being rebuilt "
