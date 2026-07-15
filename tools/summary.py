@@ -66,7 +66,11 @@ def search_books(q: str, offset: int = 0):
     query_clean = q.strip().lower()
     if not query_clean:
         return []
-    cache_key = ("search", query_clean, str(offset))
+    # search_v2: bumped when search_books_list dropped derivative/knockoff
+    # clutter (workbooks, summaries, journals, cover-less same-title clones).
+    # The old unversioned "search" key cached dirty results for 7 days, so the
+    # dedup fix stayed masked until this bump orphaned those entries.
+    cache_key = ("search_v2", query_clean, str(offset))
     cached = cache.get(*cache_key)
     if cached is not None:
         return cached
