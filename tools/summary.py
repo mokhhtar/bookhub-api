@@ -70,7 +70,9 @@ def search_books(q: str, offset: int = 0):
     # clutter (workbooks, summaries, journals, cover-less same-title clones).
     # The old unversioned "search" key cached dirty results for 7 days, so the
     # dedup fix stayed masked until this bump orphaned those entries.
-    cache_key = ("search_v2", query_clean, str(offset))
+    # search_v3: authors_match now merges same-primary-author editions
+    # (translator/illustrator co-credits split "1984" into duplicate rows).
+    cache_key = ("search_v3", query_clean, str(offset))
     cached = cache.get(*cache_key)
     if cached is not None:
         return cached

@@ -1711,6 +1711,14 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
         a2_norm = re.sub(r'[^a-z0-9]', '', a2.lower())
         if a1_norm == a2_norm or a1_norm in a2_norm or a2_norm in a1_norm:
             return True
+        # Same PRIMARY author ⇒ same work: translated/illustrated editions
+        # list co-contributors ("George Orwell, Amélie Audiberti" vs
+        # "George Orwell, Fido Nesti"), which made the full-string checks
+        # fail and left duplicate same-title rows in results.
+        p1 = re.sub(r'[^a-z0-9]', '', a1.lower().split(',')[0])
+        p2 = re.sub(r'[^a-z0-9]', '', a2.lower().split(',')[0])
+        if p1 and p1 == p2:
+            return True
         w1 = set(w for w in re.findall(r'[a-z]+', a1.lower()) if len(w) > 2)
         w2 = set(w for w in re.findall(r'[a-z]+', a2.lower()) if len(w) > 2)
         if w1 and w2 and len(w1.intersection(w2)) >= min(len(w1), len(w2)) - 1:
@@ -1812,7 +1820,18 @@ def search_books_list(query: str, limit: int = 54, offset: int = 0) -> list[dict
                 # Prefer longer/more detailed title representation
                 if len(title) > len(ex_title):
                     existing["title"] = title
-                    
+
+                # Cleaner author credit: merged editions usually differ only
+                # by translator/illustrator co-credits ("George Orwell,
+                # Amélie Audiberti" vs "…, Fido Nesti"). When the primary
+                # authors are the same, display that shared primary rather
+                # than one edition's co-credit list.
+                if author and ex_author and "," in ex_author:
+                    p_new = re.sub(r'[^a-z0-9]', '', author.lower().split(',')[0])
+                    p_ex = re.sub(r'[^a-z0-9]', '', ex_author.lower().split(',')[0])
+                    if p_new and p_new == p_ex:
+                        existing["author"] = ex_author.split(",")[0].strip()
+
                 break
                 
         if not is_duplicate:
