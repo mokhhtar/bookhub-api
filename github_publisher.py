@@ -71,7 +71,9 @@ MIN_SUMMARY_CHARS = 300
 #   1 — implicit original format (pre-versioning: description-only body,
 #       none of chapters/quotes/similar/characters/awards/themes)
 #   2 — full summary body + enriched front-matter + canonical_id
-PUBLISH_CONTENT_VERSION = 2
+# v3: free-ebook pages emit noindex:false + sitemap:true (indexing earned by
+# the standalone free-book value; everything else stays gated).
+PUBLISH_CONTENT_VERSION = 3
 
 
 def is_enabled() -> bool:
@@ -239,6 +241,12 @@ def _book_markdown(result: dict, book_slug: str, a_slug: str) -> str:
         f"themes: {_yaml_json(themes)}",
         f"reading_level: {_yaml_str(result.get('reading_level'))}",
         f"free_ebook: {_yaml_json(result.get('free_ebook'))}",
+        # Deferred-indexing policy: generated pages ship noindex by default
+        # (Jekyll collection defaults in the bookhub repo). Pages that offer
+        # a FREE readable/downloadable book carry standalone user value
+        # beyond the AI text, so they earn indexing immediately — page-level
+        # front matter overrides the collection default.
+        *(["noindex: false", "sitemap: true"] if result.get("free_ebook") else []),
         f"quotes: {_yaml_json(result.get('quotes'))}",
         f"nyt: {_yaml_json(result.get('nyt'))}",
         f"editions: {_yaml_json(result.get('editions'))}",
