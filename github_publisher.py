@@ -246,7 +246,11 @@ def _book_markdown(result: dict, book_slug: str, a_slug: str) -> str:
         # a FREE readable/downloadable book carry standalone user value
         # beyond the AI text, so they earn indexing immediately — page-level
         # front matter overrides the collection default.
-        *(["noindex: false", "sitemap: true"] if result.get("free_ebook") else []),
+        # PROJECT GUTENBERG ONLY: Internet Archive "free" books are scanned
+        # page images (no real text/download value), so they don't qualify.
+        *(["noindex: false", "sitemap: true"]
+          if (result.get("free_ebook") or {}).get("source") == "project_gutenberg"
+          else []),
         f"quotes: {_yaml_json(result.get('quotes'))}",
         f"nyt: {_yaml_json(result.get('nyt'))}",
         f"editions: {_yaml_json(result.get('editions'))}",
