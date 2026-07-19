@@ -74,6 +74,59 @@ def _quiz_from_gutenberg(record: book_data.BookRecord, count: int) -> list[dict]
     return questions or None
 
 
+def generate_static_quiz(title: str, free_ebook: dict | None, count: int = 6) -> dict | None:
+    """
+    Publish-time quiz generation for the STATIC book page — same verified
+    pipeline as POST /quiz/book above, but decoupled from book_data.BookRecord:
+    github_publisher._book_markdown() already has `free_ebook` resolved (it's
+    already a front-matter field) and has no BookRecord on hand, so this takes
+    the plain values it already has instead of re-resolving one.
+
+    Runs inside publish_book(), itself a FastAPI BackgroundTask — the extra
+    Gemini round-trip here does not add latency to the user-facing request.
+
+    Gutenberg-first, Fandom-fallback — same order/logic as quiz_book(). No
+    grounding text found in either → None (no data beats wrong data; the
+    static page simply omits the Quiz section, same as it omits any other
+    ungrounded field).
+    """
+    from tools.reader import get_full_text_pages
+
+    if free_ebook and free_ebook.get("source") == "project_gutenberg":
+        try:
+            gid = int(free_ebook.get("gutenberg_id"))
+        except (TypeError, ValueError):
+            gid = None
+        if gid:
+            pages = get_full_text_pages(gid)
+            if pages:
+                chunks = _chunk_text("\n\n".join(pages))
+                digest = f'"{title}" — original full text (Project Gutenberg).'
+                questions = _generate_quiz(digest, chunks, count) or _generate_quiz(digest, chunks, count)
+                if questions:
+                    return {"source": "gutenberg_text", "questions": questions}
+
+    from tools.fandom import (
+        resolve_series_config_first,
+        resolve_fandom_subdomain,
+        fetch_fandom_quiz_text,
+    )
+    series_config = resolve_series_config_first(title)
+    subdomain = series_config.subdomain if series_config else resolve_fandom_subdomain(title)
+    if subdomain:
+        text = fetch_fandom_quiz_text(subdomain, title)
+        if text:
+            chunks = _chunk_text(text)
+            if len(chunks) >= 2:  # a stub page can't ground a fair quiz
+                digest = (f'"{title}" — story-wiki chapter summaries (fan-written recaps, '
+                          f'not the original prose).')
+                questions = _generate_quiz(digest, chunks, count) or _generate_quiz(digest, chunks, count)
+                if questions:
+                    return {"source": "fandom_summary", "questions": questions}
+
+    return None
+
+
 @router.post("/quiz/book")
 def quiz_book(req: BookQuizRequest, request: Request):
     # Own quota surface (shared per-book cache, many users per book) —

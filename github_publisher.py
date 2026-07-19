@@ -73,7 +73,9 @@ MIN_SUMMARY_CHARS = 300
 #   2 — full summary body + enriched front-matter + canonical_id
 # v3: free-ebook pages emit noindex:false + sitemap:true (indexing earned by
 # the standalone free-book value; everything else stays gated).
-PUBLISH_CONTENT_VERSION = 3
+# v4: pre-generated, quote-verified quiz (Gutenberg/Fandom-grounded) baked
+# into the static page at publish time — `quiz` + `quiz_source` fields.
+PUBLISH_CONTENT_VERSION = 4
 
 
 def is_enabled() -> bool:
@@ -206,6 +208,19 @@ def _book_markdown(result: dict, book_slug: str, a_slug: str) -> str:
     ratings = result.get("ratings")  # dict or None
     themes = result.get("themes") or []
 
+    # Quiz — same verified pipeline as POST /quiz/book, run once here so the
+    # static page never needs a live API call. Gutenberg/Fandom-grounded
+    # only (see tools.quiz.generate_static_quiz); no grounding text → None,
+    # and the static page simply omits the Quiz section.
+    quiz_questions, quiz_source = None, None
+    try:
+        from tools.quiz import generate_static_quiz
+        quiz_result = generate_static_quiz(result.get("title") or "", result.get("free_ebook"))
+        if quiz_result:
+            quiz_questions, quiz_source = quiz_result["questions"], quiz_result["source"]
+    except Exception as e:
+        log.warning(f"Static quiz generation failed for '{result.get('title')}': {e}")
+
     lines = [
         "---",
         "layout: book",
@@ -252,6 +267,8 @@ def _book_markdown(result: dict, book_slug: str, a_slug: str) -> str:
           if (result.get("free_ebook") or {}).get("source") == "project_gutenberg"
           else []),
         f"quotes: {_yaml_json(result.get('quotes'))}",
+        f"quiz: {_yaml_json(quiz_questions)}",
+        f"quiz_source: {_yaml_str(quiz_source)}",
         f"nyt: {_yaml_json(result.get('nyt'))}",
         f"editions: {_yaml_json(result.get('editions'))}",
         "characters: " + _yaml_json([
