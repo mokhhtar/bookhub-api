@@ -59,6 +59,11 @@ class SearchResponseItem(BaseModel):
     openlibrary_id: Optional[str] = None
     bookwyrm_id: Optional[str] = None
     source: Optional[str] = None
+    # Set only when this exact book's static page is confirmably live —
+    # the frontend then links straight to /summary/<slug>/ (instant, no
+    # API round-trip) instead of the dynamic tool. Identity-checked
+    # against gid/author so same-title books never swap pages.
+    static_url: Optional[str] = None
 
 
 @router.get("/search", response_model=list[SearchResponseItem])
@@ -74,12 +79,22 @@ def search_books(q: str, offset: int = 0):
     # (translator/illustrator co-credits split "1984" into duplicate rows).
     cache_key = ("search_v3", query_clean, str(offset))
     cached = cache.get(*cache_key)
-    if cached is not None:
-        return cached
-    results = book_data.search_books_list(q, limit=54, offset=offset)
-    if results:
-        cache.set(results, *cache_key, ttl=86400 * 7) # Cache search results for 7 days
-    return results
+    if cached is None:
+        cached = book_data.search_books_list(q, limit=54, offset=offset)
+        if cached:
+            cache.set(cached, *cache_key, ttl=86400 * 7)  # cache 7 days
+    # static_url is applied on the way OUT, never stored in the search
+    # cache: a page can become live minutes after a search was cached, and
+    # annotating copies (not the cached objects) keeps the L1-shared list
+    # unpolluted. No search_v4 bump needed for the same reason.
+    try:
+        marks = github_publisher.static_urls_for_results(cached)
+        if marks:
+            cached = [dict(r, static_url=marks[i]) if i in marks else r
+                      for i, r in enumerate(cached)]
+    except Exception:
+        pass  # annotation is enrichment only — search must never break on it
+    return cached
 
 
 # ── Prompt (kept local to this tool — not shared) ──────────
@@ -1569,6 +1584,13 @@ def _assemble_result(record: book_data.BookRecord, depth: str, summary_text: str
             "google_id": record.google_volume_id,
             "openlibrary_id": record.open_library_work_key,
         }, ttl=60 * 60 * 24 * 90)
+
+    # Backfill the published-books index (feeds /search static links) for
+    # pages published before the index existed — they enter it organically
+    # as they're viewed.
+    if static_ready and actual_slug:
+        github_publisher.index_published_ready(
+            actual_slug, record.google_volume_id or record.isbn_13 or "", a_slug)
 
     # Volume-specific page count from Goodreads when our sources had none
     # (fandom_series volumes deliberately carry page_count=None — the base

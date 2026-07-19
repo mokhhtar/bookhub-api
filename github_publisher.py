@@ -394,7 +394,7 @@ def publish_book(result: dict) -> None:
                     if _update_file(path, md,
                                     f"Refresh book page to v{PUBLISH_CONTENT_VERSION}: {title}", sha):
                         log.info(f"Refreshed stale book page ({path}) to v{PUBLISH_CONTENT_VERSION}")
-                _mark_published(book_slug, gid)
+                _mark_published(book_slug, gid, a_slug)
                 return
             # Different book shares the slug — suffix with author, then -2.
             for candidate in (f"{book_slug}-{a_slug}", f"{book_slug}-2"):
@@ -408,7 +408,7 @@ def publish_book(result: dict) -> None:
                             if _update_file(f"_books/{candidate}.md", md,
                                             f"Refresh book page to v{PUBLISH_CONTENT_VERSION}: {title}", c_sha):
                                 log.info(f"Refreshed stale book page (_books/{candidate}.md)")
-                        _mark_published(candidate, gid)
+                        _mark_published(candidate, gid, a_slug)
                         return
                     continue
                 book_slug, path = candidate, f"_books/{candidate}.md"
@@ -420,7 +420,7 @@ def publish_book(result: dict) -> None:
         md = _book_markdown(result, book_slug, a_slug)
         if _create_file(path, md, f"Add book page: {title}"):
             log.info(f"Published book page: {path}")
-        _mark_published(book_slug, gid)  # set flags even on benign-skip
+        _mark_published(book_slug, gid, a_slug)  # set flags even on benign-skip
     except Exception as e:
         log.warning(f"publish_book failed (non-fatal): {e}")
 
@@ -430,6 +430,116 @@ def _flag_is_current(flag) -> bool:
     a content version >= the current one. Absent flag or a pre-versioning flag
     (no 'v', treated as 1) is stale → allow the repo check to refresh."""
     return isinstance(flag, dict) and flag.get("v", 1) >= PUBLISH_CONTENT_VERSION
+
+
+# ── Published-books index (single Redis key) ─────────────────
+# Consumed by /search result annotation: ONE cache read per search instead
+# of per-result flag lookups (Upstash free tier has a daily command quota).
+# Maps the ACTUAL published slug -> {"g": gid, "a": author_slug, "ts": ...,
+# "r": known-ready}. Read-modify-write races between concurrent publishes
+# can drop an entry — benign: it self-heals on that book's next publish or
+# summary view, and a missing entry only means a dynamic link (never a
+# wrong one).
+_PUBLISHED_INDEX_KEY = "published_books_v1"
+_PUBLISHED_INDEX_TTL = 60 * 60 * 24 * 180
+
+
+def _index_published(slug: str, gid: str, a_slug: str, ready: bool = False) -> None:
+    try:
+        idx = cache.get_key(_PUBLISHED_INDEX_KEY)
+        if not isinstance(idx, dict):
+            idx = {}
+        entry = {"g": gid or "", "a": a_slug or "",
+                 "ts": datetime.now(timezone.utc).timestamp()}
+        if ready:
+            entry["r"] = True
+        idx[slug] = entry
+        cache.set_key(_PUBLISHED_INDEX_KEY, idx, ttl=_PUBLISHED_INDEX_TTL)
+    except Exception as e:
+        log.warning(f"published-index upsert failed (non-fatal): {e}")
+
+
+def index_published_ready(slug: str, gid: str, a_slug: str) -> None:
+    """Backfill hook for pages published before the index existed: called
+    from the summary route whenever resolve_published() confirms a page is
+    live, so older pages enter the index organically as they're viewed."""
+    _index_published(slug, gid, a_slug, ready=True)
+
+
+def _entry_ready(entry: dict) -> bool:
+    """Same >5-minute GitHub Pages rebuild buffer as resolve_published."""
+    if entry.get("r"):
+        return True
+    now = datetime.now(timezone.utc).timestamp()
+    return (now - (entry.get("ts") or 0)) > 300
+
+
+def static_urls_for_results(results: list[dict], max_flag_checks: int = 12) -> dict[int, str]:
+    """
+    For a /search result list, returns {result_index: "/summary/<slug>/"}
+    for results whose static page is confirmably live. COLLISION-SAFE BY
+    DESIGN: two different books can share a title (and therefore a base
+    slug — see publish_book's suffixing), so a result is annotated ONLY on
+    a positive identity match — the stored gid equals the result's
+    google_id/ISBN, or the stored author_slug equals the result's author
+    (full-credits or primary-author form, since search rows may carry
+    translator co-credits). Anything ambiguous stays on the dynamic link,
+    which resolves the exact edition by full identifiers: a slower right
+    link beats a fast wrong one.
+
+    Cost: one index read (L1-cached) + at most max_flag_checks legacy flag
+    reads for early results the index doesn't know yet (pages published
+    before the index existed).
+    """
+    out: dict[int, str] = {}
+    try:
+        import slug as slug_mod
+        idx = cache.get_key(_PUBLISHED_INDEX_KEY)
+        if not isinstance(idx, dict):
+            idx = {}
+        flag_budget = max_flag_checks
+        for i, r in enumerate(results):
+            title = (r.get("title") or "").strip()
+            author = (r.get("author") or "").strip()
+            if not title:
+                continue
+            base = slug_mod.book_slug(title)
+            if not base:
+                continue
+            row_gids = {g for g in (r.get("google_id"), r.get("isbn_13"), r.get("isbn_10")) if g}
+            row_a_full = slug_mod.author_slug(author)
+            row_a_primary = slug_mod.author_slug(author.split(",")[0].strip())
+            row_authors = {a for a in (row_a_full, row_a_primary) if a}
+            candidates = [base] + [f"{base}-{a}" for a in row_authors]
+
+            matched = None
+            for slug_c in dict.fromkeys(candidates):
+                entry = idx.get(slug_c)
+                if isinstance(entry, dict) and _entry_ready(entry):
+                    gid_ok = entry.get("g") and entry["g"] in row_gids
+                    author_ok = entry.get("a") and entry["a"] in row_authors
+                    if gid_ok or author_ok:
+                        matched = slug_c
+                        break
+            if not matched and flag_budget > 0:
+                # Legacy fallback: flags written before the index existed.
+                # Old flags carry only gid — identity via gid alone there.
+                for slug_c in dict.fromkeys(candidates):
+                    flag_budget -= 1
+                    flag = cache.get_key(f"published:{slug_c}")
+                    if isinstance(flag, dict) and _entry_ready(flag):
+                        gid_ok = flag.get("gid") and flag["gid"] in row_gids
+                        author_ok = flag.get("a") and flag["a"] in row_authors
+                        if gid_ok or author_ok:
+                            matched = slug_c
+                            break
+                    if flag_budget <= 0:
+                        break
+            if matched:
+                out[i] = f"/summary/{matched}/"
+    except Exception as e:
+        log.warning(f"static_urls_for_results failed (non-fatal): {e}")
+    return out
 
 
 def _same_book(content: str, title: str, a_slug: str) -> bool:
@@ -447,12 +557,15 @@ def _same_book(content: str, title: str, a_slug: str) -> bool:
         return False
 
 
-def _mark_published(book_slug: str, gid: str) -> None:
+def _mark_published(book_slug: str, gid: str, a_slug: str = "") -> None:
     ts = datetime.now(timezone.utc).timestamp()
     v = PUBLISH_CONTENT_VERSION
-    cache.set_key(f"published:{book_slug}", {"gid": gid, "ts": ts, "v": v})
+    # "a" (author_slug) joined the flags for /search static-link identity
+    # checks — two books sharing a title must never swap static pages.
+    cache.set_key(f"published:{book_slug}", {"gid": gid, "ts": ts, "v": v, "a": a_slug})
     if gid:
-        cache.set_key(f"published_gid:{gid}", {"slug": book_slug, "ts": ts, "v": v})
+        cache.set_key(f"published_gid:{gid}", {"slug": book_slug, "ts": ts, "v": v, "a": a_slug})
+    _index_published(book_slug, gid, a_slug)
 
 
 def _character_markdown(character: dict, photo_url: str, wikipedia_url: str,
