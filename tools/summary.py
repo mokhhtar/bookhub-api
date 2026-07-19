@@ -1730,6 +1730,15 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
             if not cached.get("author_slug"):
                 cached["author_slug"] = slug_mod.author_slug(cached.get("author", ""))
             _refresh_canonical(cached)  # keep the community key formula-current
+            # Feed the published-books index (drives /search static links)
+            # from the cache-hit path too — pages published before the index
+            # existed mostly serve from cache, so without this they'd never
+            # gain the author identity that lets a gid-less search row match.
+            if ready and actual_slug:
+                github_publisher.index_published_ready(
+                    actual_slug,
+                    cached.get("google_volume_id") or cached.get("isbn_13") or "",
+                    cached.get("author_slug") or "")
 
             # Self-heal ratings/page_count: a past Goodreads throttle (common
             # from Render's datacenter IP) can leave these empty in an otherwise
