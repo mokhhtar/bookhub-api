@@ -68,6 +68,14 @@ THRESHOLD = int(os.environ.get("INDEX_PROMOTE_THRESHOLD", 3))
 MIN_USERS = int(os.environ.get("INDEX_PROMOTE_MIN_USERS", 2))
 MIN_COMMENT_CHARS = int(os.environ.get("INDEX_MIN_COMMENT_CHARS", 40))
 SCAN_LIMIT = int(os.environ.get("INDEX_SCAN_LIMIT", 30))
+# Anchor requirement: at least this many of the qualified items must be
+# TEXT content (comment or rec). Ratings deliberately have no
+# email-verified gate in firestore.rules (low-stakes personal signal) —
+# which means rating-only engagement could be farmed with throwaway
+# unverified accounts. Text content IS verified-gated (and pre-moderated
+# by the owner), so requiring one text anchor means ratings can count
+# toward the threshold but can never promote a page on their own.
+MIN_TEXT_ANCHORS = int(os.environ.get("INDEX_PROMOTE_MIN_TEXT", 1))
 
 # Links in community text disqualify it (spam vector). Deliberately broad:
 # bare domains count as links too.
@@ -198,7 +206,9 @@ def score_book(book_key: str) -> dict:
         "qualified": qualified,
         "users": len(users),
         "breakdown": {"comments": q_comments, "recs": q_recs, "ratings": q_ratings},
-        "promote": qualified >= THRESHOLD and len(users) >= MIN_USERS,
+        "promote": (qualified >= THRESHOLD
+                    and len(users) >= MIN_USERS
+                    and (q_comments + q_recs) >= MIN_TEXT_ANCHORS),
     }
 
 
