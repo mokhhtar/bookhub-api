@@ -1,0 +1,30 @@
+name: Promote earned pages to indexing
+
+# Second half of the deferred-indexing policy (tools/indexing.py): once a
+# published book page earns enough QUALIFIED community engagement
+# (moderated link-free comments of real length, Gemini-vetted
+# recommendation reasons, star ratings — from at least 2 distinct users),
+# its noindex is flipped off via a surgical front-matter edit. Runs as a
+# GitHub Action because Render's free tier has no cron. The endpoint is
+# secret-protected: each run can cost Gemini calls and GitHub API writes.
+#
+# Requires the PROMOTE_SECRET repo secret to equal the PROMOTE_SECRET env
+# var on Render.
+
+on:
+  schedule:
+    - cron: "25 1 * * *"  # 01:25 UTC daily — after warm-daily, off the hour
+  workflow_dispatch: {}    # manual trigger for testing
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake the instance (free tier sleeps after ~15 min idle)
+        run: curl -sS -m 100 --retry 3 --retry-delay 10 "https://bookhub-api-hnv7.onrender.com/health" || true
+
+      - name: Evaluate engagement and promote earned pages
+        run: |
+          curl -sS -f -m 300 -X POST \
+            -H "X-Promote-Secret: ${{ secrets.PROMOTE_SECRET }}" \
+            "https://bookhub-api-hnv7.onrender.com/indexing/promote"
