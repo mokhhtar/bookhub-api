@@ -180,6 +180,39 @@ def _ping_fandom_subdomain(subdomain: str) -> bool:
     except Exception:
         return False
 
+# Categories that confidently signal NON-fiction — used to skip Fandom
+# wiki resolution entirely (no legitimate dedicated wiki exists for these).
+# Deliberately narrower/more conservative than taxonomy.py's
+# _FALLBACK_KEYWORDS (which is tuned for full display-category coverage,
+# not fiction/nonfiction confidence) — ambiguous genres like "history"
+# (could be historical FICTION) or "science" (sci-fi vs real science) are
+# intentionally excluded to stay fail-open toward attempting resolution.
+_NONFICTION_KEYWORDS = (
+    "self-help", "self help", "business", "economics", "personal finance",
+    "biography", "autobiography", "memoir", "cooking", "cookbook",
+    "health & fitness", "health and fitness", "travel", "reference",
+    "textbook", "how-to", "how to", "true crime", "parenting",
+)
+
+
+def is_confidently_nonfiction(categories: Optional[list[str]]) -> bool:
+    """
+    Cheap, zero-API-call check on already-resolved Google Books/Open
+    Library categories: does at least one confidently signal non-fiction?
+    No legitimate dedicated Fandom wiki exists for a self-help/business/
+    memoir title, so callers can skip resolution entirely for these —
+    saves wasted attempts and narrows the false-positive surface for the
+    fuzzy resolver tiers. FAILS OPEN (returns False, i.e. "attempt
+    resolution") when categories are empty/ambiguous — many legitimate
+    novels have messy or absent category tags, and this gate must never
+    block a real fiction lookup.
+    """
+    if not categories:
+        return False
+    joined = " ".join(categories).lower()
+    return any(kw in joined for kw in _NONFICTION_KEYWORDS)
+
+
 def get_series_title_candidates(title: str) -> list[str]:
     candidates = [title.strip(":,.- ")]
     cleaned = title
@@ -205,21 +238,72 @@ _BOOKISH_RE = re.compile(
     re.IGNORECASE,
 )
 
+_TITLE_STOPWORDS = {
+    "a", "an", "the", "of", "and", "or", "in", "on", "at", "to", "for",
+    "with", "is", "it", "by", "as", "from", "into", "this", "that",
+}
 
-def _wiki_looks_bookish(subdomain: str) -> bool:
+
+def _title_mentioned_in_text(title: str, text: str, min_hits: int = 2) -> bool:
     """
-    Validates that a Fandom wiki is actually about a book/novel/manga before
-    a FUZZY match (search-engine or subdomain-ping tiers) is trusted — those
-    tiers happily return a same-named GAME or film wiki, whose volumes then
-    pollute search results. Reads the wiki's main page text and requires book
-    signals. Cached per-subdomain; FAIL-OPEN on network trouble (a broken
-    check must not take down legit wikis), but a cleanly-fetched main page
-    with zero book signals is rejected.
+    Strict relevance check: does this text blob actually mention the
+    REQUESTED book, rather than just being generically "about books"?
+    A wiki (or a page within one) can easily be genuinely book-related —
+    even genuinely about SOME novel — while having nothing to do with the
+    title we asked about; this is the exact gap that let an unrelated
+    "plot summaries" wiki feed real, quote-verifiable, but wrong-book text
+    into the quiz generator (see CLAUDE.md's "no data beats wrong data").
+
+    Extracts significant words from `title` (length >= 3, not a stopword)
+    and requires at least `min_hits` of them to appear as whole-word
+    matches somewhere in `text`. A title with only one significant word
+    (e.g. "Dune") requires that single word rather than demanding two.
+
+    Deliberately dumb (word presence, not semantic understanding) on
+    purpose — matches this codebase's existing preference for
+    deterministic, code-level verification over trusting an LLM's
+    self-report (see quiz_core.py's substring-match quote verification).
     """
-    cache_key = ("fandom_bookish_v1", subdomain)
+    if not title or not text:
+        return False
+    words = [w for w in re.findall(r"[a-zA-Z0-9']+", title.lower())
+             if len(w) >= 3 and w not in _TITLE_STOPWORDS]
+    if not words:
+        return False
+    text_lower = text.lower()
+    hits = sum(1 for w in words if re.search(rf"\b{re.escape(w)}\b", text_lower))
+    return hits >= min(min_hits, len(words))
+
+
+def _wiki_matches_book(subdomain: str, title: str) -> bool:
+    """
+    Validates that a Fandom wiki is actually about a book/novel/manga —
+    AND specifically about THIS book — before any tier's match is trusted.
+
+    Used to be genre-only (_wiki_looks_bookish) and only gated the fuzzy
+    search-engine/ping tiers, while Wikidata-derived tiers were "trusted
+    as-is." That trust was misplaced: Wikidata's own title search
+    (_search_wikidata_qid_by_title) is itself fuzzy and can hand back a
+    wrong entity, so ALL tiers now go through this same check. Confirmed
+    real-world failure: a non-fiction title with no dedicated wiki fuzzily
+    resolved to an unrelated multi-book "plot summaries" wiki — genuinely
+    book-ish (passed the old check), not about the requested book at all —
+    whose generic in-wiki searches then returned real, quote-verifiable
+    text from completely different novels.
+
+    Reads the wiki's main page text once and requires BOTH: (1) generic
+    book/novel signals, and (2) the requested title's own significant
+    words appearing in that same text. Cached per (subdomain, title) —
+    NOT per subdomain alone, since "matches this book" is title-specific
+    (a per-subdomain-only cache would let one book's false-positive
+    verdict leak into every other title that later resolves to the same
+    wiki). FAIL-OPEN on network trouble; a cleanly-fetched main page
+    failing either check is rejected.
+    """
+    cache_key = ("fandom_relevance_v1", subdomain, title.lower())
     cached = cache.get(*cache_key)
     if cached is not None:
-        return bool(cached.get("bookish"))
+        return bool(cached.get("match"))
 
     url = f"https://{subdomain}.fandom.com/api.php"
     headers = {"User-Agent": "BookHub/1.0 (mokhhtar@github.com)"}
@@ -243,32 +327,38 @@ def _wiki_looks_bookish(subdomain: str) -> bool:
             text += " " + clean_wiki_html(html)[:8000]
 
         bookish = bool(_BOOKISH_RE.search(text))
-        cache.set({"bookish": bookish}, *cache_key)
+        relevant = bookish and _title_mentioned_in_text(title, text)
+        cache.set({"match": relevant}, *cache_key)
         if not bookish:
-            log.info(f"Rejected fuzzy Fandom match '{subdomain}' — main page has no book signals.")
-        return bookish
+            log.info(f"Rejected fuzzy Fandom match '{subdomain}' for '{title}' — main page has no book signals.")
+        elif not relevant:
+            log.info(f"Rejected fuzzy Fandom match '{subdomain}' for '{title}' — main page doesn't mention this title.")
+        return relevant
     except Exception as e:
-        log.warning(f"Bookish check failed for '{subdomain}' (fail-open): {e}")
+        log.warning(f"Relevance check failed for '{subdomain}'/'{title}' (fail-open): {e}")
         return True
 
 
 def _resolve_fandom_subdomain_single(title: str, wikidata_id: Optional[str] = None) -> Optional[str]:
     """
     Highly robust 5-tier subdomain resolver cascade for a single title string.
-    Tiers 1-2 (Wikidata-derived) are trusted as-is; tiers 3-5 are fuzzy
-    text-search matches and must pass _wiki_looks_bookish before being used.
+    ALL five tiers must pass _wiki_matches_book (genre + this-title relevance)
+    before being trusted — Wikidata-derived tiers 1-2 used to be exempted as
+    "trusted as-is," but Wikidata's own title search is itself fuzzy and can
+    hand back a wrong entity, so a tier failing the check now falls through
+    to the next tier instead of returning immediately.
     """
     # Tier 1: QID provided
     if wikidata_id:
         sub = _get_fandom_from_wikidata(wikidata_id)
-        if sub:
+        if sub and _wiki_matches_book(sub, title):
             return sub
 
     # Tier 2: Search QID by title
     qid = _search_wikidata_qid_by_title(title)
     if qid:
         sub = _get_fandom_from_wikidata(qid)
-        if sub:
+        if sub and _wiki_matches_book(sub, title):
             return sub
 
     # Tier 3: Google Custom Search
@@ -276,17 +366,17 @@ def _resolve_fandom_subdomain_single(title: str, wikidata_id: Optional[str] = No
     cx_id = os.environ.get("GOOGLE_SEARCH_CX_ID")
     if api_key and cx_id:
         sub = _get_fandom_from_google_cse(title, api_key, cx_id)
-        if sub and _wiki_looks_bookish(sub):
+        if sub and _wiki_matches_book(sub, title):
             return sub
 
     # Tier 4: DuckDuckGo HTML Search
     sub = _get_fandom_from_ddg(title)
-    if sub and _wiki_looks_bookish(sub):
+    if sub and _wiki_matches_book(sub, title):
         return sub
 
     # Tier 5: Title Normalization Ping
     normalized = "".join(c.lower() for c in title if c.isalnum())
-    if normalized and _ping_fandom_subdomain(normalized) and _wiki_looks_bookish(normalized):
+    if normalized and _ping_fandom_subdomain(normalized) and _wiki_matches_book(normalized, title):
         return normalized
 
     return None
@@ -361,10 +451,18 @@ FANDOM_SERIES_DETAILS = {
     for cfg in FANDOM_WIKIS.values()
 }
 
-def resolve_fandom_subdomain(title: str, wikidata_id: Optional[str] = None) -> Optional[str]:
+def resolve_fandom_subdomain(title: str, wikidata_id: Optional[str] = None,
+                             categories: Optional[list[str]] = None) -> Optional[str]:
     """
     Resolves Fandom subdomain by trying a static map first, and then various candidates.
+
+    `categories` is optional (backward compatible) — when the caller
+    already has Google Books/Open Library categories in scope, passing
+    them lets is_confidently_nonfiction() skip resolution entirely for
+    non-fiction titles (no legitimate dedicated wiki exists for those).
     """
+    if is_confidently_nonfiction(categories):
+        return None
     candidates = get_series_title_candidates(title)
     
     # Tier 0: Static mapping lookup (fast and 100% reliable)
@@ -381,9 +479,12 @@ def resolve_fandom_subdomain(title: str, wikidata_id: Optional[str] = None) -> O
     return None
 
 
-def resolve_series_config_first(title: str):
+def resolve_series_config_first(title: str, categories: Optional[list[str]] = None):
     """
     Consults fandom_catalog.py's CATALOG_SERIES before anything else.
+
+    `categories` is optional (backward compatible) — see resolve_fandom_subdomain's
+    docstring for why passing them lets non-fiction titles skip resolution.
 
     Why this has to run BEFORE resolve_fandom_subdomain / FANDOM_WIKIS: two
     different real books can share one Fandom subdomain (e.g. "Lord of the
@@ -400,6 +501,8 @@ def resolve_series_config_first(title: str):
     in the structured catalog yet (caller should fall back to
     resolve_fandom_subdomain for those).
     """
+    if is_confidently_nonfiction(categories):
+        return None
     try:
         from tools.fandom_catalog import resolve_series_config
     except ImportError:
@@ -989,6 +1092,9 @@ def extract_chapters_from_fandom(subdomain: str, book_title: str) -> list[str]:
         return []
 
     combined = "\n\n".join(f"=== Wiki page: {t} ===\n{txt}" for t, txt in candidate_texts)
+    if not _title_mentioned_in_text(book_title, combined):
+        log.info(f"Rejected Fandom chapter extraction for '{book_title}' on wiki '{subdomain}' — fetched pages don't mention this title.")
+        return []
     prompt = _build_chapter_extraction_prompt(book_title, req_vol, combined)
 
     try:
@@ -1012,7 +1118,10 @@ def extract_characters_from_fandom(subdomain: str, book_title: str) -> list[dict
     parsing HTML structure is a special-case treadmill). Gemini is instructed
     to return nothing rather than invent characters not in the text.
     """
-    cache_key = ("fandom_characters_v1", subdomain, book_title)
+    # v2: gated on _title_mentioned_in_text — v1 entries could carry
+    # wrong-book characters from an unrelated wiki that passed the old
+    # genre-only bookish check.
+    cache_key = ("fandom_characters_v2", subdomain, book_title)
     cached = cache.get(*cache_key)
     if cached is not None:
         return cached
@@ -1074,6 +1183,10 @@ def extract_characters_from_fandom(subdomain: str, book_title: str) -> list[dict
         return []
 
     combined = "\n\n".join(f"=== Wiki page: {t} ===\n{txt}" for t, txt in candidate_texts)
+    if not _title_mentioned_in_text(book_title, combined):
+        log.info(f"Rejected Fandom character extraction for '{book_title}' on wiki '{subdomain}' — fetched pages don't mention this title.")
+        cache.set([], *cache_key, ttl=86400)
+        return []
     prompt = _build_character_extraction_prompt(book_title, combined)
 
     characters: list[dict] = []
@@ -1271,8 +1384,11 @@ def fetch_fandom_quiz_text(subdomain: str, book_title: str) -> Optional[str]:
     on every summary view, quiz text only when someone actually asks for
     a quiz. Returns one big text blob (quiz_core chunks it) or None.
     """
-    # v2: main-story-first page ordering (v1 let side stories dominate).
-    cache_key = ("fandom_quiz_text_v2", subdomain, book_title)
+    # v3: gated on _title_mentioned_in_text — v2 could return real, quote-
+    # verifiable text from a completely unrelated book (the wiki genuinely
+    # is book-ish, just not about the requested title). v2: main-story-first
+    # page ordering (v1 let side stories dominate).
+    cache_key = ("fandom_quiz_text_v3", subdomain, book_title)
     cached = cache.get(*cache_key)
     if cached is not None:
         return cached or None
@@ -1342,6 +1458,9 @@ def fetch_fandom_quiz_text(subdomain: str, book_title: str) -> Optional[str]:
             log.warning(f"Quiz-text fetch failed for page '{page_title}' on '{subdomain}': {e}")
 
     combined = "\n\n".join(parts) if total >= 3000 else ""  # too thin → no quiz
+    if combined and not _title_mentioned_in_text(book_title, combined):
+        log.info(f"Rejected Fandom quiz text for '{book_title}' on wiki '{subdomain}' — fetched pages don't mention this title.")
+        combined = ""
     cache.set(combined, *cache_key, ttl=(86400 * 7) if combined else 86400)
     return combined or None
 

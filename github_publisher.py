@@ -215,7 +215,8 @@ def _book_markdown(result: dict, book_slug: str, a_slug: str) -> str:
     quiz_questions, quiz_source = None, None
     try:
         from tools.quiz import generate_static_quiz
-        quiz_result = generate_static_quiz(result.get("title") or "", result.get("free_ebook"))
+        quiz_result = generate_static_quiz(result.get("title") or "", result.get("free_ebook"),
+                                           categories=categories)
         if quiz_result:
             quiz_questions, quiz_source = quiz_result["questions"], quiz_result["source"]
     except Exception as e:

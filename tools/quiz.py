@@ -74,13 +74,19 @@ def _quiz_from_gutenberg(record: book_data.BookRecord, count: int) -> list[dict]
     return questions or None
 
 
-def generate_static_quiz(title: str, free_ebook: dict | None, count: int = 6) -> dict | None:
+def generate_static_quiz(title: str, free_ebook: dict | None, count: int = 6,
+                          categories: list[str] | None = None) -> dict | None:
     """
     Publish-time quiz generation for the STATIC book page — same verified
     pipeline as POST /quiz/book above, but decoupled from book_data.BookRecord:
     github_publisher._book_markdown() already has `free_ebook` resolved (it's
     already a front-matter field) and has no BookRecord on hand, so this takes
     the plain values it already has instead of re-resolving one.
+
+    `categories` (optional): the site-taxonomy categories already computed by
+    _book_markdown() a couple lines before this is called — passed through so
+    Fandom resolution can skip non-fiction titles entirely (no legitimate
+    dedicated wiki exists for those; see fandom.is_confidently_nonfiction).
 
     Runs inside publish_book(), itself a FastAPI BackgroundTask — the extra
     Gemini round-trip here does not add latency to the user-facing request.
@@ -111,8 +117,8 @@ def generate_static_quiz(title: str, free_ebook: dict | None, count: int = 6) ->
         resolve_fandom_subdomain,
         fetch_fandom_quiz_text,
     )
-    series_config = resolve_series_config_first(title)
-    subdomain = series_config.subdomain if series_config else resolve_fandom_subdomain(title)
+    series_config = resolve_series_config_first(title, categories=categories)
+    subdomain = series_config.subdomain if series_config else resolve_fandom_subdomain(title, categories=categories)
     if subdomain:
         text = fetch_fandom_quiz_text(subdomain, title)
         if text:
@@ -135,8 +141,11 @@ def quiz_book(req: BookQuizRequest, request: Request):
         else f"ip:{getattr(request.client, 'host', 'unknown')}"
     _rate_limit("bookquiz", LIMIT_BOOK_QUIZ_DAILY, client, namespace="bq")
 
+    # v3: gated on fandom.py's title-relevance check — v2 could cache a
+    # quiz built from an unrelated book's wiki text for up to 30 days (the
+    # exact live bug this fixes: verified-but-wrong-book questions).
     # v2: self-contained-question prompt + main-story-first fandom text.
-    cache_key = ("book_quiz_v2", req.title, req.author, str(req.count))
+    cache_key = ("book_quiz_v3", req.title, req.author, str(req.count))
     cached = cache.get(*cache_key)
     if cached:
         return cached
@@ -181,8 +190,8 @@ def _quiz_from_fandom(record: book_data.BookRecord, count: int) -> list[dict] | 
         resolve_fandom_subdomain,
         fetch_fandom_quiz_text,
     )
-    series_config = resolve_series_config_first(record.title)
-    subdomain = series_config.subdomain if series_config else resolve_fandom_subdomain(record.title)
+    series_config = resolve_series_config_first(record.title, categories=record.categories)
+    subdomain = series_config.subdomain if series_config else resolve_fandom_subdomain(record.title, categories=record.categories)
     if not subdomain:
         return None
     text = fetch_fandom_quiz_text(subdomain, record.title)
