@@ -854,20 +854,69 @@ def _norm_match(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
 
 
-def resolve_free_ebook(record: book_data.BookRecord) -> Optional[dict]:
+def _gutenberg_language(gid: str) -> Optional[str]:
+    """The language a Project Gutenberg book is actually written in, read
+    from its text header ('Language: English').
+
+    Why this is needed: Open Library aggregates EVERY translation's
+    Gutenberg id under one work, so id_project_gutenberg[0] is frequently
+    the wrong language — 'The Sea-Wolf' returned the Finnish 'Merisusi'
+    (48489) before the English original (1074). Serving a Finnish text on
+    an English page is wrong data, which we never do. Returns the language
+    name lowercased, or None if it can't be confirmed (so the caller skips
+    it rather than guesses).
+    """
+    import httpx
+    url = f"https://www.gutenberg.org/cache/epub/{gid}/pg{gid}.txt"
+    try:
+        head = ""
+        with httpx.stream("GET", url, headers=_UA_HEADERS, timeout=6.0,
+                          follow_redirects=True) as r:
+            if r.status_code != 200:
+                return None
+            for chunk in r.iter_text():
+                head += chunk
+                if "Language:" in head or len(head) > 3000:
+                    break
+        m = re.search(r"^Language:\s*(.+)$", head, re.MULTILINE)
+        return m.group(1).strip().lower() if m else None
+    except Exception as e:
+        log.warning(f"Gutenberg language check failed for {gid}: {e}")
+        return None
+
+
+# English is the language every published/indexed page is written in
+# (github_publisher only runs for req.language == "en"), so a free read
+# must be English too. Map our language codes to the names Gutenberg and
+# Open Library use.
+_GUT_LANG_NAME = {"en": "english", "ar": "arabic"}
+_OL_LANG_CODE = {"en": "eng", "ar": "ara"}
+
+
+def resolve_free_ebook(record: book_data.BookRecord,
+                       language: str = "en") -> Optional[dict]:
     """
     Free-to-read edition via Open Library: a Project Gutenberg ebook when
     the record carries one (public domain by definition), else a public
-    Internet Archive scan (ebook_access == "public"). Only an exact-ish
-    title match with a matching author surname is accepted — linking the
-    WRONG free ebook is worse than none.
+    Internet Archive scan (ebook_access == "public"). Two guards, because
+    linking the WRONG free ebook is worse than none:
+
+      * title must match exact-ish with a matching author surname;
+      * the edition must be in the expected language. Open Library lists
+        every translation's Gutenberg id under one work, so the first id is
+        routinely the wrong language — each candidate's Gutenberg header is
+        checked and only a language match is accepted. The IA scan is only
+        trusted for works Open Library records as English-only, since a
+        scan's language can't be verified as cheaply.
     """
     import httpx
+    want_name = _GUT_LANG_NAME.get(language, "english")
+    want_code = _OL_LANG_CODE.get(language, "eng")
     try:
         r = httpx.get("https://openlibrary.org/search.json", params={
             "title": record.title,
             "author": record.author or "",
-            "fields": "title,author_name,ebook_access,ia,id_project_gutenberg",
+            "fields": "title,author_name,language,ebook_access,ia,id_project_gutenberg",
             "limit": 5,
         }, headers=_UA_HEADERS, timeout=8.0)
         if r.status_code != 200:
@@ -888,17 +937,23 @@ def resolve_free_ebook(record: book_data.BookRecord) -> Optional[dict]:
         if author_last and author_last not in authors:
             continue
         gut_ids = doc.get("id_project_gutenberg") or []
-        if gut_ids:
-            gid = gut_ids[0]
-            return {
-                "source": "project_gutenberg",
-                "gutenberg_id": gid,
-                "page_url": f"https://www.gutenberg.org/ebooks/{gid}",
-                "read_url": f"https://www.gutenberg.org/ebooks/{gid}.html.images",
-                "epub_url": f"https://www.gutenberg.org/ebooks/{gid}.epub3.images",
-                "txt_url": f"https://www.gutenberg.org/ebooks/{gid}.txt.utf-8",
-            }
-        if doc.get("ebook_access") == "public" and doc.get("ia"):
+        for gid in gut_ids:
+            gid = str(gid)
+            lang = _gutenberg_language(gid)
+            if lang and lang.startswith(want_name):
+                return {
+                    "source": "project_gutenberg",
+                    "gutenberg_id": gid,
+                    "page_url": f"https://www.gutenberg.org/ebooks/{gid}",
+                    "read_url": f"https://www.gutenberg.org/ebooks/{gid}.html.images",
+                    "epub_url": f"https://www.gutenberg.org/ebooks/{gid}.epub3.images",
+                    "txt_url": f"https://www.gutenberg.org/ebooks/{gid}.txt.utf-8",
+                }
+        # A public IA scan, but only when the work is unambiguously in the
+        # wanted language (its language list is exactly that one). A
+        # multi-language work's ia[0] could be any translation.
+        if (doc.get("ebook_access") == "public" and doc.get("ia")
+                and doc.get("language") == [want_code]):
             ia_id = doc["ia"][0]
             return {
                 "source": "internet_archive",
@@ -1053,16 +1108,21 @@ def resolve_wikiquote_quotes(record: book_data.BookRecord, limit: int = 5) -> Op
 # self-heal below. Positives keep the default 30-day TTL; negatives ({})
 # expire after 1h so a transient Gutendex/Wikiquote failure at generation
 # time doesn't hide a "read free" button or the quotes card for a month.
-def _cached_free_ebook(record: book_data.BookRecord) -> Optional[dict]:
+def _cached_free_ebook(record: book_data.BookRecord,
+                       language: str = "en") -> Optional[dict]:
     # v2: v1 negatives were written with the 30-day default TTL (pre-fix
     # code), permanently blocking the self-heal — bump past them.
     # v3: v2 negatives are all Gutendex 403s (blocked from Render's IP);
     # the resolver now goes through Open Library instead.
-    key = ("free_ebook_v3", record.title, record.author)
+    # v4: the resolver now verifies edition language, so any v3 entry that
+    # linked a wrong-language edition (e.g. the Finnish 'Merisusi' for
+    # 'The Sea-Wolf') must be re-resolved. Keyed by language too, since the
+    # answer now depends on it.
+    key = ("free_ebook_v4", record.title, record.author, language)
     hit = cache.get(*key)
     if hit is not None:
         return hit or None  # {} negative marker → None
-    ebook = resolve_free_ebook(record)
+    ebook = resolve_free_ebook(record, language)
     cache.set(ebook or {}, *key, ttl=None if ebook else 3600)
     return ebook
 
