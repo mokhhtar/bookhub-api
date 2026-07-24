@@ -53,11 +53,22 @@ app = FastAPI(
     openapi_url="/openapi.json" if EXPOSE_DIAGNOSTICS else None,
 )
 
-raw_origins = os.environ.get("ALLOWED_ORIGINS", "*")
-if not raw_origins or raw_origins.strip() in ("", "*"):
-    ALLOWED_ORIGINS = ["*"]
-else:
+# Explicit CORS allow-list. NEVER fall back to "*" (L-08): an unset, blank, or
+# bare "*" env value must fail SAFE to the known production origins, not open
+# the API to every website. Override with a comma-separated ALLOWED_ORIGINS in
+# the dashboard (already set in prod); for a non-standard local port, add it
+# there rather than reintroducing a wildcard.
+_DEFAULT_ORIGINS = [
+    "http://localhost:4000",       # Jekyll dev server
+    "https://mokhhtar.github.io",  # GitHub Pages
+    "https://litheca.com",
+    "https://www.litheca.com",
+]
+raw_origins = os.environ.get("ALLOWED_ORIGINS", "").strip()
+if raw_origins and raw_origins != "*":
     ALLOWED_ORIGINS = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+else:
+    ALLOWED_ORIGINS = list(_DEFAULT_ORIGINS)
 
 log.info(f"CORS Allowed Origins: {ALLOWED_ORIGINS}")
 
