@@ -18,7 +18,7 @@ has actually been hardened.
 import os
 import logging
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
@@ -39,7 +39,19 @@ from tools import indexing as indexing_tool
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("bookhub-api")
 
-app = FastAPI(title="Litheca API", version="2.0.0")
+# Diagnostic surfaces (verbose /health, /models, the / route listing, and the
+# auto-generated API docs) disclose configuration and a full route/schema map
+# that only aids reconnaissance. Gate them behind an explicit opt-in; prod
+# stays minimal (M-07). Set EXPOSE_DIAGNOSTICS=true in the dashboard to inspect.
+EXPOSE_DIAGNOSTICS = os.environ.get("EXPOSE_DIAGNOSTICS", "false").lower() == "true"
+
+app = FastAPI(
+    title="Litheca API",
+    version="2.0.0",
+    docs_url="/docs" if EXPOSE_DIAGNOSTICS else None,
+    redoc_url="/redoc" if EXPOSE_DIAGNOSTICS else None,
+    openapi_url="/openapi.json" if EXPOSE_DIAGNOSTICS else None,
+)
 
 raw_origins = os.environ.get("ALLOWED_ORIGINS", "*")
 if not raw_origins or raw_origins.strip() in ("", "*"):
@@ -125,7 +137,12 @@ app.include_router(indexing_tool.router, tags=["indexing"])
 
 @app.get("/health")
 def health():
-    """Used by UptimeRobot / cron-job.org to keep the Render instance awake."""
+    """Liveness probe for Render's health check + the keep-warm workflow.
+    Minimal by default; the verbose config block is gated behind
+    EXPOSE_DIAGNOSTICS so production doesn't disclose it (M-07). Always 200 so
+    the keep-warm ping still wakes the instance."""
+    if not EXPOSE_DIAGNOSTICS:
+        return {"status": "ok"}
     import github_publisher
     import cache
     return {
@@ -144,6 +161,10 @@ def health():
 
 @app.get("/models")
 def list_models():
+    # Restricted in production (M-07): enumerates provider models AND makes a
+    # live upstream call on every hit. 404 unless diagnostics are enabled.
+    if not EXPOSE_DIAGNOSTICS:
+        raise HTTPException(status_code=404, detail="Not found")
     if not gemini_client.is_configured():
         return {"error": "Client not initialized"}
     try:
@@ -155,6 +176,10 @@ def list_models():
 
 @app.get("/")
 def root():
+    # Minimal by default (M-07) — the full route list + build notes only aid
+    # recon. Verbose form behind EXPOSE_DIAGNOSTICS.
+    if not EXPOSE_DIAGNOSTICS:
+        return {"name": "Litheca API", "status": "ok"}
     return {
         "name": "Litheca API",
         "version": "2.0.0",
