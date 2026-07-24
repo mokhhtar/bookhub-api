@@ -19,9 +19,10 @@ Pipeline:
 """
 
 import logging
+import os
 import re
 from typing import Optional
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, Field
 
 import cache
@@ -2006,20 +2007,51 @@ def summary_stream(req: SummaryRequest, background_tasks: BackgroundTasks):
     })
 
 
+# ── Book-chat abuse controls (H-03) ──────────────────────────
+# /summary/chat is an unauthenticated Gemini call. Without caps a caller can
+# drain the Gemini quota/bill via unbounded `summary`/`history` bodies and
+# unlimited requests. Bound the body in Pydantic and rate-limit per real
+# client IP (see _client_ip — Render runs uvicorn without --proxy-headers, so
+# request.client.host is the proxy, shared by everyone; the true client is the
+# first hop in X-Forwarded-For). 30000 is ~6x the largest real summary body.
+LIMIT_SUMMARY_CHAT_DAILY = int(os.environ.get("SUMMARY_CHAT_DAILY", 60))
+MAX_CHAT_SUMMARY_CHARS = 30000
+MAX_CHAT_HISTORY_TURNS = 20
+MAX_CHAT_MSG_CHARS = 4000
+
+
+def _client_ip(request: Request) -> str:
+    """Real client IP for rate-limiting, robust to Render's proxy: the first
+    hop in X-Forwarded-For, falling back to the socket peer."""
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        first = xff.split(",")[0].strip()
+        if first:
+            return first
+    return getattr(request.client, "host", "unknown") or "unknown"
+
+
 class ChatRequest(BaseModel):
-    title: str
-    author: str
-    summary: str
-    question: str
-    history: list[dict] = []
+    title: str = Field(..., max_length=300)
+    author: str = Field(..., max_length=300)
+    summary: str = Field(..., max_length=MAX_CHAT_SUMMARY_CHARS)
+    question: str = Field(..., min_length=1, max_length=2000)
+    history: list[dict] = Field(default_factory=list, max_length=MAX_CHAT_HISTORY_TURNS)
 
 
 @router.post("/summary/chat")
-def chat_with_book(req: ChatRequest):
+def chat_with_book(req: ChatRequest, request: Request):
+    # Per-IP daily cap on this unauthenticated Gemini route (shared rate
+    # limiter; the fail-open/client_id hardening is tracked separately in the
+    # audit under H-03).
+    from tools.quiz_core import _rate_limit
+    _rate_limit("summarychat", LIMIT_SUMMARY_CHAT_DAILY, _client_ip(request), namespace="sc")
+
     history_formatted = []
     for h in req.history:
         role = "User" if h.get("role") == "user" else "Assistant"
-        history_formatted.append(f"{role}: {h.get('content')}")
+        content = str(h.get("content", ""))[:MAX_CHAT_MSG_CHARS]
+        history_formatted.append(f"{role}: {content}")
     history_str = "\n".join(history_formatted)
 
     prompt = f"""You are an expert tutor and AI assistant answering questions about the book "{req.title}" by "{req.author}".
