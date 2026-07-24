@@ -261,11 +261,13 @@ ASSISTANT:"""
 # ── Endpoints ────────────────────────────────────────────────
 @router.post("/check")
 def check(req: CheckRequest):
+    # Existence ONLY — deliberately does not return the stored meta. doc_id is a
+    # content hash shared across users (dedup), so returning the first
+    # uploader's chosen title/filename would leak it to anyone who ingests the
+    # same file (C-01 / IDOR). The caller already holds its own metadata: the
+    # file it is opening, or its local-library entry.
     did = _validate_ids(req.doc_id, req.client_id)
-    meta = cache.get_key(f"pdf:meta:{did}")
-    if isinstance(meta, dict):
-        return {"exists": True, "meta": meta}
-    return {"exists": False}
+    return {"exists": isinstance(cache.get_key(f"pdf:meta:{did}"), dict)}
 
 
 @router.post("/ingest")
@@ -287,10 +289,17 @@ def ingest(req: IngestRequest, request: Request):
     if actual != req.doc_id:
         raise _err(400, "hash_mismatch", "Document fingerprint mismatch — please retry the upload.")
 
-    # Dedup fast path: someone already ingested this exact text.
+    # Dedup fast path: someone already ingested this exact text. Reuse the
+    # shared stored text, but echo the CALLER'S OWN metadata (from this request)
+    # — never the first uploader's stored title/filename (C-01 / IDOR).
     existing = cache.get_key(f"pdf:meta:{did}")
     if isinstance(existing, dict):
-        return {"status": "exists", "meta": existing}
+        return {"status": "exists", "meta": {
+            "title": req.title or req.filename or "Untitled document",
+            "filename": req.filename,
+            "pages": req.pages,
+            "chars": len(text),
+        }}
 
     if not cache.acquire_lock(f"pdf:lock:ingest:{did}", ttl=180):
         raise _err(409, "ingest_in_progress",
