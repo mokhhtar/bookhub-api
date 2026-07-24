@@ -19,14 +19,13 @@ per-upload model, one book's quiz serves every visitor.
 """
 import logging
 import os
-import re
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
 import book_data
 import cache
-from tools.quiz_core import _chunk_text, _generate_quiz, _rate_limit
+from tools.quiz_core import _chunk_text, _generate_quiz, _rate_limit, _client_ip
 
 log = logging.getLogger("bookhub-api.tools.quiz")
 
@@ -34,8 +33,6 @@ router = APIRouter()
 
 LIMIT_BOOK_QUIZ_DAILY = int(os.environ.get("BOOK_QUIZ_DAILY", 15))
 QUIZ_TTL = 60 * 60 * 24 * 30
-
-_CLIENT_ID_RE = re.compile(r"^[0-9a-f\-]{8,64}$", re.IGNORECASE)
 
 
 class BookQuizRequest(BaseModel):
@@ -45,6 +42,9 @@ class BookQuizRequest(BaseModel):
     google_id: str | None = None
     openlibrary_id: str | None = None
     count: int = Field(default=5, ge=3, le=10)
+    # Accepted for backward compat but NO LONGER trusted for rate limiting —
+    # a body value is trivially rotated to mint fresh quota. Limits key on the
+    # real client IP instead (see _client_ip).
     client_id: str | None = None
 
 
@@ -136,10 +136,9 @@ def generate_static_quiz(title: str, free_ebook: dict | None, count: int = 6,
 @router.post("/quiz/book")
 def quiz_book(req: BookQuizRequest, request: Request):
     # Own quota surface (shared per-book cache, many users per book) —
-    # distinct from pdfchat's per-upload LIMIT_QUIZ_DAILY.
-    client = req.client_id if (req.client_id and _CLIENT_ID_RE.match(req.client_id)) \
-        else f"ip:{getattr(request.client, 'host', 'unknown')}"
-    _rate_limit("bookquiz", LIMIT_BOOK_QUIZ_DAILY, client, namespace="bq")
+    # distinct from pdfchat's per-upload LIMIT_QUIZ_DAILY. Keyed on the real
+    # client IP so the limit can't be bypassed by rotating a body client_id.
+    _rate_limit("bookquiz", LIMIT_BOOK_QUIZ_DAILY, _client_ip(request), namespace="bq")
 
     # v3: gated on fandom.py's title-relevance check — v2 could cache a
     # quiz built from an unrelated book's wiki text for up to 30 days (the

@@ -26,7 +26,7 @@ import re
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from google.genai import types as genai_types
 
@@ -34,7 +34,7 @@ import cache
 import gemini_client
 # Quiz core (chunking, quote-verified MCQ generation, rate limiting) moved to
 # tools/quiz_core.py so the per-BOOK quiz route (tools/quiz.py) can share it.
-from tools.quiz_core import _chunk_text, _generate_quiz, _rate_limit
+from tools.quiz_core import _chunk_text, _generate_quiz, _rate_limit, _client_ip
 
 log = logging.getLogger("bookhub-api.tools.pdfchat")
 
@@ -269,9 +269,9 @@ def check(req: CheckRequest):
 
 
 @router.post("/ingest")
-def ingest(req: IngestRequest):
+def ingest(req: IngestRequest, request: Request):
     did = _validate_ids(req.doc_id, req.client_id)
-    _rate_limit("ingest", LIMIT_INGEST_DAILY, req.client_id)
+    _rate_limit("ingest", LIMIT_INGEST_DAILY, _client_ip(request))
 
     text = req.text
     if len(text) > MAX_TEXT_CHARS:
@@ -336,9 +336,9 @@ def ingest(req: IngestRequest):
 
 
 @router.post("/chat")
-def chat(req: ChatRequest):
+def chat(req: ChatRequest, request: Request):
     did = _validate_ids(req.doc_id, req.client_id)
-    _rate_limit("chat", LIMIT_CHAT_DAILY, req.client_id)
+    _rate_limit("chat", LIMIT_CHAT_DAILY, _client_ip(request))
 
     _, chunks = _load_doc(did)
     digest = _get_digest(did)
@@ -355,9 +355,9 @@ def chat(req: ChatRequest):
 
 
 @router.post("/quiz")
-def quiz(req: QuizRequest):
+def quiz(req: QuizRequest, request: Request):
     did = _validate_ids(req.doc_id, req.client_id)
-    _rate_limit("quiz", LIMIT_QUIZ_DAILY, req.client_id)
+    _rate_limit("quiz", LIMIT_QUIZ_DAILY, _client_ip(request))
 
     _, chunks = _load_doc(did)
     digest = _get_digest(did)

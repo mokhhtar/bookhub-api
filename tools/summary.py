@@ -2020,17 +2020,6 @@ MAX_CHAT_HISTORY_TURNS = 20
 MAX_CHAT_MSG_CHARS = 4000
 
 
-def _client_ip(request: Request) -> str:
-    """Real client IP for rate-limiting, robust to Render's proxy: the first
-    hop in X-Forwarded-For, falling back to the socket peer."""
-    xff = request.headers.get("x-forwarded-for", "")
-    if xff:
-        first = xff.split(",")[0].strip()
-        if first:
-            return first
-    return getattr(request.client, "host", "unknown") or "unknown"
-
-
 class ChatRequest(BaseModel):
     title: str = Field(..., max_length=300)
     author: str = Field(..., max_length=300)
@@ -2044,7 +2033,7 @@ def chat_with_book(req: ChatRequest, request: Request):
     # Per-IP daily cap on this unauthenticated Gemini route (shared rate
     # limiter; the fail-open/client_id hardening is tracked separately in the
     # audit under H-03).
-    from tools.quiz_core import _rate_limit
+    from tools.quiz_core import _rate_limit, _client_ip
     _rate_limit("summarychat", LIMIT_SUMMARY_CHAT_DAILY, _client_ip(request), namespace="sc")
 
     history_formatted = []

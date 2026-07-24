@@ -15,7 +15,7 @@ import logging
 import re
 from datetime import datetime, timezone
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from google.genai import types as genai_types
 
 import cache
@@ -31,14 +31,59 @@ def _err(status: int, code: str, message: str, **extra):
     return HTTPException(status_code=status, detail={"code": code, "message": message, **extra})
 
 
+def _client_ip(request: Request) -> str:
+    """The abuse-control identity for a request: the real client IP, keyed so
+    a caller CANNOT mint fresh quota at will (unlike a body-supplied
+    client_id, which is trivially rotated).
+
+    Render runs uvicorn without --proxy-headers, so request.client.host is the
+    shared Render proxy, not the caller. The real client IP is what Render's
+    single proxy appended to X-Forwarded-For — the RIGHTMOST entry. (The
+    leftmost hops are client-supplied and therefore spoofable; taking the
+    rightmost is what makes this spoof-resistant for our single-proxy
+    topology: the API is addressed directly at *.onrender.com, no CDN in
+    front.) Falls back to the socket peer if the header is absent (local dev)."""
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        hops = [h.strip() for h in xff.split(",") if h.strip()]
+        if hops:
+            return hops[-1]
+    return getattr(request.client, "host", "unknown") or "unknown"
+
+
+# Process-local degrade counter for when Redis is unavailable (see
+# _rate_limit). Single Render instance => this is still a real global cap.
+# Cleared on day-rollover; hard-capped in size so a spoofed-IP flood during a
+# Redis outage can't grow it without bound.
+_LOCAL_COUNTS: dict[str, int] = {}
+_LOCAL_DAY: dict[str, str] = {"day": ""}
+_LOCAL_MAX_KEYS = 100_000
+
+
 def _rate_limit(kind: str, limit: int, client_id: str, namespace: str = "pdf") -> None:
-    """Daily per-client counter. Fail-open: Redis trouble => allow.
+    """Daily per-client counter enforced on the Redis store, DEGRADING to a
+    process-local counter when Redis is unavailable — never failing fully
+    open (an expensive Gemini/publish route must stay capped even during a
+    cache outage). `client_id` should be a server-derived identity
+    (see _client_ip), NOT a value the caller can rotate at will.
 
     `namespace` keeps quota surfaces separate (pdf-chat's per-upload quizzes
     vs. shared per-book quizzes are different cost profiles)."""
     day = datetime.now(timezone.utc).strftime("%Y%m%d")
-    count = cache.incr_key(f"{namespace}:rl:{kind}:{day}:{client_id}", ttl=90000)
-    if count is not None and count > limit:
+    key = f"{namespace}:rl:{kind}:{day}:{client_id}"
+    count = cache.incr_key(key, ttl=90000)
+    if count is None:
+        # Redis unreachable — fall back to an in-process counter rather than
+        # allowing unlimited expensive calls. Reset the map when the UTC day
+        # rolls over, and bound its size defensively.
+        if _LOCAL_DAY["day"] != day:
+            _LOCAL_DAY["day"] = day
+            _LOCAL_COUNTS.clear()
+        if len(_LOCAL_COUNTS) >= _LOCAL_MAX_KEYS and key not in _LOCAL_COUNTS:
+            _LOCAL_COUNTS.clear()  # crude bound; better to reset than to OOM
+        count = _LOCAL_COUNTS.get(key, 0) + 1
+        _LOCAL_COUNTS[key] = count
+    if count > limit:
         raise _err(429, "rate_limited",
                    f"Daily {kind} limit reached ({limit}). Please come back tomorrow.",
                    kind=kind, limit=limit)
