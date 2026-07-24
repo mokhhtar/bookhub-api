@@ -27,6 +27,8 @@ import os
 import re
 import urllib.parse
 from datetime import datetime, timezone
+from html import escape as _html_escape
+from html.parser import HTMLParser
 
 import httpx
 
@@ -177,6 +179,68 @@ def _strip_tags(html: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html or "")).strip()
 
 
+# ── Summary-HTML sanitizer (persistent-page XSS boundary) ────
+# The summary body is model/backend-generated HTML written RAW into the
+# published _books/*.md (kramdown passes block HTML straight through) and
+# rendered on the static page with no client-side sanitizer. So an injected
+# <script>/<img onerror>/<svg onload> reaching a summary would bake a
+# permanent stored-XSS into a public page. Mirror the frontend's DOMPurify
+# boundary (summary.html sanitizeHtml): allow ONLY the closed formatting
+# vocabulary the summaries actually use — verified against every _books/*.md:
+# p, strong, li, h2, h3, em, ul (+ br/ol/b/i as harmless supersets) — and
+# emit ZERO attributes, so every event handler / url attribute is dropped.
+# Stdlib-only (no new Render dependency); safe precisely because the tag set
+# is closed and attribute-free.
+_ALLOWED_HTML_TAGS = {"h2", "h3", "p", "ul", "ol", "li", "strong", "em", "b", "i", "br"}
+_VOID_HTML_TAGS = {"br"}
+
+
+class _SummaryHTMLSanitizer(HTMLParser):
+    """Keeps allow-listed tags (attribute-free) and escapes all text; drops
+    everything else. Text of a disallowed tag (e.g. <script>alert()</script>)
+    survives only as escaped, inert text."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self._out: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in _ALLOWED_HTML_TAGS:
+            self._out.append(f"<{tag}>")
+
+    def handle_startendtag(self, tag, attrs):
+        if tag in _ALLOWED_HTML_TAGS:
+            self._out.append(f"<{tag}>")
+
+    def handle_endtag(self, tag):
+        if tag in _ALLOWED_HTML_TAGS and tag not in _VOID_HTML_TAGS:
+            self._out.append(f"</{tag}>")
+
+    def handle_data(self, data):
+        self._out.append(_html_escape(data, quote=False))
+
+    def handle_comment(self, data):
+        pass  # drop comments (a classic mXSS vector)
+
+    def result(self) -> str:
+        return "".join(self._out)
+
+
+def _sanitize_summary_html(html: str) -> str:
+    if not html:
+        return ""
+    try:
+        p = _SummaryHTMLSanitizer()
+        p.feed(html)
+        p.close()
+        return p.result()
+    except Exception as e:
+        # Fail CLOSED: on any parser trouble, never emit raw HTML — strip to
+        # escaped plain text rather than risk baking unsanitized markup.
+        log.warning(f"summary-HTML sanitize failed, falling back to text: {e}")
+        return _html_escape(_strip_tags(html), quote=False)
+
+
 def _clean_chapter_title(title: str) -> str:
     """Strip source-provided leading numbering ('01 Experiment 626' -> 'Experiment 626')
     so the static page's own numbered list never doubles up — mirrors the JS
@@ -195,7 +259,10 @@ def _is_publishable(result: dict) -> bool:
 
 
 def _book_markdown(result: dict, book_slug: str, a_slug: str) -> str:
-    summary_html = result.get("summary", "") or ""
+    # Sanitize at the page boundary — this HTML is written raw into the public
+    # static page (see _sanitize_summary_html). description is derived from the
+    # sanitized text, which is fine (still plain text after tag-strip).
+    summary_html = _sanitize_summary_html(result.get("summary", "") or "")
     description = _strip_tags(summary_html)[:160]
     categories = result.get("categories") or []
 
