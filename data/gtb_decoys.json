@@ -1,0 +1,1502 @@
+[
+ {
+  "id": "romeo-and-juliet-william-shakespeare",
+  "title": "Romeo and Juliet",
+  "author": "William Shakespeare"
+ },
+ {
+  "id": "a-room-with-a-view-e-m-forster",
+  "title": "A Room with a View",
+  "author": "E. M. Forster"
+ },
+ {
+  "id": "the-love-letters-of-mary-wollstonecraft-to-gilbert-imlay-mary-wollstonecraft",
+  "title": "The Love Letters of Mary Wollstonecraft to Gilbert Imlay",
+  "author": "Mary Wollstonecraft"
+ },
+ {
+  "id": "carmen-prosper-merimee",
+  "title": "Carmen",
+  "author": "Prosper Mérimée"
+ },
+ {
+  "id": "the-extraordinary-adventures-of-arsene-lupin-gentleman-burglar-maurice-leblanc",
+  "title": "The Extraordinary Adventures of Arsène Lupin, Gentleman-Burglar",
+  "author": "Maurice Leblanc"
+ },
+ {
+  "id": "the-blue-castle-l-m-montgomery",
+  "title": "The Blue Castle",
+  "author": "L. M. Montgomery"
+ },
+ {
+  "id": "the-lady-of-the-lake-walter-scott",
+  "title": "The Lady of the Lake",
+  "author": "Walter Scott"
+ },
+ {
+  "id": "the-green-mummy-fergus-hume",
+  "title": "The Green Mummy",
+  "author": "Fergus Hume"
+ },
+ {
+  "id": "the-mysteries-of-udolpho-ann-ward-radcliffe",
+  "title": "The Mysteries of Udolpho",
+  "author": "Ann Ward Radcliffe"
+ },
+ {
+  "id": "bidwell-s-travels-from-wall-street-to-london-prison-austin-bidwell",
+  "title": "Bidwell's Travels, from Wall Street to London Prison",
+  "author": "Austin Bidwell"
+ },
+ {
+  "id": "meditations-emperor-of-rome-marcus-aurelius",
+  "title": "Meditations",
+  "author": "Emperor of Rome Marcus Aurelius"
+ },
+ {
+  "id": "twenty-years-after-alexandre-dumas",
+  "title": "Twenty years after",
+  "author": "Alexandre Dumas"
+ },
+ {
+  "id": "the-king-in-yellow-robert-w-chambers",
+  "title": "The King in Yellow",
+  "author": "Robert W. Chambers"
+ },
+ {
+  "id": "the-secret-of-chimneys-agatha-christie",
+  "title": "The Secret of Chimneys",
+  "author": "Agatha Christie"
+ },
+ {
+  "id": "under-the-red-dragon-james-grant",
+  "title": "Under the Red Dragon",
+  "author": "James Grant"
+ },
+ {
+  "id": "sense-and-sensibility-jane-austen",
+  "title": "Sense and Sensibility",
+  "author": "Jane Austen"
+ },
+ {
+  "id": "the-sex-life-of-the-gods-m-e-knerr",
+  "title": "The Sex Life of the Gods",
+  "author": "M. E. Knerr"
+ },
+ {
+  "id": "narrative-of-the-life-of-frederick-douglass-an-american-slave-frederick-douglass",
+  "title": "Narrative of the Life of Frederick Douglass, an American Slave",
+  "author": "Frederick Douglass"
+ },
+ {
+  "id": "one-woman-alfred-ollivant",
+  "title": "One Woman",
+  "author": "Alfred Ollivant"
+ },
+ {
+  "id": "the-confessions-of-st-augustine-of-hippo",
+  "title": "The Confessions of St. Augustine",
+  "author": "of Hippo, Saint Augustine"
+ },
+ {
+  "id": "the-misplaced-battleship-harry-harrison",
+  "title": "The Misplaced Battleship",
+  "author": "Harry Harrison"
+ },
+ {
+  "id": "a-honeymoon-in-space-george-chetwynd-griffith",
+  "title": "A Honeymoon in Space",
+  "author": "George Chetwynd Griffith"
+ },
+ {
+  "id": "only-a-girl-s-love-charles-garvice",
+  "title": "Only a girl's love",
+  "author": "Charles Garvice"
+ },
+ {
+  "id": "the-man-who-was-thursday-g-k-chesterton",
+  "title": "The Man Who Was Thursday",
+  "author": "G. K. Chesterton"
+ },
+ {
+  "id": "king-arthur-and-the-knights-of-the-round-table-thomas",
+  "title": "King Arthur and the Knights of the Round Table",
+  "author": "Thomas, Sir Malory"
+ },
+ {
+  "id": "one-of-the-six-hundred-james-grant",
+  "title": "One of the Six Hundred",
+  "author": "James Grant"
+ },
+ {
+  "id": "the-murder-on-the-links-agatha-christie",
+  "title": "The Murder on the Links",
+  "author": "Agatha Christie"
+ },
+ {
+  "id": "the-brothers-karamazov-fyodor-dostoyevsky",
+  "title": "The Brothers Karamazov",
+  "author": "Fyodor Dostoyevsky"
+ },
+ {
+  "id": "the-yeoman-adventurer-george-w-gough",
+  "title": "The Yeoman Adventurer",
+  "author": "George W. Gough"
+ },
+ {
+  "id": "the-anabasis-of-alexander-arrian",
+  "title": "The Anabasis of Alexander",
+  "author": "Arrian"
+ },
+ {
+  "id": "the-hero-of-the-people-alexandre-dumas",
+  "title": "The Hero of the People",
+  "author": "Alexandre Dumas"
+ },
+ {
+  "id": "the-treasure-of-pearls-gustave-aimard",
+  "title": "The Treasure of Pearls",
+  "author": "Gustave Aimard"
+ },
+ {
+  "id": "that-which-hath-wings-richard-dehan",
+  "title": "That Which Hath Wings",
+  "author": "Richard Dehan"
+ },
+ {
+  "id": "linnet-grant-allen",
+  "title": "Linnet",
+  "author": "Grant Allen"
+ },
+ {
+  "id": "whose-body-a-lord-peter-wimsey-novel-dorothy-l-sayers",
+  "title": "Whose Body? A Lord Peter Wimsey Novel",
+  "author": "Dorothy L. Sayers"
+ },
+ {
+  "id": "the-pirate-walter-scott",
+  "title": "The Pirate",
+  "author": "Walter Scott"
+ },
+ {
+  "id": "the-history-of-sir-richard-calmady-lucas-malet",
+  "title": "The History of Sir Richard Calmady",
+  "author": "Lucas Malet"
+ },
+ {
+  "id": "ecce-homo-friedrich-wilhelm-nietzsche",
+  "title": "Ecce Homo",
+  "author": "Friedrich Wilhelm Nietzsche"
+ },
+ {
+  "id": "forest-days-g-p-r-james",
+  "title": "Forest Days",
+  "author": "G. P. R. James"
+ },
+ {
+  "id": "the-enchanted-april-elizabeth-von-arnim",
+  "title": "The Enchanted April",
+  "author": "Elizabeth Von Arnim"
+ },
+ {
+  "id": "cameron-of-lochiel-philippe-aubert-de-gaspe",
+  "title": "Cameron of Lochiel",
+  "author": "Philippe Aubert de Gaspé"
+ },
+ {
+  "id": "the-problem-of-cell-13-jacques-futrelle",
+  "title": "The problem of Cell 13",
+  "author": "Jacques Futrelle"
+ },
+ {
+  "id": "the-2006-cia-world-factbook-united-states-central-intelligence-agency",
+  "title": "The 2006 CIA World Factbook",
+  "author": "United States. Central Intelligence Agency"
+ },
+ {
+  "id": "four-arthurian-romances-de-troyes",
+  "title": "Four Arthurian Romances",
+  "author": "de Troyes, active 12th century Chrétien"
+ },
+ {
+  "id": "that-girl-montana-marah-ellis-ryan",
+  "title": "That Girl Montana",
+  "author": "Marah Ellis Ryan"
+ },
+ {
+  "id": "what-will-people-say-a-novel-rupert-hughes",
+  "title": "What Will People Say? A Novel",
+  "author": "Rupert Hughes"
+ },
+ {
+  "id": "the-monk-m-g-lewis",
+  "title": "The Monk",
+  "author": "M. G. Lewis"
+ },
+ {
+  "id": "robert-orange-john-oliver-hobbes",
+  "title": "Robert Orange",
+  "author": "John Oliver Hobbes"
+ },
+ {
+  "id": "thuvia-maid-of-mars-edgar-rice-burroughs",
+  "title": "Thuvia, maid of Mars",
+  "author": "Edgar Rice Burroughs"
+ },
+ {
+  "id": "the-passionate-elopement-compton-mackenzie",
+  "title": "The Passionate Elopement",
+  "author": "Compton MacKenzie"
+ },
+ {
+  "id": "cranford-elizabeth-cleghorn-gaskell",
+  "title": "Cranford",
+  "author": "Elizabeth Cleghorn Gaskell"
+ },
+ {
+  "id": "a-pickle-for-the-knowing-ones-timothy-dexter",
+  "title": "A Pickle for the Knowing Ones",
+  "author": "Timothy Dexter"
+ },
+ {
+  "id": "the-adventures-of-ferdinand-count-fathom-complete-t-smollett",
+  "title": "The Adventures of Ferdinand Count Fathom — Complete",
+  "author": "T. Smollett"
+ },
+ {
+  "id": "the-expedition-of-humphry-clinker-t-smollett",
+  "title": "The Expedition of Humphry Clinker",
+  "author": "T. Smollett"
+ },
+ {
+  "id": "the-string-of-pearls-thomas-peckett-prest",
+  "title": "The String of Pearls",
+  "author": "Thomas Peckett Prest"
+ },
+ {
+  "id": "rizal-s-own-story-of-his-life-jose-rizal",
+  "title": "Rizal's own story of his life",
+  "author": "José Rizal"
+ },
+ {
+  "id": "autobiography-of-benjamin-franklin-benjamin-franklin",
+  "title": "Autobiography of Benjamin Franklin",
+  "author": "Benjamin Franklin"
+ },
+ {
+  "id": "manon-lescaut-abbe-prevost",
+  "title": "Manon Lescaut",
+  "author": "abbé Prévost"
+ },
+ {
+  "id": "the-waterloo-roll-call-charles-dalton",
+  "title": "The Waterloo Roll Call",
+  "author": "Charles Dalton"
+ },
+ {
+  "id": "history-of-tom-jones-a-foundling-henry-fielding",
+  "title": "History of Tom Jones, a Foundling",
+  "author": "Henry Fielding"
+ },
+ {
+  "id": "the-adventures-of-roderick-random-t-smollett",
+  "title": "The Adventures of Roderick Random",
+  "author": "T. Smollett"
+ },
+ {
+  "id": "napoleon-s-letters-to-josephine-1796-1812-emperor-of-the-french-napoleon-i",
+  "title": "Napoleon's Letters to Josephine, 1796-1812",
+  "author": "Emperor of the French Napoleon I"
+ },
+ {
+  "id": "blow-the-man-down-holman-day",
+  "title": "Blow The Man Down",
+  "author": "Holman Day"
+ },
+ {
+  "id": "the-lives-and-opinions-of-eminent-philosophers-diogenes-laertius",
+  "title": "The Lives and Opinions of Eminent Philosophers",
+  "author": "Diogenes Laertius"
+ },
+ {
+  "id": "doctor-cupid-rhoda-broughton",
+  "title": "Doctor Cupid",
+  "author": "Rhoda Broughton"
+ },
+ {
+  "id": "a-farewell-to-arms-ernest-hemingway",
+  "title": "A farewell to arms",
+  "author": "Ernest Hemingway"
+ },
+ {
+  "id": "the-boy-with-wings-berta-ruck",
+  "title": "The Boy with Wings",
+  "author": "Berta Ruck"
+ },
+ {
+  "id": "on-the-cross-wilhelmine-von-hillern",
+  "title": "On the Cross",
+  "author": "Wilhelmine von Hillern"
+ },
+ {
+  "id": "a-little-english-gallery-louise-imogen-guiney",
+  "title": "A Little English Gallery",
+  "author": "Louise Imogen Guiney"
+ },
+ {
+  "id": "the-dunwich-horror-h-p-lovecraft",
+  "title": "The Dunwich horror",
+  "author": "H. P. Lovecraft"
+ },
+ {
+  "id": "life-on-the-mississippi-mark-twain",
+  "title": "Life on the Mississippi",
+  "author": "Mark Twain"
+ },
+ {
+  "id": "henrietta-temple-benjamin",
+  "title": "Henrietta Temple",
+  "author": "Benjamin, Earl of Beaconsfield Disraeli"
+ },
+ {
+  "id": "space-station-1-frank-belknap-long",
+  "title": "Space Station 1",
+  "author": "Frank Belknap Long"
+ },
+ {
+  "id": "the-mystery-of-edwin-drood-charles-dickens",
+  "title": "The Mystery of Edwin Drood",
+  "author": "Charles Dickens"
+ },
+ {
+  "id": "the-mysteries-of-london-v-4-4-george-w-m-reynolds",
+  "title": "The Mysteries of London, v. 4/4",
+  "author": "George W. M. Reynolds"
+ },
+ {
+  "id": "a-study-in-scarlet-arthur-conan-doyle",
+  "title": "A Study in Scarlet",
+  "author": "Arthur Conan Doyle"
+ },
+ {
+  "id": "minute-mysteries-detectograms-h-a-ripley",
+  "title": "Minute Mysteries [Detectograms]",
+  "author": "H. A. Ripley"
+ },
+ {
+  "id": "a-case-in-camera-oliver-onions",
+  "title": "A Case in Camera",
+  "author": "Oliver Onions"
+ },
+ {
+  "id": "some-jewish-witnesses-for-christ-aaron-bernstein",
+  "title": "Some Jewish Witnesses For Christ",
+  "author": "Aaron Bernstein"
+ },
+ {
+  "id": "emily-bronte-a-mary-f-robinson",
+  "title": "Emily Brontë",
+  "author": "A. Mary F. Robinson"
+ },
+ {
+  "id": "the-air-pirate-guy-thorne",
+  "title": "The Air Pirate",
+  "author": "Guy Thorne"
+ },
+ {
+  "id": "eloisa-jean-jacques-rousseau",
+  "title": "Eloisa",
+  "author": "Jean-Jacques Rousseau"
+ },
+ {
+  "id": "the-love-letters-of-henry-viii-to-anne-boleyn-king-of-england-henry-viii",
+  "title": "The Love Letters of Henry VIII to Anne Boleyn",
+  "author": "King of England Henry VIII"
+ },
+ {
+  "id": "moods-louisa-may-alcott",
+  "title": "Moods",
+  "author": "Louisa May Alcott"
+ },
+ {
+  "id": "the-gay-adventure-richard-bird",
+  "title": "The Gay Adventure",
+  "author": "Richard Bird"
+ },
+ {
+  "id": "the-camp-fire-girls-solve-a-mystery-hildegard-g-frey",
+  "title": "The Camp Fire Girls Solve a Mystery",
+  "author": "Hildegard G. Frey"
+ },
+ {
+  "id": "the-iliad-homer",
+  "title": "The Iliad",
+  "author": "Homer"
+ },
+ {
+  "id": "cynthia-s-chauffeur-louis-tracy",
+  "title": "Cynthia's Chauffeur",
+  "author": "Louis Tracy"
+ },
+ {
+  "id": "the-crack-of-doom-robert-cromie",
+  "title": "The Crack of Doom",
+  "author": "Robert Cromie"
+ },
+ {
+  "id": "dainty-s-cruel-rivals-alex-mcveigh",
+  "title": "Dainty's Cruel Rivals",
+  "author": "Alex. McVeigh, Mrs. Miller"
+ },
+ {
+  "id": "the-silent-barrier-louis-tracy",
+  "title": "The Silent Barrier",
+  "author": "Louis Tracy"
+ },
+ {
+  "id": "the-rover-boys-on-the-farm-edward-stratemeyer",
+  "title": "The Rover Boys on the Farm",
+  "author": "Edward Stratemeyer"
+ },
+ {
+  "id": "the-sorrows-of-young-werther-johann-wolfgang-von-goethe",
+  "title": "The Sorrows of Young Werther",
+  "author": "Johann Wolfgang von Goethe"
+ },
+ {
+  "id": "harriet-martineau-florence-fenwick-miller",
+  "title": "Harriet Martineau",
+  "author": "Florence Fenwick Miller"
+ },
+ {
+  "id": "the-odyssey-homer",
+  "title": "The Odyssey",
+  "author": "Homer"
+ },
+ {
+  "id": "the-lives-of-the-twelve-caesars-complete-suetonius",
+  "title": "The Lives of the Twelve Caesars, Complete",
+  "author": "Suetonius"
+ },
+ {
+  "id": "erotica-romana-johann-wolfgang-von-goethe",
+  "title": "Erotica Romana",
+  "author": "Johann Wolfgang von Goethe"
+ },
+ {
+  "id": "the-kama-sutra-of-vatsyayana-vatsyayana",
+  "title": "The Kama Sutra of Vatsyayana",
+  "author": "Vatsyayana"
+ },
+ {
+  "id": "a-journey-to-the-centre-of-the-earth-jules-verne",
+  "title": "A Journey to the Centre of the Earth",
+  "author": "Jules Verne"
+ },
+ {
+  "id": "the-blue-lagoon-h-de-vere-stacpoole",
+  "title": "The Blue Lagoon",
+  "author": "H. De Vere Stacpoole"
+ },
+ {
+  "id": "i-am-a-woman-ann-bannon",
+  "title": "I am a woman",
+  "author": "Ann Bannon"
+ },
+ {
+  "id": "quintus-claudius-ernst-eckstein",
+  "title": "Quintus Claudius",
+  "author": "Ernst Eckstein"
+ },
+ {
+  "id": "catriona-robert-louis-stevenson",
+  "title": "Catriona",
+  "author": "Robert Louis Stevenson"
+ },
+ {
+  "id": "lorna-doone-r-d-blackmore",
+  "title": "Lorna Doone",
+  "author": "R. D. Blackmore"
+ },
+ {
+  "id": "monte-cristo-s-daughter-edmund-flagg",
+  "title": "Monte-Cristo's Daughter",
+  "author": "Edmund Flagg"
+ },
+ {
+  "id": "hypnerotomachia-francesco-colonna",
+  "title": "Hypnerotomachia",
+  "author": "Francesco Colonna"
+ },
+ {
+  "id": "autobiography-of-a-yogi-paramahansa-yogananda",
+  "title": "Autobiography of a Yogi",
+  "author": "Paramahansa Yogananda"
+ },
+ {
+  "id": "the-girl-philippa-robert-w-chambers",
+  "title": "The Girl Philippa",
+  "author": "Robert W. Chambers"
+ },
+ {
+  "id": "the-romance-of-tristan-and-iseult-joseph-bedier",
+  "title": "The Romance of Tristan and Iseult",
+  "author": "Joseph Bédier"
+ },
+ {
+  "id": "sonnets-from-the-portuguese-elizabeth-barrett-browning",
+  "title": "Sonnets from the Portuguese",
+  "author": "Elizabeth Barrett Browning"
+ },
+ {
+  "id": "india-s-love-lyrics-laurence-hope",
+  "title": "India's Love Lyrics",
+  "author": "Laurence Hope"
+ },
+ {
+  "id": "the-sign-of-the-four-arthur-conan-doyle",
+  "title": "The Sign of the Four",
+  "author": "Arthur Conan Doyle"
+ },
+ {
+  "id": "shakespeare-s-family-c-c-stopes",
+  "title": "Shakespeare's family",
+  "author": "C. C. Stopes"
+ },
+ {
+  "id": "a-midsummer-night-s-dream-william-shakespeare",
+  "title": "A Midsummer Night's Dream",
+  "author": "William Shakespeare"
+ },
+ {
+  "id": "as-you-like-it-william-shakespeare",
+  "title": "As You Like It",
+  "author": "William Shakespeare"
+ },
+ {
+  "id": "the-red-lily-complete-anatole-france",
+  "title": "The Red Lily — Complete",
+  "author": "Anatole France"
+ },
+ {
+  "id": "the-countess-of-pembroke-s-arcadia-philip-sidney",
+  "title": "The Countess of Pembroke's Arcadia",
+  "author": "Philip Sidney"
+ },
+ {
+  "id": "the-landloper-holman-day",
+  "title": "The Landloper",
+  "author": "Holman Day"
+ },
+ {
+  "id": "the-prairie-wife-arthur-stringer",
+  "title": "The Prairie Wife",
+  "author": "Arthur Stringer"
+ },
+ {
+  "id": "the-interesting-narrative-of-the-life-of-olaudah-equiano-or-gustavus-vassa-the-olaudah-equiano",
+  "title": "The Interesting Narrative of the Life of Olaudah Equiano, Or Gustavus Vassa, The African",
+  "author": "Olaudah Equiano"
+ },
+ {
+  "id": "the-green-mouse-robert-w-chambers",
+  "title": "The Green Mouse",
+  "author": "Robert W. Chambers"
+ },
+ {
+  "id": "camille-la-dame-aux-camilias-alexandre-dumas",
+  "title": "Camille (La Dame aux Camilias)",
+  "author": "Alexandre Dumas"
+ },
+ {
+  "id": "undine-friedrich-heinrich-karl",
+  "title": "Undine",
+  "author": "Friedrich Heinrich Karl, Freiherr de La Motte-Fouqué"
+ },
+ {
+  "id": "the-samurai-strategy-thomas-hoover",
+  "title": "The Samurai Strategy",
+  "author": "Thomas Hoover"
+ },
+ {
+  "id": "the-germany-and-the-agricola-of-tacitus-cornelius-tacitus",
+  "title": "The Germany and the Agricola of Tacitus",
+  "author": "Cornelius Tacitus"
+ },
+ {
+  "id": "incidents-in-the-life-of-a-slave-girl-written-by-herself-harriet-a-jacobs",
+  "title": "Incidents in the Life of a Slave Girl, Written by Herself",
+  "author": "Harriet A. Jacobs"
+ },
+ {
+  "id": "the-diary-of-samuel-pepys-complete-samuel-pepys",
+  "title": "The Diary of Samuel Pepys — Complete",
+  "author": "Samuel Pepys"
+ },
+ {
+  "id": "a-romance-of-billy-goat-hill-alice-caldwell-hegan-rice",
+  "title": "A Romance of Billy-Goat Hill",
+  "author": "Alice Caldwell Hegan Rice"
+ },
+ {
+  "id": "de-profundis-oscar-wilde",
+  "title": "De Profundis",
+  "author": "Oscar Wilde"
+ },
+ {
+  "id": "life-blood-thomas-hoover",
+  "title": "Life Blood",
+  "author": "Thomas Hoover"
+ },
+ {
+  "id": "the-passionate-friends-h-g-wells",
+  "title": "The Passionate Friends",
+  "author": "H. G. Wells"
+ },
+ {
+  "id": "grimms-fairy-tales-jacob-grimm",
+  "title": "Grimms' Fairy Tales",
+  "author": "Jacob Grimm"
+ },
+ {
+  "id": "the-merry-adventures-of-robin-hood-howard-pyle",
+  "title": "The Merry Adventures of Robin Hood",
+  "author": "Howard Pyle"
+ },
+ {
+  "id": "the-murder-of-roger-ackroyd-agatha-christie",
+  "title": "The murder of Roger Ackroyd",
+  "author": "Agatha Christie"
+ },
+ {
+  "id": "love-and-freindship-sic-jane-austen",
+  "title": "Love and Freindship [sic]",
+  "author": "Jane Austen"
+ },
+ {
+  "id": "peter-the-brazen-george-f-worts",
+  "title": "Peter the Brazen",
+  "author": "George F. Worts"
+ },
+ {
+  "id": "the-shunned-house-h-p-lovecraft",
+  "title": "The Shunned House",
+  "author": "H. P. Lovecraft"
+ },
+ {
+  "id": "the-woman-in-white-wilkie-collins",
+  "title": "The Woman in White",
+  "author": "Wilkie Collins"
+ },
+ {
+  "id": "the-mysterious-affair-at-styles-agatha-christie",
+  "title": "The Mysterious Affair at Styles",
+  "author": "Agatha Christie"
+ },
+ {
+  "id": "a-pair-of-blue-eyes-thomas-hardy",
+  "title": "A pair of blue eyes",
+  "author": "Thomas Hardy"
+ },
+ {
+  "id": "occasion-for-disaster-randall-garrett",
+  "title": "Occasion ... for Disaster",
+  "author": "Randall Garrett"
+ },
+ {
+  "id": "torchy-and-vee-sewell-ford",
+  "title": "Torchy and Vee",
+  "author": "Sewell Ford"
+ },
+ {
+  "id": "the-hand-in-the-dark-arthur-j-rees",
+  "title": "The Hand in the Dark",
+  "author": "Arthur J. Rees"
+ },
+ {
+  "id": "biographia-literaria-samuel-taylor-coleridge",
+  "title": "Biographia Literaria",
+  "author": "Samuel Taylor Coleridge"
+ },
+ {
+  "id": "gulliver-s-travels-into-several-remote-regions-of-the-world-jonathan-swift",
+  "title": "Gulliver's Travels into Several Remote Regions of the World",
+  "author": "Jonathan Swift"
+ },
+ {
+  "id": "the-memoirs-of-sherlock-holmes-arthur-conan-doyle",
+  "title": "The Memoirs of Sherlock Holmes",
+  "author": "Arthur Conan Doyle"
+ },
+ {
+  "id": "the-return-of-sherlock-holmes-arthur-conan-doyle",
+  "title": "The Return of Sherlock Holmes",
+  "author": "Arthur Conan Doyle"
+ },
+ {
+  "id": "the-damned-thing-ambrose-bierce",
+  "title": "The Damned Thing",
+  "author": "Ambrose Bierce"
+ },
+ {
+  "id": "the-phantom-of-the-opera-gaston-leroux",
+  "title": "The Phantom of the Opera",
+  "author": "Gaston Leroux"
+ },
+ {
+  "id": "the-car-of-destiny-c-n-williamson",
+  "title": "The Car of Destiny",
+  "author": "C. N. Williamson"
+ },
+ {
+  "id": "lone-star-planet-h-beam-piper",
+  "title": "Lone Star Planet",
+  "author": "H. Beam Piper"
+ },
+ {
+  "id": "anarchism-and-other-essays-emma-goldman",
+  "title": "Anarchism and Other Essays",
+  "author": "Emma Goldman"
+ },
+ {
+  "id": "lady-audley-s-secret-m-e-braddon",
+  "title": "Lady Audley's Secret",
+  "author": "M. E. Braddon"
+ },
+ {
+  "id": "war-and-peace-leo",
+  "title": "War and Peace",
+  "author": "Leo, graf Tolstoy"
+ },
+ {
+  "id": "the-2003-cia-world-factbook-united-states-central-intelligence-agency",
+  "title": "The 2003 CIA World Factbook",
+  "author": "United States. Central Intelligence Agency"
+ },
+ {
+  "id": "the-big-fix-george-o-smith",
+  "title": "The Big Fix",
+  "author": "George O. Smith"
+ },
+ {
+  "id": "the-house-on-the-borderland-william-hope-hodgson",
+  "title": "The House on the Borderland",
+  "author": "William Hope Hodgson"
+ },
+ {
+  "id": "eighty-years-and-more-elizabeth-cady-stanton",
+  "title": "Eighty Years and More",
+  "author": "Elizabeth Cady Stanton"
+ },
+ {
+  "id": "the-ambulance-made-two-trips-murray-leinster",
+  "title": "The Ambulance Made Two Trips",
+  "author": "Murray Leinster"
+ },
+ {
+  "id": "the-valley-of-fear-arthur-conan-doyle",
+  "title": "The Valley of Fear",
+  "author": "Arthur Conan Doyle"
+ },
+ {
+  "id": "the-innocence-of-father-brown-g-k-chesterton",
+  "title": "The innocence of Father Brown",
+  "author": "G. K. Chesterton"
+ },
+ {
+  "id": "the-moonstone-wilkie-collins",
+  "title": "The Moonstone",
+  "author": "Wilkie Collins"
+ },
+ {
+  "id": "the-man-who-did-the-right-thing-harry-johnston",
+  "title": "The Man Who Did the Right Thing",
+  "author": "Harry Johnston"
+ },
+ {
+  "id": "paul-clifford-complete-edward-bulwer-lytton",
+  "title": "Paul Clifford — Complete",
+  "author": "Edward Bulwer Lytton, Baron Lytton"
+ },
+ {
+  "id": "ghost-stories-of-an-antiquary-m-r-james",
+  "title": "Ghost Stories of an Antiquary",
+  "author": "M. R. James"
+ },
+ {
+  "id": "his-last-bow-arthur-conan-doyle",
+  "title": "His last bow",
+  "author": "Arthur Conan Doyle"
+ },
+ {
+  "id": "celebrated-crimes-complete-alexandre-dumas",
+  "title": "Celebrated Crimes (Complete)",
+  "author": "Alexandre Dumas"
+ },
+ {
+  "id": "the-secret-adversary-agatha-christie",
+  "title": "The Secret Adversary",
+  "author": "Agatha Christie"
+ },
+ {
+  "id": "the-two-magics-henry-james",
+  "title": "The Two Magics",
+  "author": "Henry James"
+ },
+ {
+  "id": "friday-the-thirteenth-thomas-william-lawson",
+  "title": "Friday, the Thirteenth",
+  "author": "Thomas William Lawson"
+ },
+ {
+  "id": "the-cask-of-amontillado-edgar-allan-poe",
+  "title": "The Cask of Amontillado",
+  "author": "Edgar Allan Poe"
+ },
+ {
+  "id": "time-crime-h-beam-piper",
+  "title": "Time Crime",
+  "author": "H. Beam Piper"
+ },
+ {
+  "id": "by-advice-of-counsel-arthur-cheney-train",
+  "title": "By Advice of Counsel",
+  "author": "Arthur Cheney Train"
+ },
+ {
+  "id": "the-call-of-cthulhu-h-p-lovecraft",
+  "title": "The call of Cthulhu",
+  "author": "H. P. Lovecraft"
+ },
+ {
+  "id": "narrative-of-the-captivity-and-restoration-of-mrs-mary-rowlandson-mary-white-rowlandson",
+  "title": "Narrative of the Captivity and Restoration of Mrs. Mary Rowlandson",
+  "author": "Mary White Rowlandson"
+ },
+ {
+  "id": "the-secret-agent-joseph-conrad",
+  "title": "The Secret Agent",
+  "author": "Joseph Conrad"
+ },
+ {
+  "id": "the-mystery-of-the-yellow-room-gaston-leroux",
+  "title": "The Mystery of the Yellow Room",
+  "author": "Gaston Leroux"
+ },
+ {
+  "id": "the-red-house-mystery-a-a-milne",
+  "title": "The Red House Mystery",
+  "author": "A. A. Milne"
+ },
+ {
+  "id": "the-riddle-of-the-sands-erskine-childers",
+  "title": "The Riddle of the Sands",
+  "author": "Erskine Childers"
+ },
+ {
+  "id": "the-wisdom-of-father-brown-g-k-chesterton",
+  "title": "The wisdom of Father Brown",
+  "author": "G. K. Chesterton"
+ },
+ {
+  "id": "the-czar-s-spy-william-le-queux",
+  "title": "The Czar's Spy",
+  "author": "William Le Queux"
+ },
+ {
+  "id": "the-empty-house-and-other-ghost-stories-algernon-blackwood",
+  "title": "The Empty House and Other Ghost Stories",
+  "author": "Algernon Blackwood"
+ },
+ {
+  "id": "the-thirty-nine-steps-john-buchan",
+  "title": "The Thirty-Nine Steps",
+  "author": "John Buchan"
+ },
+ {
+  "id": "the-life-of-charles-dickens-vol-i-iii-complete-john-forster",
+  "title": "The Life of Charles Dickens, Vol. I-III, Complete",
+  "author": "John Forster"
+ },
+ {
+  "id": "ann-veronica-h-g-wells",
+  "title": "Ann Veronica",
+  "author": "H. G. Wells"
+ },
+ {
+  "id": "the-phantom-rickshaw-and-other-ghost-stories-rudyard-kipling",
+  "title": "The Phantom 'Rickshaw, and Other Ghost Stories",
+  "author": "Rudyard Kipling"
+ },
+ {
+  "id": "the-grand-babylon-hotel-arnold-bennett",
+  "title": "The Grand Babylon Hôtel",
+  "author": "Arnold Bennett"
+ },
+ {
+  "id": "love-at-arms-rafael-sabatini",
+  "title": "Love-at-arms",
+  "author": "Rafael Sabatini"
+ },
+ {
+  "id": "the-secret-of-the-night-gaston-leroux",
+  "title": "The Secret of the Night",
+  "author": "Gaston Leroux"
+ },
+ {
+  "id": "the-great-god-pan-arthur-machen",
+  "title": "The Great God Pan",
+  "author": "Arthur Machen"
+ },
+ {
+  "id": "the-real-adventure-henry-kitchell-webster",
+  "title": "The Real Adventure",
+  "author": "Henry Kitchell Webster"
+ },
+ {
+  "id": "the-yellow-crayon-e-phillips-oppenheim",
+  "title": "The Yellow Crayon",
+  "author": "E. Phillips Oppenheim"
+ },
+ {
+  "id": "gulliver-s-travels-into-several-remote-nations-of-the-world-jonathan-swift",
+  "title": "Gulliver's Travels into Several Remote Nations of the World",
+  "author": "Jonathan Swift"
+ },
+ {
+  "id": "just-around-the-corner-fannie-hurst",
+  "title": "Just Around the Corner",
+  "author": "Fannie Hurst"
+ },
+ {
+  "id": "the-gay-cockade-temple-bailey",
+  "title": "The Gay Cockade",
+  "author": "Temple Bailey"
+ },
+ {
+  "id": "the-daughter-of-anderson-crow-george-barr-mccutcheon",
+  "title": "The Daughter of Anderson Crow",
+  "author": "George Barr McCutcheon"
+ },
+ {
+  "id": "tales-of-terror-and-mystery-arthur-conan-doyle",
+  "title": "Tales of Terror and Mystery",
+  "author": "Arthur Conan Doyle"
+ },
+ {
+  "id": "children-of-the-whirlwind-leroy-scott",
+  "title": "Children of the Whirlwind",
+  "author": "Leroy Scott"
+ },
+ {
+  "id": "love-s-labour-s-lost-william-shakespeare",
+  "title": "Love's Labour's Lost",
+  "author": "William Shakespeare"
+ },
+ {
+  "id": "poirot-investigates-agatha-christie",
+  "title": "Poirot Investigates",
+  "author": "Agatha Christie"
+ },
+ {
+  "id": "trial-by-water-sewell-peaslee-wright",
+  "title": "Trial by water",
+  "author": "Sewell Peaslee Wright"
+ },
+ {
+  "id": "reminiscences-of-a-stock-operator-edwin-lefevre",
+  "title": "Reminiscences of a Stock Operator",
+  "author": "Edwin Lefevre"
+ },
+ {
+  "id": "ulysses-james-joyce",
+  "title": "Ulysses",
+  "author": "James Joyce"
+ },
+ {
+  "id": "the-zeppelin-s-passenger-e-phillips-oppenheim",
+  "title": "The Zeppelin's Passenger",
+  "author": "E. Phillips Oppenheim"
+ },
+ {
+  "id": "mr-standfast-john-buchan",
+  "title": "Mr. Standfast",
+  "author": "John Buchan"
+ },
+ {
+  "id": "terminal-compromise-winn-schwartau",
+  "title": "Terminal Compromise",
+  "author": "Winn Schwartau"
+ },
+ {
+  "id": "blue-grass-and-broadway-maria-thompson-daviess",
+  "title": "Blue-grass and Broadway",
+  "author": "Maria Thompson Daviess"
+ },
+ {
+  "id": "the-insidious-dr-fu-manchu-sax-rohmer",
+  "title": "The Insidious Dr. Fu Manchu",
+  "author": "Sax Rohmer"
+ },
+ {
+  "id": "the-heather-moon-c-n-williamson",
+  "title": "The Heather-Moon",
+  "author": "C. N. Williamson"
+ },
+ {
+  "id": "at-the-mountains-of-madness-h-p-lovecraft",
+  "title": "At the mountains of madness",
+  "author": "H. P. Lovecraft"
+ },
+ {
+  "id": "baron-trump-s-marvellous-underground-journey-ingersoll-lockwood",
+  "title": "Baron Trump's Marvellous Underground Journey",
+  "author": "Ingersoll Lockwood"
+ },
+ {
+  "id": "set-in-silver-c-n-williamson",
+  "title": "Set in Silver",
+  "author": "C. N. Williamson"
+ },
+ {
+  "id": "the-big-four-agatha-christie",
+  "title": "The Big Four",
+  "author": "Agatha Christie"
+ },
+ {
+  "id": "the-enchiridion-epictetus",
+  "title": "The Enchiridion",
+  "author": "Epictetus"
+ },
+ {
+  "id": "the-man-in-the-brown-suit-agatha-christie",
+  "title": "The Man in the Brown Suit",
+  "author": "Agatha Christie"
+ },
+ {
+  "id": "the-case-book-of-sherlock-holmes-arthur-conan-doyle",
+  "title": "The case-book of Sherlock Holmes",
+  "author": "Arthur Conan Doyle"
+ },
+ {
+  "id": "washington-confidential-jack-lait",
+  "title": "Washington Confidential",
+  "author": "Jack Lait"
+ },
+ {
+  "id": "the-metamorphoses-of-ovid-books-i-vii-ovid",
+  "title": "The Metamorphoses of Ovid, Books I-VII",
+  "author": "Ovid"
+ },
+ {
+  "id": "the-man-upstairs-and-other-stories-p-g-wodehouse",
+  "title": "The Man Upstairs and Other Stories",
+  "author": "P. G. Wodehouse"
+ },
+ {
+  "id": "the-seven-dials-mystery-agatha-christie",
+  "title": "The Seven Dials mystery",
+  "author": "Agatha Christie"
+ },
+ {
+  "id": "personal-memoirs-of-u-s-grant-complete-ulysses-s-grant",
+  "title": "Personal Memoirs of U. S. Grant, Complete",
+  "author": "Ulysses S. Grant"
+ },
+ {
+  "id": "the-knights-of-the-cross-or-krzyzacy-henryk-sienkiewicz",
+  "title": "The Knights of the Cross, or, Krzyzacy",
+  "author": "Henryk Sienkiewicz"
+ },
+ {
+  "id": "the-entailed-hat-george-alfred-townsend",
+  "title": "The Entailed Hat",
+  "author": "George Alfred Townsend"
+ },
+ {
+  "id": "the-secret-of-father-brown-g-k-chesterton",
+  "title": "The secret of Father Brown",
+  "author": "G. K. Chesterton"
+ },
+ {
+  "id": "plutarch-s-morals-plutarch",
+  "title": "Plutarch's Morals",
+  "author": "Plutarch"
+ },
+ {
+  "id": "calculus-made-easy-silvanus-p-thompson",
+  "title": "Calculus Made Easy",
+  "author": "Silvanus P. Thompson"
+ },
+ {
+  "id": "daughters-of-nijo-onoto-watanna",
+  "title": "Daughters of Nijo",
+  "author": "Onoto Watanna"
+ },
+ {
+  "id": "unnatural-death-dorothy-l-sayers",
+  "title": "Unnatural death",
+  "author": "Dorothy L. Sayers"
+ },
+ {
+  "id": "apology-plato",
+  "title": "Apology",
+  "author": "Plato"
+ },
+ {
+  "id": "the-torrents-of-spring-ivan-sergeevich-turgenev",
+  "title": "The Torrents of Spring",
+  "author": "Ivan Sergeevich Turgenev"
+ },
+ {
+  "id": "thus-spake-zarathustra-friedrich-wilhelm-nietzsche",
+  "title": "Thus Spake Zarathustra",
+  "author": "Friedrich Wilhelm Nietzsche"
+ },
+ {
+  "id": "fifteen-thousand-useful-phrases-grenville-kleiser",
+  "title": "Fifteen Thousand Useful Phrases",
+  "author": "Grenville Kleiser"
+ },
+ {
+  "id": "famous-affinities-of-history-lyndon-orr",
+  "title": "Famous Affinities of History",
+  "author": "Lyndon Orr"
+ },
+ {
+  "id": "scenes-in-the-life-of-harriet-tubman-sarah-h-bradford",
+  "title": "Scenes in the Life of Harriet Tubman",
+  "author": "Sarah H. Bradford"
+ },
+ {
+  "id": "plague-ship-andre-norton",
+  "title": "Plague Ship",
+  "author": "Andre Norton"
+ },
+ {
+  "id": "a-heart-song-of-to-day-disturbed-by-fire-from-the-unruly-member-annie-g-savigny",
+  "title": "A Heart-Song of To-day (Disturbed by Fire from the 'Unruly Member')",
+  "author": "Annie G. Savigny"
+ },
+ {
+  "id": "the-mystery-of-the-blue-train-agatha-christie",
+  "title": "The mystery of the Blue Train",
+  "author": "Agatha Christie"
+ },
+ {
+  "id": "the-amazing-marriage-complete-george-meredith",
+  "title": "The Amazing Marriage — Complete",
+  "author": "George Meredith"
+ },
+ {
+  "id": "desperate-remedies-thomas-hardy",
+  "title": "Desperate Remedies",
+  "author": "Thomas Hardy"
+ },
+ {
+  "id": "two-on-a-tower-thomas-hardy",
+  "title": "Two on a Tower",
+  "author": "Thomas Hardy"
+ },
+ {
+  "id": "tarrano-the-conqueror-ray-cummings",
+  "title": "Tarrano the Conqueror",
+  "author": "Ray Cummings"
+ },
+ {
+  "id": "the-missing-will-agatha-christie",
+  "title": "The Missing Will",
+  "author": "Agatha Christie"
+ },
+ {
+  "id": "the-hunter-s-lodge-case-agatha-christie",
+  "title": "The Hunter's Lodge Case",
+  "author": "Agatha Christie"
+ },
+ {
+  "id": "the-plymouth-express-affair-agatha-christie",
+  "title": "The Plymouth Express Affair",
+  "author": "Agatha Christie"
+ },
+ {
+  "id": "society-as-i-have-found-it-ward-mcallister",
+  "title": "Society as I Have Found It",
+  "author": "Ward McAllister"
+ },
+ {
+  "id": "kidnapped-robert-louis-stevenson",
+  "title": "Kidnapped",
+  "author": "Robert Louis Stevenson"
+ },
+ {
+  "id": "oedipus-king-of-thebes-sophocles",
+  "title": "Oedipus King of Thebes",
+  "author": "Sophocles"
+ },
+ {
+  "id": "david-copperfield-charles-dickens",
+  "title": "David Copperfield",
+  "author": "Charles Dickens"
+ },
+ {
+  "id": "the-crown-of-wild-olive-john-ruskin",
+  "title": "The Crown of Wild Olive",
+  "author": "John Ruskin"
+ },
+ {
+  "id": "the-hour-of-the-dragon-robert-e-howard",
+  "title": "The Hour of the Dragon",
+  "author": "Robert E. Howard"
+ },
+ {
+  "id": "changeling-and-other-stories-donn-byrne",
+  "title": "Changeling, and Other Stories",
+  "author": "Donn Byrne"
+ },
+ {
+  "id": "color-images-from-mars-rovers-bob-webster",
+  "title": "Color Images from Mars Rovers",
+  "author": "Bob Webster"
+ },
+ {
+  "id": "the-birth-of-tragedy-friedrich-wilhelm-nietzsche",
+  "title": "The Birth of Tragedy",
+  "author": "Friedrich Wilhelm Nietzsche"
+ },
+ {
+  "id": "the-people-of-the-black-circle-robert-e-howard",
+  "title": "The People of the Black Circle",
+  "author": "Robert E. Howard"
+ },
+ {
+  "id": "shadows-in-zamboula-robert-e-howard",
+  "title": "Shadows in Zamboula",
+  "author": "Robert E. Howard"
+ },
+ {
+  "id": "the-importance-of-being-earnest-oscar-wilde",
+  "title": "The Importance of Being Earnest",
+  "author": "Oscar Wilde"
+ },
+ {
+  "id": "shadows-in-the-moonlight-robert-e-howard",
+  "title": "Shadows in the Moonlight",
+  "author": "Robert E. Howard"
+ },
+ {
+  "id": "wanderfoot-the-dream-ship-cynthia-stockley",
+  "title": "Wanderfoot (The Dream Ship)",
+  "author": "Cynthia Stockley"
+ },
+ {
+  "id": "bacon-s-essays-and-wisdom-of-the-ancients-francis-bacon",
+  "title": "Bacon's Essays, and Wisdom of the Ancients",
+  "author": "Francis Bacon"
+ },
+ {
+  "id": "susan-b-anthony-alma-lutz",
+  "title": "Susan B. Anthony",
+  "author": "Alma Lutz"
+ },
+ {
+  "id": "the-candidate-joseph-a-altsheler",
+  "title": "The Candidate",
+  "author": "Joseph A. Altsheler"
+ },
+ {
+  "id": "the-prince-niccolo-machiavelli",
+  "title": "The Prince",
+  "author": "Niccolò Machiavelli"
+ },
+ {
+  "id": "the-prince-and-the-pauper-mark-twain",
+  "title": "The Prince and the Pauper",
+  "author": "Mark Twain"
+ },
+ {
+  "id": "phaedo-plato",
+  "title": "Phaedo",
+  "author": "Plato"
+ },
+ {
+  "id": "she-who-sleeps-sax-rohmer",
+  "title": "She who sleeps",
+  "author": "Sax Rohmer"
+ },
+ {
+  "id": "a-connecticut-yankee-in-king-arthur-s-court-mark-twain",
+  "title": "A Connecticut Yankee in King Arthur's Court",
+  "author": "Mark Twain"
+ },
+ {
+  "id": "the-republic-of-plato-plato",
+  "title": "The Republic of Plato",
+  "author": "Plato"
+ },
+ {
+  "id": "the-meditations-of-the-emperor-marcus-aurelius-antoninus-emperor-of-rome-marcus-aurelius",
+  "title": "The Meditations of the Emperor Marcus Aurelius Antoninus",
+  "author": "Emperor of Rome Marcus Aurelius"
+ },
+ {
+  "id": "jewels-of-gwahlur-robert-e-howard",
+  "title": "Jewels of Gwahlur",
+  "author": "Robert E. Howard"
+ },
+ {
+  "id": "the-place-of-honeymoons-harold-macgrath",
+  "title": "The Place of Honeymoons",
+  "author": "Harold MacGrath"
+ },
+ {
+  "id": "the-railway-children-e-nesbit",
+  "title": "The Railway Children",
+  "author": "E. Nesbit"
+ },
+ {
+  "id": "in-the-forbidden-land-arnold-henry-savage-landor",
+  "title": "In the forbidden land",
+  "author": "Arnold Henry Savage Landor"
+ },
+ {
+  "id": "the-divine-comedy-dante-alighieri",
+  "title": "The divine comedy",
+  "author": "Dante Alighieri"
+ },
+ {
+  "id": "my-own-story-emmeline-pankhurst",
+  "title": "My own story",
+  "author": "Emmeline Pankhurst"
+ },
+ {
+  "id": "the-legend-of-sleepy-hollow-washington-irving",
+  "title": "The Legend of Sleepy Hollow",
+  "author": "Washington Irving"
+ },
+ {
+  "id": "in-jeopardy-van-tassel-sutphen",
+  "title": "In Jeopardy",
+  "author": "Van Tassel Sutphen"
+ },
+ {
+  "id": "audubon-the-naturalist-francis-hobart-herrick",
+  "title": "Audubon the Naturalist",
+  "author": "Francis Hobart Herrick"
+ },
+ {
+  "id": "the-ultimate-weapon-john-w",
+  "title": "The Ultimate Weapon",
+  "author": "John W., Jr. Campbell"
+ },
+ {
+  "id": "hamlet-william-shakespeare",
+  "title": "Hamlet",
+  "author": "William Shakespeare"
+ },
+ {
+  "id": "aladdin-co-herbert-quick",
+  "title": "Aladdin & Co.",
+  "author": "Herbert Quick"
+ },
+ {
+  "id": "symposium-plato",
+  "title": "Symposium",
+  "author": "Plato"
+ },
+ {
+  "id": "concrete-construction-halbert-powers-gillette",
+  "title": "Concrete Construction",
+  "author": "Halbert Powers Gillette"
+ },
+ {
+  "id": "cruel-as-the-grave-emma-dorothy-eliza-nevitte-southworth",
+  "title": "Cruel as the grave",
+  "author": "Emma Dorothy Eliza Nevitte Southworth"
+ },
+ {
+  "id": "don-juan-george-gordon-byron",
+  "title": "Don Juan",
+  "author": "George Gordon Byron, Baron Byron"
+ },
+ {
+  "id": "the-divine-comedy-of-dante-alighieri-dante-alighieri",
+  "title": "The Divine Comedy of Dante Alighieri",
+  "author": "Dante Alighieri"
+ },
+ {
+  "id": "beyond-good-and-evil-friedrich-wilhelm-nietzsche",
+  "title": "Beyond Good and Evil",
+  "author": "Friedrich Wilhelm Nietzsche"
+ },
+ {
+  "id": "the-battle-of-the-strong-gilbert-parker",
+  "title": "The Battle of the Strong",
+  "author": "Gilbert Parker"
+ },
+ {
+  "id": "a-princess-of-mars-edgar-rice-burroughs",
+  "title": "A princess of Mars",
+  "author": "Edgar Rice Burroughs"
+ },
+ {
+  "id": "twelve-years-a-slave-solomon-northup",
+  "title": "Twelve Years a Slave",
+  "author": "Solomon Northup"
+ },
+ {
+  "id": "the-yellow-wallpaper-charlotte-perkins-gilman",
+  "title": "The Yellow Wallpaper",
+  "author": "Charlotte Perkins Gilman"
+ },
+ {
+  "id": "the-mysterious-island-jules-verne",
+  "title": "The Mysterious Island",
+  "author": "Jules Verne"
+ },
+ {
+  "id": "red-nails-robert-e-howard",
+  "title": "Red Nails",
+  "author": "Robert E. Howard"
+ },
+ {
+  "id": "anabasis-xenophon",
+  "title": "Anabasis",
+  "author": "Xenophon"
+ },
+ {
+  "id": "firebrand-trevison-charles-alden-seltzer",
+  "title": "'Firebrand' Trevison",
+  "author": "Charles Alden Seltzer"
+ },
+ {
+  "id": "letters-of-asa-gray-asa-gray",
+  "title": "Letters of Asa Gray",
+  "author": "Asa Gray"
+ },
+ {
+  "id": "le-morte-d-arthur-thomas",
+  "title": "Le Morte d'Arthur",
+  "author": "Thomas, Sir Malory"
+ },
+ {
+  "id": "aesop-s-fables-aesop",
+  "title": "Aesop's Fables",
+  "author": "Aesop"
+ },
+ {
+  "id": "walden-and-on-the-duty-of-civil-disobedience-henry-david-thoreau",
+  "title": "Walden, and On The Duty Of Civil Disobedience",
+  "author": "Henry David Thoreau"
+ },
+ {
+  "id": "leviathan-thomas-hobbes",
+  "title": "Leviathan",
+  "author": "Thomas Hobbes"
+ },
+ {
+  "id": "a-modest-proposal-jonathan-swift",
+  "title": "A Modest Proposal",
+  "author": "Jonathan Swift"
+ }
+]
