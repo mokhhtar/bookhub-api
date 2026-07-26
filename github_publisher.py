@@ -42,6 +42,12 @@ GITHUB_PAT = os.environ.get("GITHUB_PAT", "")
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "mokhhtar/bookhub")
 GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main")
 PUBLISH_ENABLED = os.environ.get("GITHUB_PUBLISH_ENABLED", "false").lower() == "true"
+# Pre-launch stance: publish pages but grant NO new indexing. Suppresses the
+# v3 free-ebook rule below for pages being created; it never demotes a page
+# that is already indexed (see _carried_index_state). Flip to false at launch,
+# then run a promotion pass — clearing the flag alone won't retro-index
+# anything, since an up-to-date page is never rewritten.
+DEFER_INDEXING = os.environ.get("DEFER_INDEXING", "false").lower() == "true"
 
 _HEADERS = {
     "Authorization": f"Bearer {GITHUB_PAT}",
@@ -258,7 +264,35 @@ def _is_publishable(result: dict) -> bool:
     return len(text) >= MIN_SUMMARY_CHARS
 
 
-def _book_markdown(result: dict, book_slug: str, a_slug: str) -> str:
+_INDEX_LINE_RE = re.compile(r"^(noindex|sitemap):\s*(true|false)\s*$", re.MULTILINE)
+
+
+def _carried_index_state(existing_markdown: str | None) -> list[str] | None:
+    """The indexing lines an already-published page is carrying, or None if it
+    carries none (and so should be decided fresh).
+
+    Republish regenerates the WHOLE front matter from _book_markdown, which
+    only ever knew the free-ebook rule. That silently destroys any indexing a
+    page earned some other way — and there are two such ways:
+      · tools/indexing.py promotes an engaged page by surgically inserting
+        noindex:false. The next version bump wiped it. The second half of the
+        indexing policy was being erased every time we shipped a feature.
+      · with DEFER_INDEXING on, a page indexed under the old rule would be
+        demoted the moment any v-bump rewrote it.
+    So a rewrite now carries the existing state forward verbatim. Indexing is
+    granted deliberately and removed deliberately — never as a side effect of
+    shipping something else.
+    """
+    if not existing_markdown:
+        return None
+    found = {key: value for key, value in _INDEX_LINE_RE.findall(existing_markdown)}
+    if not found:
+        return None
+    return [f"{key}: {found[key]}" for key in ("noindex", "sitemap") if key in found]
+
+
+def _book_markdown(result: dict, book_slug: str, a_slug: str,
+                   existing_markdown: str | None = None) -> str:
     # Sanitize at the page boundary — this HTML is written raw into the public
     # static page (see _sanitize_summary_html). description is derived from the
     # sanitized text, which is fine (still plain text after tag-strip).
@@ -331,9 +365,13 @@ def _book_markdown(result: dict, book_slug: str, a_slug: str) -> str:
         # front matter overrides the collection default.
         # PROJECT GUTENBERG ONLY: Internet Archive "free" books are scanned
         # page images (no real text/download value), so they don't qualify.
-        *(["noindex: false", "sitemap: true"]
-          if (result.get("free_ebook") or {}).get("source") == "project_gutenberg"
-          else []),
+        # A page that ALREADY carries an indexing decision keeps it, whoever
+        # made it; DEFER_INDEXING withholds the grant from new pages only.
+        *(_carried_index_state(existing_markdown)
+          or ([] if DEFER_INDEXING else
+              ["noindex: false", "sitemap: true"]
+              if (result.get("free_ebook") or {}).get("source") == "project_gutenberg"
+              else [])),
         f"quotes: {_yaml_json(result.get('quotes'))}",
         f"quiz: {_yaml_json(quiz_questions)}",
         f"quiz_source: {_yaml_str(quiz_source)}",
@@ -457,7 +495,7 @@ def publish_book(result: dict) -> None:
                 # content format is older than the current version; otherwise
                 # it's up to date.
                 if _page_content_version(content) < PUBLISH_CONTENT_VERSION:
-                    md = _book_markdown(result, book_slug, a_slug)
+                    md = _book_markdown(result, book_slug, a_slug, content)
                     if _update_file(path, md,
                                     f"Refresh book page to v{PUBLISH_CONTENT_VERSION}: {title}", sha):
                         log.info(f"Refreshed stale book page ({path}) to v{PUBLISH_CONTENT_VERSION}")
@@ -471,7 +509,7 @@ def publish_book(result: dict) -> None:
                 if c_exists:
                     if (gid and gid in c_content) or _same_book(c_content, title, a_slug):
                         if _page_content_version(c_content) < PUBLISH_CONTENT_VERSION:
-                            md = _book_markdown(result, candidate, a_slug)
+                            md = _book_markdown(result, candidate, a_slug, c_content)
                             if _update_file(f"_books/{candidate}.md", md,
                                             f"Refresh book page to v{PUBLISH_CONTENT_VERSION}: {title}", c_sha):
                                 log.info(f"Refreshed stale book page (_books/{candidate}.md)")
