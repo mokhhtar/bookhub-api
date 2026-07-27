@@ -18,6 +18,7 @@ If neither source finds the book, callers MUST surface an honest
 
 import os
 import re
+import time
 import logging
 import urllib.parse
 from dataclasses import dataclass, field
@@ -1263,7 +1264,22 @@ def verify_book_exists(title: str, author: str = "") -> Optional[dict]:
 
     target = re.sub(r"[^a-z0-9]", "", normalize_book_query(title).lower())
     try:
-        resp = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=6.0)
+        # 6s with no retry was too tight: a run of SSL handshake timeouts to
+        # Google Books emptied the homepage's book and quote cards, because
+        # both are gated on this call. One retry on a TRANSPORT failure only —
+        # a 200 that simply doesn't match is a real answer and isn't retried.
+        # Callers that loop (similar-books) do so across a 6-thread pool, so
+        # the extra ceiling costs wall time only during an actual outage.
+        resp = None
+        for attempt in (1, 2):
+            try:
+                resp = httpx.get(GOOGLE_BOOKS_API, params=params, headers=HEADERS, timeout=10.0)
+                break
+            except Exception as e:
+                if attempt == 2:
+                    raise
+                log.info(f"verify_book_exists retrying '{title}' after {type(e).__name__}")
+                time.sleep(1.0)
         if resp.status_code != 200:
             return None
         for it in resp.json().get("items", []) or []:

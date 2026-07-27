@@ -210,15 +210,33 @@ Return ONLY JSON: {{"quotes": [{{"text": "...", "book_title": "...", "author": "
     day_index = sum(ord(c) for c in date_str) % len(CURATED_QUOTES)
     candidates += [CURATED_QUOTES[(day_index + i) % len(CURATED_QUOTES)] for i in range(len(CURATED_QUOTES))]
 
+    # Gemini's proposals must be verified — they can be invented. The CURATED
+    # list cannot: every entry was checked by hand before it was written here,
+    # which is the entire point of it existing.
+    #
+    # Gating both behind the same live Google Books call is what actually
+    # emptied this card. On 2026-07-27 that lookup was timing out (6s, no
+    # retry) and 4 of 5 curated quotes "failed verification" — so the
+    # guaranteed fallback guaranteed nothing, and the homepage lost its quote
+    # band for two days. A network hiccup must never be able to veto data we
+    # already verified ourselves.
+    curated_texts = {(_normalize_quote(c["text"])) for c in CURATED_QUOTES}
+
     repeat_fallback = None
     for q in candidates:
         text = (q.get("text") or "").strip()
         if not text:
             continue
+        is_curated = _normalize_quote(text) in curated_texts
         verified = book_data.verify_book_exists(q.get("book_title", ""), q.get("author", ""))
-        if not verified:
+        if not verified and not is_curated:
             continue
-        result = {"text": text[:400], "book": verified, "source": "gemini+google_books"}
+        if not verified:
+            # Curated entry, catalog unreachable: show it with the title and
+            # author we hand-checked, minus the catalog extras (cover, link).
+            verified = {"title": q.get("book_title", ""), "author": q.get("author", "")}
+        result = {"text": text[:400], "book": verified,
+                  "source": "curated" if is_curated else "gemini+google_books"}
         # Containment, not equality: Gemini re-proposes famous quotes in
         # longer/shorter variants ("...best of times." vs "...age of
         # foolishness...") — any overlap with a recent entry is a repeat.
@@ -265,18 +283,43 @@ def daily():
     date_str = now.strftime("%Y-%m-%d")
     key = f"daily:{date_str}"
 
-    cached = cache.get_key(key)
-    if cached:
+    cached = cache.get_key(key) or {}
+    if cached.get("book") and cached.get("author") and cached.get("quote"):
         return cached
 
     # One builder per day across instances; losers of the race just build too
     # (idempotent, only costs a few extra API calls in a rare tie).
     cache.acquire_lock(f"daily:lock:{date_str}", ttl=120)
 
-    payload = _build_daily(date_str, now.strftime("%m"), now.strftime("%d"))
-    # Cache even a partially-null payload for the whole day (48h TTL covers
-    # timezone stragglers) — but if EVERYTHING failed, only cache briefly so
-    # a transient outage doesn't blank the homepage all day.
-    all_failed = not (payload.get("book") or payload.get("author") or payload.get("quote"))
-    cache.set_key(key, payload, ttl=600 if all_failed else 60 * 60 * 48)
+    # Only rebuild the sections that are actually missing. Each is an
+    # independent grounded lookup, and they fail independently: on 2026-07-27
+    # the Wikimedia feeds were fine and the author card was built, but Google
+    # Books timed out, so book and quote came back null.
+    #
+    # The old code cached whatever it got for 48 HOURS unless EVERY section
+    # failed, so one section surviving was enough to freeze the other two
+    # empty for two days. Now a section that succeeded is kept and a section
+    # that failed is retried on the next request — a slow minute at Google
+    # Books costs one request, not a weekend.
+    payload = dict(cached)
+    payload["date"] = date_str
+    missing = [k for k in ("book", "author", "quote") if not payload.get(k)]
+    if missing:
+        mm, dd = now.strftime("%m"), now.strftime("%d")
+        events = _fetch_onthisday("events", mm, dd) if "book" in missing else []
+        births = _fetch_onthisday("births", mm, dd) if "author" in missing else []
+        builders = {
+            "book": lambda: _pick_book_of_day(events),
+            "author": lambda: _pick_author_of_day(births),
+            "quote": lambda: _pick_quote_of_day(date_str),
+        }
+        for name in missing:
+            try:
+                payload[name] = builders[name]()
+            except Exception as e:
+                log.warning(f"Daily section '{name}' failed to build: {e}")
+                payload[name] = None
+
+    complete = all(payload.get(k) for k in ("book", "author", "quote"))
+    cache.set_key(key, payload, ttl=60 * 60 * 48 if complete else 900)
     return payload
