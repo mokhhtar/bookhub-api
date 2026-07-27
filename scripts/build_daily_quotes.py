@@ -90,6 +90,9 @@ def collect() -> list[dict]:
                 "book_title": title,
                 "author": author,
                 "book_url": f"/summary/{slug}/",
+                # Carried so the same rows can back the book card's fallback
+                # (see _book_from_our_shelf) without a catalog lookup.
+                "cover_url": _front(head, "cover_url"),
                 "source_url": block.get("source_url") or "",
                 "license": block.get("license") or "CC BY-SA",
             })

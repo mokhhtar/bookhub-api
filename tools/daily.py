@@ -135,10 +135,76 @@ def _fetch_onthisday(kind: str, mm: str, dd: str) -> list[dict]:
     return []
 
 
-def _pick_book_of_day(events: list[dict]) -> dict | None:
+def _connection_holds(cand: dict, events: list[dict]) -> bool:
+    """Second pass over the CLAIM, not just the book's existence.
+
+    verify_book_exists only ever proved the title is a real book. Nothing
+    checked that the link between the event and the book was true, so the card
+    could pair a genuine event with a genuine book and a sentence connecting
+    them that was invented — the one thing the grounding rule exists to
+    prevent, hiding behind two verified halves.
+
+    Refuses on anything but an explicit yes, including its own failure: a card
+    that doesn't run beats a card that asserts something we can't stand behind.
+    """
+    idx = cand.get("event_index")
+    if not isinstance(idx, int) or not (0 <= idx < len(events)):
+        return False
+    connection = (cand.get("connection") or "").strip()
+    title = (cand.get("title") or "").strip()
+    if not connection or not title:
+        return False
+
+    event_text = (events[idx].get("text") or "")[:300]
+    prompt = f"""EVENT (real, from an encyclopaedia): {event_text}
+
+BOOK: "{title}" by {cand.get("author", "")}
+
+CLAIM: {connection}
+
+Is this claim accurate — is the book genuinely connected to this event in the way described, and would a well-read person accept the link without objection?
+
+Answer true ONLY if you are confident. A tenuous thematic association, a wrong author, a book that only sounds related, or anything you are unsure about must be false.
+
+Return ONLY JSON: {{"accurate": true or false}}"""
+    try:
+        verdict = gemini_client.parse_json_response(gemini_client.generate(prompt))
+        return verdict.get("accurate") is True
+    except Exception as e:
+        log.warning(f"Book-of-day connection check failed for '{title}': {e}")
+        return False
+
+
+def _book_from_our_shelf(date_str: str) -> dict | None:
+    """Fallback when no event/book link survives the accuracy check.
+
+    Some days simply have no event a book honestly connects to, and the
+    alternative to this is a blank card every hour until midnight. Showing a
+    book we publish is true on its own terms — it makes no claim about the
+    date — and it sends the visitor to a real page of ours. Deterministic per
+    day so it doesn't change under a reader mid-visit.
+    """
+    by_url: dict[str, dict] = {}
+    for q in CURATED_QUOTES:
+        if q.get("book_url"):
+            by_url.setdefault(q["book_url"], q)
+    if not by_url:
+        return None
+    shelf = sorted(by_url.values(), key=lambda q: q["book_url"])
+    pick = shelf[sum(ord(c) for c in date_str) % len(shelf)]
+    return {
+        "title": pick["book_title"],
+        "author": pick["author"],
+        "cover_url": pick.get("cover_url") or "",
+        "book_url": pick["book_url"],
+        "source": "litheca_shelf",
+    }
+
+
+def _pick_book_of_day(events: list[dict], date_str: str) -> dict | None:
     """Gemini relates a REAL event to 3 candidate books; first verified wins."""
     if not events:
-        return None
+        return _book_from_our_shelf(date_str)
     trimmed = [
         {"i": i, "year": e.get("year"), "text": (e.get("text") or "")[:200]}
         for i, e in enumerate(events[:25])
@@ -155,10 +221,12 @@ Real, widely available books only. Return ONLY the JSON."""
         data = gemini_client.parse_json_response(gemini_client.generate(prompt))
     except Exception as e:
         log.warning(f"Book-of-day proposal failed: {e}")
-        return None
+        return _book_from_our_shelf(date_str)
 
     for cand in (data.get("candidates") or [])[:3]:
         if not isinstance(cand, dict):
+            continue
+        if not _connection_holds(cand, events):
             continue
         idx = cand.get("event_index")
         if not isinstance(idx, int) or not (0 <= idx < len(events)):
@@ -171,7 +239,7 @@ Real, widely available books only. Return ONLY the JSON."""
                 "event": {"year": ev.get("year"), "text": (ev.get("text") or "")[:300]},
                 "connection": (cand.get("connection") or "")[:300],
             }
-    return None
+    return _book_from_our_shelf(date_str)
 
 
 def _pick_author_of_day(births: list[dict]) -> dict | None:
@@ -330,17 +398,6 @@ Return ONLY JSON: {{"quotes": [{{"text": "...", "book_title": "...", "author": "
     return repeat_fallback
 
 
-def _build_daily(date_str: str, mm: str, dd: str) -> dict:
-    events = _fetch_onthisday("events", mm, dd)
-    births = _fetch_onthisday("births", mm, dd)
-    return {
-        "date": date_str,
-        "book": _pick_book_of_day(events),
-        "author": _pick_author_of_day(births),
-        "quote": _pick_quote_of_day(date_str),
-    }
-
-
 @router.options("/daily")
 def daily_options():
     # Some uptime monitors probe with OPTIONS instead of GET — respond
@@ -388,7 +445,7 @@ def daily():
         events = _fetch_onthisday("events", mm, dd) if "book" in missing else []
         births = _fetch_onthisday("births", mm, dd) if "author" in missing else []
         builders = {
-            "book": lambda: _pick_book_of_day(events),
+            "book": lambda: _pick_book_of_day(events, date_str),
             "author": lambda: _pick_author_of_day(births),
             "quote": lambda: _pick_quote_of_day(date_str),
         }
