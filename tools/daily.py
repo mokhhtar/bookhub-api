@@ -14,7 +14,9 @@ The whole payload is computed once per UTC day (first visitor pays ~5-10s),
 cached in Redis under daily:YYYY-MM-DD, and shared by every visitor. Each
 top-level section is nullable — the homepage renders whatever verified.
 """
+import json
 import logging
+import os
 import re
 from datetime import datetime, timezone
 
@@ -70,8 +72,13 @@ def _author_score(w: dict) -> int:
 
 # Curated fallback quotes — every book pre-verified by hand. Used when none
 # of Gemini's daily candidates survive verification, so the card never fails.
-# (Upgrade path: grow this to 366 and drop the Gemini step entirely.)
-CURATED_QUOTES = [
+#
+# These ten are the FLOOR, not the well. The real pool is data/daily_quotes.json
+# (built by scripts/build_daily_quotes.py from the Wikiquote blocks already
+# committed in the site's book pages — real, attributed, and each one linking
+# to a page we publish). Ten entries against a 30-day no-repeat window
+# exhausts itself in under two weeks; the generated file carries 122.
+_BASE_CURATED_QUOTES = [
     {"text": "It is our choices, Harry, that show what we truly are, far more than our abilities.",
      "book_title": "Harry Potter and the Chamber of Secrets", "author": "J.K. Rowling"},
     {"text": "Not all those who wander are lost.",
@@ -93,6 +100,28 @@ CURATED_QUOTES = [
     {"text": "There is some good in this world, and it's worth fighting for.",
      "book_title": "The Two Towers", "author": "J.R.R. Tolkien"},
 ]
+
+
+def _load_quote_well() -> list[dict]:
+    """The generated well, with the hardcoded ten appended as a floor.
+
+    Missing or unreadable file → the ten still ship, so the card degrades to
+    what it did before instead of to nothing. Read once at import; the file is
+    committed alongside the code and never changes at runtime."""
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "data", "daily_quotes.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            rows = json.load(f)
+        if isinstance(rows, list) and rows:
+            log.info(f"Daily quote well loaded: {len(rows)} quotes from our own pages.")
+            return rows + _BASE_CURATED_QUOTES
+    except Exception as e:
+        log.warning(f"Daily quote well unavailable ({e}) — falling back to the base ten.")
+    return list(_BASE_CURATED_QUOTES)
+
+
+CURATED_QUOTES = _load_quote_well()
 
 
 def _fetch_onthisday(kind: str, mm: str, dd: str) -> list[dict]:
@@ -278,6 +307,15 @@ Return ONLY JSON: {{"quotes": [{{"text": "...", "book_title": "...", "author": "
             verified = {"title": q.get("book_title", ""), "author": q.get("author", "")}
         result = {"text": text[:400], "book": verified,
                   "source": "curated" if is_curated else "gemini+google_books"}
+        # Quotes drawn from our own pages carry their page link and their
+        # Wikiquote origin. book_url points the card at a book page we publish
+        # instead of the dynamic summarizer; source_url IS the CC BY-SA
+        # attribution the licence requires, the same one book pages render.
+        if q.get("book_url"):
+            result["book_url"] = q["book_url"]
+        if q.get("source_url"):
+            result["source_url"] = q["source_url"]
+            result["license"] = q.get("license") or "CC BY-SA"
         # Containment, not equality: Gemini re-proposes famous quotes in
         # longer/shorter variants ("...best of times." vs "...age of
         # foolishness...") — any overlap with a recent entry is a repeat.
