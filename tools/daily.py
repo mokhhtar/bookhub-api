@@ -32,9 +32,41 @@ router = APIRouter()
 WIKI_FEED = "https://api.wikimedia.org/feed/v1/wikipedia/en/onthisday"
 HEADERS = {"User-Agent": "BookHub/1.0 (mokhhtar@github.com)"}
 
+# Word boundaries are load-bearing. Without them "writer" matched inside
+# "singer-songwriter" and "screenwriter", and 6 of the 31 people who passed
+# this gate on 2026-07-27 were musicians or television writers.
 _WRITER_RE = re.compile(
-    r"writer|novelist|author|poet|playwright|essayist", re.IGNORECASE
+    r"\b(?:writer|novelist|author|poet|playwright|essayist)\b", re.IGNORECASE
 )
+
+# Someone described as a novelist or a poet is a book author by trade. "Author"
+# on its own is the weakest of the qualifying words — it is what Wikipedia
+# writes for "game designer and author" — so it ranks below the specific ones.
+_BOOK_TRADE_RE = re.compile(
+    r"\b(?:novelist|poet|playwright|essayist|writer)\b", re.IGNORECASE
+)
+
+
+def _author_score(w: dict) -> int:
+    """Cheap notability ranking from data already in the feed response.
+
+    Needed because the feed is ordered by birth year DESCENDING and the code
+    below only ever showed Gemini the first 15 candidates — so on a normal day
+    the window stopped around 1927 and every classic author born earlier was
+    dropped before the model ever saw them. Ranking first, truncating second,
+    puts them back in contention.
+
+    Deliberately no Wikipedia pageview lookup: that is one HTTP call per
+    candidate (31 today) against a service that had just demonstrated it can
+    time out, and these three signals come free in the response we already have.
+    """
+    score = 0
+    if _BOOK_TRADE_RE.search(w.get("description") or ""):
+        score += 3          # "novelist" beats a generic "author"
+    if w.get("photo_url"):
+        score += 2          # a maintained article usually has an image
+    score += min(len(w.get("extract") or "") // 400, 4)   # longer article, bigger figure
+    return score
 
 # Curated fallback quotes — every book pre-verified by hand. Used when none
 # of Gemini's daily candidates survive verification, so the card never fails.
@@ -137,30 +169,39 @@ def _pick_author_of_day(births: list[dict]) -> dict | None:
     if not writers:
         return None
 
+    # Rank BEFORE truncating. The feed arrives newest-birth-first, so slicing
+    # the raw order cut the window off around 1927 on a typical day and no
+    # classic author ever reached the model.
+    writers.sort(key=_author_score, reverse=True)
+    shortlist = writers[:15]
+
     # Let Gemini pick the most notable writer and write the grounded blurb.
     listing = "\n".join(f"[{i}] {w['name']} (b. {w['born_year']}) — {w['description']}"
-                        for i, w in enumerate(writers[:15]))
+                        for i, w in enumerate(shortlist))
     prompt = f"""These real authors were born on today's date:
 
 {listing}
 
-Pick the single most notable/interesting one for a book-lover audience. Then, using ONLY the extract below for that author, write a 1-2 sentence blurb. Optionally name their single most famous book.
+Pick the one whose BOOKS a reader is most likely to know. Prefer novelists, poets and playwrights over people who write in another medium — a game designer, screenwriter or musician described as an "author" is the wrong answer here even when their article is the longest. Then, using ONLY the extract below for that author, write a 1-2 sentence blurb. Optionally name their single most famous book.
 
 EXTRACTS:
-{chr(10).join(f"[{i}] {w['extract'][:400]}" for i, w in enumerate(writers[:15]))}
+{chr(10).join(f"[{i}] {w['extract'][:400]}" for i, w in enumerate(shortlist))}
 
 Return ONLY JSON: {{"index": 0, "blurb": "...", "notable_book_title": "..." or null}}"""
     try:
         data = gemini_client.parse_json_response(gemini_client.generate(prompt))
         idx = data.get("index")
-        chosen = writers[idx] if isinstance(idx, int) and 0 <= idx < len(writers) else writers[0]
+        # Falling back to shortlist[0] means the best-ranked candidate; it used
+        # to mean whoever the feed happened to list first, i.e. the most
+        # recently born person on the list.
+        chosen = shortlist[idx] if isinstance(idx, int) and 0 <= idx < len(shortlist) else shortlist[0]
         blurb = (data.get("blurb") or "")[:400]
         notable = None
         if data.get("notable_book_title"):
             notable = book_data.verify_book_exists(data["notable_book_title"], chosen["name"])
     except Exception as e:
         log.warning(f"Author-of-day selection failed: {e}")
-        chosen, blurb, notable = writers[0], "", None
+        chosen, blurb, notable = shortlist[0], "", None
 
     result = {k: v for k, v in chosen.items() if k != "extract"}
     result["blurb"] = blurb or chosen["description"]
