@@ -41,6 +41,10 @@ import httpx
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from slug import book_slug  # noqa: E402
+from make_gtb_puzzles import litheca_url  # noqa: E402
+
+# The published site, for the title+author fallback lookup.
+SITE_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "bookhub"))
 from tools.gtb_pool import GTB_POOL  # noqa: E402
 
 API = os.environ.get("LITHECA_API", "https://bookhub-api-hnv7.onrender.com")
@@ -77,18 +81,66 @@ def summarize(title: str, author: str) -> tuple[bool, str]:
         return False, f"{type(e).__name__}: {e}"
 
 
-def page_index_state(slug: str) -> tuple[bool, str]:
-    """→ (page exists, one of 'indexed' / 'noindex' / 'absent')."""
-    try:
-        r = httpx.get(f"{RAW}/{slug}.md", headers=UA, timeout=30.0)
-        if r.status_code != 200:
-            return False, "absent"
-        head = r.text[:4000]
-        if re.search(r"^noindex:\s*false\s*$", head, re.MULTILINE):
-            return True, "indexed"
-        return True, "noindex"
-    except Exception:
+def _state_of(markdown: str) -> str:
+    if re.search(r"^noindex:\s*false\s*$", markdown[:4000], re.MULTILINE):
+        return "indexed"
+    return "noindex"
+
+
+def _fetch_md(slug: str) -> str | None:
+    """Page source, "" for a real 404, None when the fetch itself failed.
+
+    That third case matters. Collapsing a timeout into "absent" made the
+    checker report two published books as missing on one run and two
+    different ones on the next — noise that would eventually get the whole
+    report ignored, or worse, get a page published twice."""
+    for attempt in (1, 2):
+        try:
+            r = httpx.get(f"{RAW}/{slug}.md", headers=UA, timeout=30.0)
+            if r.status_code == 404:
+                return ""
+            if r.status_code == 200:
+                return r.text
+        except Exception:
+            pass
+        time.sleep(1.5)
+    return None
+
+
+def slug_index_state(slug: str) -> tuple[bool, str]:
+    """State of one known slug — used right after a publish, where the API has
+    already told us the exact slug it wrote."""
+    md = _fetch_md(slug)
+    if md is None:
+        return False, "unknown"
+    if md == "":
         return False, "absent"
+    return True, _state_of(md)
+
+
+def page_index_state(entry) -> tuple[bool, str]:
+    """→ (page exists, one of 'indexed' / 'noindex' / 'absent').
+
+    Tries the slug the pool's title implies, then falls back to searching the
+    published pages by title words + author surname. The publisher names a
+    page after whatever Google Books resolved, so a slug guess misses often:
+    The Jungle Book published as jungle-book, Metamorphosis as
+    the-metamorphosis, Adventures of Huckleberry Finn with a leading "The".
+    Reporting three published books as missing is how a checker teaches you to
+    ignore it.
+    """
+    md = _fetch_md(book_slug(entry.title))
+    if md:
+        return True, _state_of(md)
+    guessed_ok = md is not None   # "" means a genuine 404, None means we don't know
+
+    url = litheca_url(entry, SITE_ROOT)
+    if url.startswith("/summary/?b="):
+        return (False, "absent") if guessed_ok else (False, "unknown")
+    md = _fetch_md(url.strip("/").split("/")[-1])
+    if md:
+        return True, _state_of(md)
+    return (False, "absent") if md is not None else (False, "unknown")
 
 
 def main() -> int:
@@ -102,20 +154,25 @@ def main() -> int:
     if args.check_only:
         indexed = missing = fine = 0
         for entry in GTB_POOL:
-            exists, state = page_index_state(book_slug(entry.title))
-            mark = {"indexed": "INDEXED", "noindex": "ok", "absent": "no page"}[state]
+            exists, state = page_index_state(entry)
+            mark = {"indexed": "INDEXED", "noindex": "ok", "absent": "no page",
+                    "unknown": "check failed"}[state]
             print(f"  {entry.title:<44} {mark}")
             indexed += state == "indexed"
             missing += state == "absent"
             fine += state == "noindex"
-        print(f"\n{fine} published+noindex · {indexed} INDEXED · {missing} not published")
+        unknown = len(GTB_POOL) - fine - indexed - missing
+        print(f"\n{fine} published+noindex · {indexed} INDEXED · {missing} not published"
+              + (f" · {unknown} could not be checked" if unknown else ""))
         return 0
 
     if not wake_api():
         print("API unreachable — aborting.")
         return 2
 
-    todo = [e for e in GTB_POOL if page_index_state(book_slug(e.title))[1] == "absent"]
+    # "unknown" is deliberately NOT in this list: re-publishing a book whose
+    # page we merely failed to fetch is how duplicates get made.
+    todo = [e for e in GTB_POOL if page_index_state(e)[1] == "absent"]
     if args.limit:
         todo = todo[:args.limit]
     print(f"{len(todo)} book(s) to publish.\n")
@@ -130,7 +187,7 @@ def main() -> int:
             continue
 
         time.sleep(PUBLISH_SETTLE_SECONDS)
-        exists, state = page_index_state(detail)
+        exists, state = slug_index_state(detail)
         if not exists:
             print(f"    no page at _books/{detail}.md yet (publish may still be settling)")
             failed += 1
