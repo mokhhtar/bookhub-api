@@ -521,24 +521,63 @@ def decode_reveal(blob: str, date: str) -> dict:
 
 # ── site links ───────────────────────────────────────────────
 
+_ARTICLES = {"the", "a", "an", "of", "and", "or"}
+
+
+def _title_words(title: str) -> set[str]:
+    return {w for w in re.split(r"[^a-z0-9]+", title.split(":")[0].lower())
+            if w and w not in _ARTICLES}
+
+
+def _surname(author: str) -> str:
+    """Surname of the FIRST author, matching slug.author_slug's convention.
+
+    Book pages carry editors and translators in the same field —
+    "Nathaniel Hawthorne, Ross C. Murfin" — so taking the last token of the
+    whole string yielded "Murfin" and lost The Scarlet Letter its page."""
+    first = author.split(",")[0]
+    parts = [p for p in re.split(r"[^A-Za-z]+", first) if p]
+    return parts[-1].lower() if parts else ""
+
+
+def _front(head: str, key: str) -> str:
+    m = re.search(rf'^{key}:\s*"?([^"\n]+)"?\s*$', head, re.M)
+    return m.group(1).strip() if m else ""
+
+
 def litheca_url(entry: PoolEntry, site_root: str) -> str:
     """Prefer a real published static page; fall back to the dynamic
     Summarizer keyed on canonical_id (`?b=` — the clean share slug summary.html
-    already resolves)."""
+    already resolves).
+
+    Matched on title words + author surname rather than on canonical_id,
+    because the publisher builds that id from whatever Google Books resolved
+    and it routinely differs from the pool's wording:
+      "Adventures of Huckleberry Finn" → the-adventures-of-huckleberry-finn-…
+      "F. Scott Fitzgerald"            → …-francis-scott-key-fitzgerald
+      "H. G. Wells"                    → …-hg-wells
+    An exact-id match missed all three, so those puzzles kept sending winners
+    to a sleeping Render instance while a perfectly good page already existed.
+    """
     books_dir = os.path.join(site_root, "_books")
-    if os.path.isdir(books_dir):
-        for name in os.listdir(books_dir):
+    want_words, want_surname = _title_words(entry.title), _surname(entry.author)
+    if os.path.isdir(books_dir) and want_words and want_surname:
+        for name in sorted(os.listdir(books_dir)):
             if not name.endswith(".md"):
                 continue
             try:
                 head = open(os.path.join(books_dir, name), encoding="utf-8").read(2000)
             except Exception:
                 continue
-            m = re.search(r'^canonical_id:\s*"?([^"\n]+)"?\s*$', head, re.M)
-            if m and m.group(1).strip() == entry.canonical_id:
-                s = re.search(r'^slug:\s*"?([^"\n]+)"?\s*$', head, re.M)
-                if s:
-                    return f"/summary/{s.group(1).strip()}/"
+            page_words = _title_words(_front(head, "title"))
+            if not page_words or _surname(_front(head, "author")) != want_surname:
+                continue
+            # One title's significant words containing the other's covers both
+            # "The X" vs "X" and a resolved subtitle.
+            if page_words <= want_words or want_words <= page_words:
+                page_slug = _front(head, "slug")
+                if page_slug:
+                    return f"/summary/{page_slug}/"
     return f"/summary/?b={urllib.parse.quote(entry.canonical_id)}"
 
 
@@ -698,9 +737,47 @@ def rebake_covers(data_dir: str, site_root: str) -> int:
     return done
 
 
+def relink(data_dir: str, site_root: str) -> int:
+    """Re-point every committed puzzle's reveal link at the best URL available
+    NOW. The link is baked into the encrypted payload at generation time, so a
+    static page published afterwards would never be picked up — 46 of 48 pool
+    books had no page when the first bank was built, and every one of those
+    puzzles ended by sending the winner to a sleeping Render instance.
+
+    Rewrites nothing else: no Gemini call, no clue changes, no re-review."""
+    from tools.gtb_pool import by_canonical_id
+
+    changed = same = 0
+    for name in sorted(os.listdir(data_dir)):
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}\.json", name):
+            continue
+        path = os.path.join(data_dir, name)
+        with open(path, encoding="utf-8") as f:
+            puzzle = json.load(f)
+        reveal = decode_reveal(puzzle["reveal_enc"], puzzle["date"])
+        entry = by_canonical_id(reveal["id"])
+        if not entry:
+            print(f"  {name}: {reveal['id']} is no longer in the pool — skipped")
+            continue
+        fresh = litheca_url(entry, site_root)
+        if fresh == reveal.get("url"):
+            same += 1
+            continue
+        reveal["url"] = fresh
+        puzzle["reveal_enc"] = encode_reveal(reveal, puzzle["date"])
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(puzzle, f, ensure_ascii=False, indent=1)
+        print(f"  {name}  {reveal['title']:<38} → {fresh}")
+        changed += 1
+    print(f"\n{changed} relinked, {same} already current.")
+    return changed
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--from", dest="start", help="first puzzle date, YYYY-MM-DD")
+    ap.add_argument("--relink", action="store_true",
+                    help="re-point reveal links at newly published static pages")
     ap.add_argument("--rebake-covers", action="store_true",
                     help="re-cut blur levels for existing puzzles; no Gemini calls")
     ap.add_argument("--count", type=int, default=1)
@@ -721,6 +798,11 @@ def main() -> int:
     if args.rebake_covers:
         print(f"Re-baking cover levels at {BLUR_WIDTHS} — LOOK AT THE RESULT:")
         return 0 if rebake_covers(data_dir, site_root) else 1
+
+    if args.relink:
+        print("Re-pointing reveal links at currently published static pages:")
+        relink(data_dir, site_root)
+        return 0
 
     if not args.start:
         print("--from is required (or use --rebake-covers)")
