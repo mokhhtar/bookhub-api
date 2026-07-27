@@ -886,7 +886,8 @@ def _resolve_via_bookwyrm(bookwyrm_id: str) -> Optional[dict]:
 
 
 def _prefer_requested_author(resolved: str, requested: str) -> str:
-    """Keep the caller's spelling when it is the SAME NAME, differently typed.
+    """Keep the caller's spelling when it is the SAME STRING, differently typed.
+    Used for author names and for titles.
 
     Catalog records sometimes collapse initials: one Google Books record for
     The War of the Worlds gives "Hg Wells", and that went out on a public page
@@ -909,8 +910,15 @@ def resolve_book(title: str, author: str = "", isbn: Optional[str] = None, googl
     """Thin wrapper over the resolver so the author fix applies to every path
     (summary, quiz, publish) instead of one call site."""
     record = _resolve_book(title, author, isbn, google_id, openlibrary_id, bookwyrm_id)
-    if record and record.found and record.author:
-        record.author = _prefer_requested_author(record.author, (author or "").strip())
+    if record and record.found:
+        if record.author:
+            record.author = _prefer_requested_author(record.author, (author or "").strip())
+        if record.title:
+            # Same letters, different shouting: one catalog record returns
+            # "WHITE FANG" / "JACK LONDON", and that is how it went onto a
+            # public page. Slugs are lowercased either way, so correcting the
+            # case never moves a URL.
+            record.title = _prefer_requested_author(record.title, (title or "").strip())
     return record
 
 

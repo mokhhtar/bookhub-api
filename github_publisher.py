@@ -83,7 +83,14 @@ MIN_SUMMARY_CHARS = 300
 # the standalone free-book value; everything else stays gated).
 # v4: pre-generated, quote-verified quiz (Gutenberg/Fandom-grounded) baked
 # into the static page at publish time — `quiz` + `quiz_source` fields.
-PUBLISH_CONTENT_VERSION = 4
+# v5: lets a catalog mistyping reach pages that already exist. Publishing is
+# create-only and the Redis flag short-circuits before the repo is consulted,
+# so "Hg Wells" and "WHITE FANG / JACK LONDON" were frozen onto public pages
+# with no route to a correction. Safe to bump only because a republish now
+# carries the page's indexing state (_carried_index_state) and its original
+# date (_carried_date) forward instead of regenerating both — without those,
+# this bump would have silently demoted indexed pages and re-dated all 68.
+PUBLISH_CONTENT_VERSION = 5
 
 
 def is_enabled() -> bool:
@@ -291,6 +298,23 @@ def _carried_index_state(existing_markdown: str | None) -> list[str] | None:
     return [f"{key}: {found[key]}" for key in ("noindex", "sitemap") if key in found]
 
 
+_DATE_LINE_RE = re.compile(r"^date:\s*(.+?)\s*$", re.MULTILINE)
+
+
+def _carried_date(existing_markdown: str | None) -> str | None:
+    """The `date:` an already-published page carries, or None if it has none.
+
+    A republish is a correction, not a new publication. Regenerating the date
+    would push every refreshed page back to the top of the homepage's "Just
+    summarized" list, turning it into "most recently rewritten" — which is
+    both wrong and the exact clutter a version bump would otherwise cause
+    across 68 pages at once."""
+    if not existing_markdown:
+        return None
+    m = _DATE_LINE_RE.search(existing_markdown)
+    return m.group(1) if m else None
+
+
 def _book_markdown(result: dict, book_slug: str, a_slug: str,
                    existing_markdown: str | None = None) -> str:
     # Sanitize at the page boundary — this HTML is written raw into the public
@@ -381,7 +405,7 @@ def _book_markdown(result: dict, book_slug: str, a_slug: str,
             {"name": c.get("name"), "slug": c.get("slug"), "role": c.get("role") or ""}
             for c in (result.get("characters") or []) if c.get("slug")
         ]),
-        f"date: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S %z')}",
+        f"date: {_carried_date(existing_markdown) or datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S %z')}",
         "---",
         "",
         summary_html,  # raw block HTML — kramdown passes it through unindented

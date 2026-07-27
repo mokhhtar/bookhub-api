@@ -1881,10 +1881,14 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
             # it. Pure string work — no lookup, no cost.
             fixed_author = book_data._prefer_requested_author(
                 cached.get("author") or "", (req.author or "").strip())
-            if fixed_author and fixed_author != cached.get("author"):
-                cached["author"] = fixed_author
-                cached["author_slug"] = slug_mod.author_slug(fixed_author)
-                cached["canonical_id"] = _canonical_id_from(cached.get("title") or "", fixed_author)
+            fixed_title = book_data._prefer_requested_author(
+                cached.get("title") or "", (req.title or "").strip())
+            if ((fixed_author and fixed_author != cached.get("author"))
+                    or (fixed_title and fixed_title != cached.get("title"))):
+                cached["author"] = fixed_author or cached.get("author")
+                cached["title"] = fixed_title or cached.get("title")
+                cached["author_slug"] = slug_mod.author_slug(cached["author"])
+                cached["canonical_id"] = _canonical_id_from(cached["title"], cached["author"])
                 cache.set(cached, *cache_key)
 
             # Refresh the static page on VIEW, not just on regeneration: a page
