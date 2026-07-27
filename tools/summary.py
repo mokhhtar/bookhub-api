@@ -1875,6 +1875,18 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
                 except Exception as e:
                     log.warning(f"Free-ebook/quotes/nyt self-heal failed for '{cached.get('title')}': {e}")
 
+            # Author formatting heals on read too. The fix lives in
+            # book_data.resolve_book, but a result cached before it existed
+            # keeps the catalog's mistyping ("Hg Wells") and would re-publish
+            # it. Pure string work — no lookup, no cost.
+            fixed_author = book_data._prefer_requested_author(
+                cached.get("author") or "", (req.author or "").strip())
+            if fixed_author and fixed_author != cached.get("author"):
+                cached["author"] = fixed_author
+                cached["author_slug"] = slug_mod.author_slug(fixed_author)
+                cached["canonical_id"] = _canonical_id_from(cached.get("title") or "", fixed_author)
+                cache.set(cached, *cache_key)
+
             # Refresh the static page on VIEW, not just on regeneration: a page
             # published in an older content format gets rewritten by
             # publish_book (version-gated → a cheap Redis-flag no-op once the

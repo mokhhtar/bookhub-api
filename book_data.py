@@ -885,7 +885,36 @@ def _resolve_via_bookwyrm(bookwyrm_id: str) -> Optional[dict]:
     return None
 
 
+def _prefer_requested_author(resolved: str, requested: str) -> str:
+    """Keep the caller's spelling when it is the SAME NAME, differently typed.
+
+    Catalog records sometimes collapse initials: one Google Books record for
+    The War of the Worlds gives "Hg Wells", and that went out on a public page
+    while the other two Wells titles resolved correctly. Comparing letters
+    only, "Hg Wells" and "H. G. Wells" are identical, so the difference is
+    formatting and the caller's version wins.
+
+    Deliberately narrow — if the letters differ at all the catalog is left
+    alone. "F. Scott Fitzgerald" vs "Francis Scott Key Fitzgerald" is a
+    different rendering of the name, not a mistyping of it, and this must
+    never quietly overwrite a genuinely different author string.
+    """
+    if not requested or not resolved:
+        return resolved
+    only_letters = lambda s: re.sub(r"[^a-z]", "", s.lower())
+    return requested if only_letters(resolved) == only_letters(requested) else resolved
+
+
 def resolve_book(title: str, author: str = "", isbn: Optional[str] = None, google_id: Optional[str] = None, openlibrary_id: Optional[str] = None, bookwyrm_id: Optional[str] = None) -> BookRecord:
+    """Thin wrapper over the resolver so the author fix applies to every path
+    (summary, quiz, publish) instead of one call site."""
+    record = _resolve_book(title, author, isbn, google_id, openlibrary_id, bookwyrm_id)
+    if record and record.found and record.author:
+        record.author = _prefer_requested_author(record.author, (author or "").strip())
+    return record
+
+
+def _resolve_book(title: str, author: str = "", isbn: Optional[str] = None, google_id: Optional[str] = None, openlibrary_id: Optional[str] = None, bookwyrm_id: Optional[str] = None) -> BookRecord:
     """
     Main entry point. Tries direct IDs (google_id, openlibrary_id) or ISBN first if provided.
     Otherwise, queries Google Books first, falling back to Open Library.
