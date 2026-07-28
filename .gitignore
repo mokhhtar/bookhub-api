@@ -5,3 +5,18 @@ __pycache__/
 venv/
 *.egg-info/
 /scratch
+
+# Local QA artefacts. This is a backend repo — it has never tracked a single
+# image — but ~55 screenshots, a screen recording and 285 Playwright output
+# files piled up at the root during visual verification, plus a stray _site/
+# that was an accidental 85-file snapshot of the repo itself. About 20 MB of
+# nothing. Rooted patterns (/*.png, not *.png) so a real asset committed in a
+# subdirectory would still be tracked.
+/*.png
+/*.jpg
+/*.jpeg
+/*.gif
+/*.webp
+/*.mp4
+/.playwright-mcp/
+/_site/
