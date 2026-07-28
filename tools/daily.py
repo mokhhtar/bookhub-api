@@ -315,38 +315,47 @@ def _normalize_quote(text: str) -> str:
 
 def _pick_quote_of_day(date_str: str) -> dict | None:
     """
-    Gemini proposes 3 widely-attested quotes; book verified. Curated fallback.
+    OUR OWN WELL FIRST; Gemini only when the well can't produce a fresh one.
 
-    At temperature 0.3 (see gemini_client.py), asking for "the" famous book
-    quote reliably converges on the single most iconic answer in the
-    language (the Dickens "best of times" opening) regardless of the date —
-    unlike book/author, which are grounded in real per-day Wikimedia feed
-    data, quote selection is unconstrained, so nothing forced variety. We
-    track the last 30 days of served quotes in Redis, tell Gemini to avoid
-    them, and skip any candidate (Gemini or curated) that repeats one —
-    falling back to a repeat only if every candidate is exhausted, so the
-    card never goes blank.
+    That order used to be reversed, and it was not a taste question. A
+    Gemini-proposed quote is checked with verify_book_exists — which proves
+    the BOOK exists and says nothing about whether the quote is IN it. Nothing
+    ever verified the text. Misattribution is the single most common failure
+    mode in the whole genre of famous quotations (every "Mark Twain said"
+    that he never said), and the card had no defence against it. This is the
+    same "verified the name, not the claim" hole that _connection_holds
+    closed for book-of-the-day.
+
+    The well in data/daily_quotes.json is transcribed verbatim from the
+    Wikiquote blocks on our own book pages, so its text is sourced, not
+    recalled — and each entry links to a page we publish rather than to the
+    dynamic summarizer.
+
+    Cost note: with 122 entries against a 30-day no-repeat window the well
+    covers about four months, so in practice the Gemini call below almost
+    never runs. That is a saved API call a day, not just a safer quote.
     """
     history: list[str] = cache.get_key(_QUOTE_HISTORY_KEY) or []
     recent = {_normalize_quote(t) for t in history}
-    avoid_listing = "; ".join(t[:100] for t in history[-15:])
 
-    prompt = f"""Give 3 famous, widely-attested quotes FROM BOOKS (today is {date_str}, vary your picks by date). Only quotes that are verifiably famous and commonly attributed — no obscure or invented ones.
+    # Walk the whole well from a day-seeded offset so a repeat-skip has
+    # somewhere else to go instead of falling straight through to Gemini.
+    day_index = sum(ord(c) for c in date_str) % len(CURATED_QUOTES)
+    candidates = [CURATED_QUOTES[(day_index + i) % len(CURATED_QUOTES)]
+                  for i in range(len(CURATED_QUOTES))]
+
+    if all(_normalize_quote(c["text"]) in recent for c in candidates):
+        # Only now is a proposal worth an API call.
+        avoid_listing = "; ".join(t[:100] for t in history[-15:])
+        prompt = f"""Give 3 famous, widely-attested quotes FROM BOOKS (today is {date_str}, vary your picks by date). Only quotes that are verifiably famous and commonly attributed — no obscure or invented ones.
 {f"Do NOT repeat any of these already-used quotes: {avoid_listing}" if avoid_listing else ""}
 
 Return ONLY JSON: {{"quotes": [{{"text": "...", "book_title": "...", "author": "..."}}]}}"""
-    candidates = []
-    try:
-        data = gemini_client.parse_json_response(gemini_client.generate(prompt))
-        candidates = [q for q in (data.get("quotes") or []) if isinstance(q, dict)][:3]
-    except Exception as e:
-        log.warning(f"Quote-of-day proposal failed: {e}")
-
-    # Curated fallback: walk the whole pool starting from the day-seeded
-    # index (rather than just appending one entry) so a repeat-skip has
-    # somewhere else to go instead of falling straight to None.
-    day_index = sum(ord(c) for c in date_str) % len(CURATED_QUOTES)
-    candidates += [CURATED_QUOTES[(day_index + i) % len(CURATED_QUOTES)] for i in range(len(CURATED_QUOTES))]
+        try:
+            data = gemini_client.parse_json_response(gemini_client.generate(prompt))
+            candidates += [q for q in (data.get("quotes") or []) if isinstance(q, dict)][:3]
+        except Exception as e:
+            log.warning(f"Quote-of-day proposal failed: {e}")
 
     # Gemini's proposals must be verified — they can be invented. The CURATED
     # list cannot: every entry was checked by hand before it was written here,
