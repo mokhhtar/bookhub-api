@@ -591,6 +591,21 @@ def _surname(author: str) -> str:
     return parts[-1].lower() if parts else ""
 
 
+def _same_surname(a: str, b: str) -> bool:
+    """Tolerant of transliteration, like build_gtb_decoys._same_surname.
+
+    A published page says "Fyodor Dostoyevsky" where the pool says
+    "Dostoevsky" — a real spelling difference, not a mistyping, so the author
+    fix in book_data deliberately leaves it alone. An exact comparison here
+    then failed to find a perfectly good page and sent Crime and Punishment's
+    winner to the dynamic summarizer. Five leading letters is enough, because
+    this only ever decides between books that already share a title."""
+    x, y = _surname(a), _surname(b)
+    if not x or not y:
+        return False
+    return x == y or (len(x) >= 5 and len(y) >= 5 and x[:5] == y[:5])
+
+
 def _front(head: str, key: str) -> str:
     m = re.search(rf'^{key}:\s*"?([^"\n]+)"?\s*$', head, re.M)
     return m.group(1).strip() if m else ""
@@ -621,7 +636,7 @@ def litheca_url(entry: PoolEntry, site_root: str) -> str:
             except Exception:
                 continue
             page_words = _title_words(_front(head, "title"))
-            if not page_words or _surname(_front(head, "author")) != want_surname:
+            if not page_words or not _same_surname(_front(head, "author"), entry.author):
                 continue
             # One title's significant words containing the other's covers both
             # "The X" vs "X" and a resolved subtitle.
