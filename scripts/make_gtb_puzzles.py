@@ -98,6 +98,10 @@ SAMPLE_CHUNKS = 14
 MAX_QUOTE_CHARS = 260
 MIN_QUOTE_CHARS = 40
 BOOKS_PER_DAY_ATTEMPTS = 3   # a book that can't ground a puzzle yields the day to another
+# How long a book stays off-limits after appearing. Without a cooldown the
+# pool must grow ~30 verified books a month forever; with one, the same novel
+# returns with different passages, which is a different puzzle.
+REUSE_COOLDOWN_DAYS = 180
 OPENING_SKIP = 0.08     # ignore the first 8% of a book — famous openings
 ENDING_SKIP = 0.94      # and the last 6% — endings spoil more than they hint
 MIN_CHUNK_GAP = 6       # the two quotes must come from genuinely different places
@@ -147,13 +151,23 @@ def candidates_for_day(remaining: list[PoolEntry], recent_authors: list[str]) ->
     return fresh + [e for e in remaining if e not in fresh]
 
 
-def used_canonical_ids(data_dir: str, ignore_dates: set[str] | None = None) -> list[str]:
-    """Which books existing puzzle files already spent. Read back by decoding
-    their own reveal payload — no separate ledger to drift out of sync.
+def used_canonical_ids(data_dir: str, ignore_dates: set[str] | None = None,
+                       before: dt.date | None = None,
+                       cooldown_days: int = REUSE_COOLDOWN_DAYS) -> list[str]:
+    """Books spent RECENTLY enough to still be off-limits. Read back by
+    decoding each puzzle's own reveal payload — no separate ledger to drift.
 
     `ignore_dates` are the days we're about to regenerate: a book must not be
     treated as "already used" by the very file we're replacing, or --overwrite
     silently reshuffles the whole schedule (it did, on the first real run).
+
+    `cooldown_days` is what makes the game sustainable. Excluding a book
+    forever meant the pool had to grow by ~30 hand-verified books EVERY month,
+    without end — 360 a year, each needing an eye review. After the cooldown a
+    book comes back with different quotes (see previously_used_quotes), and a
+    different pair of passages from the same novel is a genuinely different
+    puzzle. 48 books then cover roughly eight months on their own, and growing
+    the pool becomes a choice rather than a monthly tax.
     """
     used: list[str] = []
     if not os.path.isdir(data_dir):
@@ -163,6 +177,12 @@ def used_canonical_ids(data_dir: str, ignore_dates: set[str] | None = None) -> l
             continue
         if ignore_dates and name[:-5] in ignore_dates:
             continue
+        if before is not None:
+            try:
+                if (before - dt.date.fromisoformat(name[:-5])).days > cooldown_days:
+                    continue      # long enough ago to be fair game again
+            except ValueError:
+                pass
         try:
             with open(os.path.join(data_dir, name), encoding="utf-8") as f:
                 puzzle = json.load(f)
@@ -171,6 +191,32 @@ def used_canonical_ids(data_dir: str, ignore_dates: set[str] | None = None) -> l
         except Exception as e:
             print(f"  ! could not read {name}: {e}")
     return used
+
+
+def previously_used_quotes(data_dir: str, canonical_id: str) -> set[str]:
+    """Every quote this book has already carried, normalized for comparison.
+
+    A reused book must not reuse its clues — otherwise the cooldown just
+    reprints an old puzzle under a new date. Passed to the quote picker as a
+    rejection list.
+    """
+    seen: set[str] = set()
+    if not os.path.isdir(data_dir):
+        return seen
+    for name in sorted(os.listdir(data_dir)):
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}\.json", name):
+            continue
+        try:
+            with open(os.path.join(data_dir, name), encoding="utf-8") as f:
+                puzzle = json.load(f)
+            if decode_reveal(puzzle["reveal_enc"], puzzle["date"])["id"] != canonical_id:
+                continue
+            for clue in puzzle.get("clues", []):
+                if clue.get("type") == "quote" and clue.get("text"):
+                    seen.add(_normalize_for_match(clue["text"]))
+        except Exception:
+            continue
+    return seen
 
 
 # ── clue sourcing ────────────────────────────────────────────
@@ -288,18 +334,20 @@ Return ONLY JSON: {{"borrowed": [0, 3]}}"""
     return candidates
 
 
-def pick_quotes(entry: PoolEntry, chunks: list[str], report: list[str]) -> list[dict]:
+def pick_quotes(entry: PoolEntry, chunks: list[str], report: list[str],
+                exclude: set[str] | None = None) -> list[dict]:
     """Gemini proposes, verification disposes. One retry before giving up —
     the same "generate, and if the verifier ate everything, generate once
     more" shape tools/quiz.py uses."""
-    chosen = _pick_quotes_once(entry, chunks, report)
+    chosen = _pick_quotes_once(entry, chunks, report, exclude or set())
     if len(chosen) < QUOTES_PER_PUZZLE:
         report.append("    retrying — first pass left too few verified quotes")
-        chosen = _pick_quotes_once(entry, chunks, report)
+        chosen = _pick_quotes_once(entry, chunks, report, exclude or set())
     return chosen
 
 
-def _pick_quotes_once(entry: PoolEntry, chunks: list[str], report: list[str]) -> list[dict]:
+def _pick_quotes_once(entry: PoolEntry, chunks: list[str], report: list[str],
+                      exclude: set[str]) -> list[dict]:
     n = len(chunks)
     take = min(SAMPLE_CHUNKS, n)
     # Skip the opening and closing stretch of the book. Famous first lines are
@@ -346,6 +394,9 @@ def _pick_quotes_once(entry: PoolEntry, chunks: list[str], report: list[str]) ->
         # 1. It must genuinely be in the book. This is the same contract
         #    quiz_core enforces for supporting_quote — never relaxed.
         needle = _normalize_for_match(text)
+        if needle in exclude:
+            report.append(f"    dropped (this book already used it): {short}…")
+            continue
         found_in = None
         ci = item.get("chunk_index")
         if isinstance(ci, int) and ci in normalized and needle in normalized[ci]:
@@ -584,7 +635,8 @@ def litheca_url(entry: PoolEntry, site_root: str) -> str:
 # ── assembly ─────────────────────────────────────────────────
 
 def build_puzzle(entry: PoolEntry, day: dt.date, puzzle_no: int, site_root: str,
-                 dry_run: bool, report: list[str]) -> dict | None:
+                 dry_run: bool, report: list[str],
+                 data_dir: str | None = None) -> dict | None:
     date = day.isoformat()
     raw = fetch_raw(entry.gutenberg_id)
     if not raw:
@@ -592,7 +644,12 @@ def build_puzzle(entry: PoolEntry, day: dt.date, puzzle_no: int, site_root: str,
         return None
 
     chunks = _chunk_text(strip_boilerplate(raw))
-    quotes = pick_quotes(entry, chunks, report)
+    # A returning book must bring new passages, or the cooldown just reprints
+    # an old puzzle under a new date.
+    already = previously_used_quotes(data_dir, entry.canonical_id) if data_dir else set()
+    if already:
+        report.append(f"    seen before — {len(already)} previous quote(s) excluded")
+    quotes = pick_quotes(entry, chunks, report, exclude=already)
     if len(quotes) < QUOTES_PER_PUZZLE:
         # A weaker puzzle is not an acceptable substitute for no puzzle.
         report.append(f"    FAILED: only {len(quotes)} verified quote(s), need {QUOTES_PER_PUZZLE}")
@@ -821,7 +878,8 @@ def main() -> int:
 
     count = args.count if not args.gid else 1
     target_dates = {(start + dt.timedelta(days=i)).isoformat() for i in range(count)}
-    used = used_canonical_ids(data_dir, ignore_dates=target_dates if args.overwrite else None)
+    used = used_canonical_ids(data_dir, ignore_dates=target_dates if args.overwrite else None,
+                              before=start)
     remaining = shuffled_pool(entries, start, [] if args.gid else used)
 
     epoch = (dt.date.fromisoformat(args.epoch) if args.epoch
@@ -854,7 +912,7 @@ def main() -> int:
             report: list[str] = []
             print(f"{date}  #{puzzle_no}  {entry.title} — {entry.author}")
             try:
-                puzzle = build_puzzle(entry, day, puzzle_no, site_root, args.dry_run, report)
+                puzzle = build_puzzle(entry, day, puzzle_no, site_root, args.dry_run, report, data_dir)
             except Exception as e:
                 report.append(f"    FAILED: {type(e).__name__}: {e}")
                 puzzle = None
