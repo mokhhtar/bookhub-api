@@ -503,10 +503,21 @@ def publish_book(result: dict) -> None:
         # Dedupe layer 1: Redis flags — but only trust a flag that records a
         # content version AT LEAST the current one. A stale-version (or pre-
         # versioning) flag falls through to the repo check, which rewrites.
-        if gid and _flag_is_current(cache.get_key(f"published_gid:{gid}")):
-            return
-        if _flag_is_current(cache.get_key(f"published:{book_slug}")):
-            return
+        #
+        # And only trust it while the response hasn't just proved it wrong.
+        # `static_page` is computed by resolve_published from the repo itself
+        # on the way out of /summary, so False means there is demonstrably no
+        # page. A flag can outlive the page it describes: deleting a page to
+        # correct a bad slug left a CURRENT-version flag behind, publish_book
+        # returned here every time, and that page could never be recreated —
+        # Ivanhoe sat unpublishable while Mutiny on the Bounty, whose flag was
+        # a version behind, recovered on the first request.
+        trust_flags = result.get("static_page") is not False
+        if trust_flags:
+            if gid and _flag_is_current(cache.get_key(f"published_gid:{gid}")):
+                return
+            if _flag_is_current(cache.get_key(f"published:{book_slug}")):
+                return
 
         a_slug = slug_mod.author_slug(result.get("author") or "")
 
