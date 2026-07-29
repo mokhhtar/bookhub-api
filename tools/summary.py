@@ -1838,17 +1838,30 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
                 book_data._prefer_requested_author(
                     cached.get("title") or "", (req.title or "").strip()),
                 fixed_author or cached.get("author") or "")
-            if ((fixed_author and fixed_author != cached.get("author"))
-                    or (fixed_title and fixed_title != cached.get("title"))):
-                cached["author"] = fixed_author or cached.get("author")
-                cached["title"] = fixed_title or cached.get("title")
-                cached["author_slug"] = slug_mod.author_slug(cached["author"])
+            renamed = ((fixed_author and fixed_author != cached.get("author"))
+                       or (fixed_title and fixed_title != cached.get("title")))
+            cached["author"] = fixed_author or cached.get("author")
+            cached["title"] = fixed_title or cached.get("title")
+
+            # A change test alone is not enough. The first read after a name
+            # fix ships corrects the name and writes it back, so on every read
+            # after that "did it change?" is false forever — while the slug and
+            # the lookups it poisoned stay wrong. Check the INVARIANT instead:
+            # a page's slug is either the title's slug or one of the collision
+            # variants resolve_published may hand back. Anything else is a slug
+            # left over from a title we have since corrected.
+            base_slug = slug_mod.book_slug(cached["title"])
+            a_slug = slug_mod.author_slug(cached["author"])
+            legitimate = {base_slug, f"{base_slug}-{a_slug}", f"{base_slug}-2"}
+            stale_slug = bool(base_slug) and cached.get("slug") not in legitimate
+
+            if renamed or stale_slug:
+                cached["author_slug"] = a_slug
                 cached["canonical_id"] = _canonical_id_from(cached["title"], cached["author"])
-                # A corrected title means a corrected URL. The old page keeps
-                # its own slug until it is removed; this is what the NEXT
-                # publish writes.
-                cached["slug"] = slug_mod.book_slug(cached["title"])
-                # Force the lookups below to run again now that the name is right.
+                cached["slug"] = base_slug
+                cached["static_page"] = False
+                # Every lookup below keys on the title, so anything resolved
+                # under the wrong one has to be discarded and fetched again.
                 for stale in ("free_ebook", "quotes", "nyt", "editions"):
                     cached[stale] = None
                 cache.set(cached, *cache_key)
