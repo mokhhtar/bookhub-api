@@ -1828,6 +1828,31 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
             # quotes page costs at most one lookup per hour.
             # Quotes cached before the speakers field shipped get refreshed
             # too (the wikiquote_v3 sub-cache already carries speakers).
+            # Title/author formatting heals FIRST, before anything that looks
+            # a book up by name. Ordering is load-bearing: this block used to
+            # run last, so the free-ebook and quotes heal below still searched
+            # for "Ivanhoe by Sir Walter Scott" and kept coming back empty.
+            fixed_author = book_data._prefer_requested_author(
+                cached.get("author") or "", (req.author or "").strip())
+            fixed_title = book_data._strip_author_from_title(
+                book_data._prefer_requested_author(
+                    cached.get("title") or "", (req.title or "").strip()),
+                fixed_author or cached.get("author") or "")
+            if ((fixed_author and fixed_author != cached.get("author"))
+                    or (fixed_title and fixed_title != cached.get("title"))):
+                cached["author"] = fixed_author or cached.get("author")
+                cached["title"] = fixed_title or cached.get("title")
+                cached["author_slug"] = slug_mod.author_slug(cached["author"])
+                cached["canonical_id"] = _canonical_id_from(cached["title"], cached["author"])
+                # A corrected title means a corrected URL. The old page keeps
+                # its own slug until it is removed; this is what the NEXT
+                # publish writes.
+                cached["slug"] = slug_mod.book_slug(cached["title"])
+                # Force the lookups below to run again now that the name is right.
+                for stale in ("free_ebook", "quotes", "nyt", "editions"):
+                    cached[stale] = None
+                cache.set(cached, *cache_key)
+
             _q = cached.get("quotes")
             _quotes_stale = _q is None or (isinstance(_q, dict) and "speakers" not in _q)
             if (cached.get("free_ebook") is None or _quotes_stale
@@ -1874,24 +1899,6 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
                         cache.set(cached, *cache_key)  # persist the heal
                 except Exception as e:
                     log.warning(f"Free-ebook/quotes/nyt self-heal failed for '{cached.get('title')}': {e}")
-
-            # Author formatting heals on read too. The fix lives in
-            # book_data.resolve_book, but a result cached before it existed
-            # keeps the catalog's mistyping ("Hg Wells") and would re-publish
-            # it. Pure string work — no lookup, no cost.
-            fixed_author = book_data._prefer_requested_author(
-                cached.get("author") or "", (req.author or "").strip())
-            fixed_title = book_data._strip_author_from_title(
-                book_data._prefer_requested_author(
-                    cached.get("title") or "", (req.title or "").strip()),
-                fixed_author or cached.get("author") or "")
-            if ((fixed_author and fixed_author != cached.get("author"))
-                    or (fixed_title and fixed_title != cached.get("title"))):
-                cached["author"] = fixed_author or cached.get("author")
-                cached["title"] = fixed_title or cached.get("title")
-                cached["author_slug"] = slug_mod.author_slug(cached["author"])
-                cached["canonical_id"] = _canonical_id_from(cached["title"], cached["author"])
-                cache.set(cached, *cache_key)
 
             # Refresh the static page on VIEW, not just on regeneration: a page
             # published in an older content format gets rewritten by
