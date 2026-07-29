@@ -907,6 +907,32 @@ def _prefer_requested_author(resolved: str, requested: str) -> str:
     return requested if only_letters(resolved) == only_letters(requested) else resolved
 
 
+def _strip_author_from_title(title: str, author: str) -> str:
+    """Drop a trailing "… by <author>" that the catalog filed as the title.
+
+    Google Books returned "Ivanhoe by Sir Walter Scott" and "Mutiny on the
+    Bounty, by Charles Nordhoff and James Norman Hall" as TITLES. The damage
+    goes well past an ugly slug: every downstream lookup keys on the title, so
+    that page came back with no free ebook, no quotes, no quiz and no
+    characters — one bad field cost it four sections and left it the thinnest
+    page on the site.
+
+    Only strips when the trailing text actually contains the author's
+    surname, so a real title that happens to contain "by" is untouched.
+    """
+    if not title or not author:
+        return title
+    m = re.match(r"^(.+?)[,;]?\s+by\s+(.+)$", title, re.IGNORECASE)
+    if not m:
+        return title
+    stem, trailing = m.group(1).strip(), m.group(2).strip()
+    parts = [p for p in re.split(r"[^A-Za-z]+", author) if p]
+    surname = parts[-1].lower() if parts else ""
+    if len(stem) >= 2 and surname and surname in trailing.lower():
+        return stem
+    return title
+
+
 def resolve_book(title: str, author: str = "", isbn: Optional[str] = None, google_id: Optional[str] = None, openlibrary_id: Optional[str] = None, bookwyrm_id: Optional[str] = None) -> BookRecord:
     """Thin wrapper over the resolver so the author fix applies to every path
     (summary, quiz, publish) instead of one call site."""
@@ -920,6 +946,7 @@ def resolve_book(title: str, author: str = "", isbn: Optional[str] = None, googl
             # public page. Slugs are lowercased either way, so correcting the
             # case never moves a URL.
             record.title = _prefer_requested_author(record.title, (title or "").strip())
+            record.title = _strip_author_from_title(record.title, record.author)
     return record
 
 

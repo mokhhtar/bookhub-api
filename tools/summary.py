@@ -1881,8 +1881,10 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
             # it. Pure string work — no lookup, no cost.
             fixed_author = book_data._prefer_requested_author(
                 cached.get("author") or "", (req.author or "").strip())
-            fixed_title = book_data._prefer_requested_author(
-                cached.get("title") or "", (req.title or "").strip())
+            fixed_title = book_data._strip_author_from_title(
+                book_data._prefer_requested_author(
+                    cached.get("title") or "", (req.title or "").strip()),
+                fixed_author or cached.get("author") or "")
             if ((fixed_author and fixed_author != cached.get("author"))
                     or (fixed_title and fixed_title != cached.get("title"))):
                 cached["author"] = fixed_author or cached.get("author")
