@@ -1007,6 +1007,22 @@ WIKIQUOTE_API = "https://en.wikiquote.org/w/api.php"
 # Sections whose bullets are NOT quotes from the book itself.
 _WQ_SKIP_SECTIONS = ("about", "see also", "external links", "cast", "criticism", "reviews")
 
+# A Wikiquote DISAMBIGUATION page lists a work's adaptations, and its bullets
+# are descriptions, not quotations: "Dracula, the 1897 novel by Bram Stoker
+# that tells the story of…", "Dracula (1931 film), a film directed by Tod
+# Browning…". Both shipped onto live pages under the line "Sourced verbatim
+# from Wikiquote, not AI-generated" — true about the source, false about what
+# the text is. Frankenstein's card was three of three such entries.
+#
+# These read as encyclopaedia entries, and that is what is matched: a year-
+# stamped work description, or an explicit "novel/film/play by <someone>".
+_WQ_DISAMBIGUATION_RE = re.compile(
+    r"\b(?:the\s+)?(?:19|18|20)\d\d\s+(?:novel|film|play|opera|musical|series|adaptation)\b"
+    r"|\b(?:novel|film|play|opera|musical|series|adaptation)\s+(?:written\s+)?(?:by|directed by)\b"
+    r"|\ba\s+(?:film|television series|miniseries|stage play)\s+(?:directed|produced|written)\b",
+    re.IGNORECASE,
+)
+
 
 def _clean_wikitext(line: str) -> str:
     line = re.sub(r"<ref[^>]*>.*?</ref>", "", line)
@@ -1074,6 +1090,8 @@ def resolve_wikiquote_quotes(record: book_data.BookRecord, limit: int = 5) -> Op
         text = _clean_wikitext(line.lstrip("*").strip())
         if not (40 <= len(text) <= 300):
             continue
+        if _WQ_DISAMBIGUATION_RE.search(text):
+            continue
         speaker = ""
         nxt = lines[idx + 1].strip() if idx + 1 < len(lines) else ""
         if nxt.startswith("**"):
@@ -1131,7 +1149,9 @@ def _cached_free_ebook(record: book_data.BookRecord,
 def _cached_quotes(record: book_data.BookRecord) -> Optional[dict]:
     # v2: same 30-day-negative poisoning as free_ebook_v1 above.
     # v3: quotes gained parallel "speakers" attribution.
-    key = ("wikiquote_v3", record.title, record.author)
+    # v4: disambiguation-page entries ("the 1897 novel by…") are filtered
+    # out, so v3 payloads can still contain descriptions posing as quotes.
+    key = ("wikiquote_v4", record.title, record.author)
     hit = cache.get(*key)
     if hit is not None:
         return hit or None
@@ -1867,7 +1887,13 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
                 cache.set(cached, *cache_key)
 
             _q = cached.get("quotes")
-            _quotes_stale = _q is None or (isinstance(_q, dict) and "speakers" not in _q)
+            # A v3 payload may carry Wikiquote disambiguation entries that were
+            # never quotations. Re-running the resolver is what drops them —
+            # and for a page whose every entry was one, the card correctly
+            # disappears rather than showing descriptions.
+            _q_texts = (_q or {}).get("texts") or [] if isinstance(_q, dict) else []
+            _quotes_stale = (_q is None or (isinstance(_q, dict) and "speakers" not in _q)
+                             or any(_WQ_DISAMBIGUATION_RE.search(t) for t in _q_texts))
             if (cached.get("free_ebook") is None or _quotes_stale
                     or cached.get("nyt") is None or cached.get("editions") is None):
                 try:
