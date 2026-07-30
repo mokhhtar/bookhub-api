@@ -1027,6 +1027,10 @@ _WQ_SKIP_SECTIONS = ("about", "see also", "external links", "cast", "criticism",
 # navigation bullet on an otherwise real quotes page.
 _WQ_DISAMBIG_TEMPLATE_RE = re.compile(r"\{\{\s*disambig", re.IGNORECASE)
 
+# Bump whenever resolve_wikiquote_quotes changes what it returns; the
+# on-read heal refreshes any cached payload stamped with less.
+_WQ_PAYLOAD_VERSION = 6
+
 _WQ_DISAMBIGUATION_RE = re.compile(
     r"(?=.*\b(?:1[5-9]|20)\d\d\b)"
     r".*\b(?:novel|film|movie|play|opera|musical|series|miniseries|adaptation|sequel|"
@@ -1147,6 +1151,11 @@ def resolve_wikiquote_quotes(record: book_data.BookRecord, limit: int = 5) -> Op
     chosen = sorted(set(attributed + unattributed[:max(0, limit - len(attributed))]))[:limit]
 
     return {
+        # Stamped so a cached payload can be recognised as predating a change
+        # to this resolver. Detecting staleness by inspecting the TEXTS meant
+        # inventing a new detector each time — and Dracula's leftovers ("a 2015
+        # followup", "the first episode of season 5") matched none of them.
+        "v": _WQ_PAYLOAD_VERSION,
         "texts": [candidates[i][0] for i in chosen],
         "speakers": [candidates[i][1] for i in chosen],  # "" = narrator/unattested
         "source": "wikiquote",
@@ -1930,7 +1939,8 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
             # and for a page whose every entry was one, the card correctly
             # disappears rather than showing descriptions.
             _q_texts = (_q or {}).get("texts") or [] if isinstance(_q, dict) else []
-            _quotes_stale = (_q is None or (isinstance(_q, dict) and "speakers" not in _q)
+            _quotes_stale = (_q is None
+                             or (isinstance(_q, dict) and _q.get("v", 0) < _WQ_PAYLOAD_VERSION)
                              or any(_WQ_DISAMBIGUATION_RE.search(t) for t in _q_texts))
             if (cached.get("free_ebook") is None or _quotes_stale
                     or cached.get("nyt") is None or cached.get("editions") is None):
