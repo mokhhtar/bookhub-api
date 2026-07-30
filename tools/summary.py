@@ -1022,6 +1022,11 @@ _WQ_SKIP_SECTIONS = ("about", "see also", "external links", "cast", "criticism",
 # written and directed by", or "a 1931 film based on the novel". A year
 # beside any production word is the reliable signal: characters in these books
 # do not speak in release dates and directing credits.
+# A disambiguation page carries the template outright. This is the
+# structural test; the wording filter below is only a net for a stray
+# navigation bullet on an otherwise real quotes page.
+_WQ_DISAMBIG_TEMPLATE_RE = re.compile(r"\{\{\s*disambig", re.IGNORECASE)
+
 _WQ_DISAMBIGUATION_RE = re.compile(
     r"(?=.*\b(?:1[5-9]|20)\d\d\b)"
     r".*\b(?:novel|film|movie|play|opera|musical|series|miniseries|adaptation|sequel|"
@@ -1058,19 +1063,39 @@ def resolve_wikiquote_quotes(record: book_data.BookRecord, limit: int = 5) -> Op
         log.warning(f"Wikiquote search failed for '{record.title}': {e}")
         return None
 
+    # Exact-title first, then the qualified variants opensearch offers.
+    # "Dracula" is a DISAMBIGUATION page listing every film adaptation; the
+    # quotes live at "Dracula (novel)", which came back second. Taking the
+    # exact match and stopping put a page of production credits on the site
+    # under a "sourced verbatim, not AI-generated" line — true about the
+    # source, false about what the text was. Filtering those bullets by
+    # wording was chasing the symptom: "1936 sequel", "horror comedy",
+    # "followup", "episode of season 5" — the vocabulary is endless. The page
+    # itself declares what it is, so read that instead.
     want = _norm_match(record.title)
-    page = next((t for t in titles if _norm_match(t) == want), None)
-    if not page:
+    ordered = ([t for t in titles if _norm_match(t) == want]
+               + [t for t in titles if _norm_match(t) != want])
+    if not ordered:
         return None
 
-    try:
-        r = httpx.get(WIKIQUOTE_API, params={
-            "action": "parse", "page": page, "prop": "wikitext",
-            "format": "json", "redirects": 1,
-        }, headers=_UA_HEADERS, timeout=8.0)
-        wikitext = r.json()["parse"]["wikitext"]["*"]
-    except Exception as e:
-        log.warning(f"Wikiquote parse failed for '{page}': {e}")
+    wikitext, page = None, None
+    for candidate in ordered[:3]:
+        try:
+            r = httpx.get(WIKIQUOTE_API, params={
+                "action": "parse", "page": candidate, "prop": "wikitext",
+                "format": "json", "redirects": 1,
+            }, headers=_UA_HEADERS, timeout=8.0)
+            text = r.json()["parse"]["wikitext"]["*"]
+        except Exception as e:
+            log.warning(f"Wikiquote parse failed for '{candidate}': {e}")
+            continue
+        if _WQ_DISAMBIG_TEMPLATE_RE.search(text):
+            log.info(f"Wikiquote '{candidate}' is a disambiguation page — trying the next result.")
+            continue
+        wikitext, page = text, candidate
+        break
+
+    if not wikitext:
         return None
 
     # Wikiquote's ** sub-bullets often carry the SPEAKER in a trailing
@@ -1161,8 +1186,10 @@ def _cached_quotes(record: book_data.BookRecord) -> Optional[dict]:
     # v5: v4 was written while the filter still only matched two phrasings, so
     #     entries like "a 1936 sequel … written and directed by" passed it and
     #     were cached with NO expiry (positive results are stored ttl=None).
-    #     Dracula healed to the same five descriptions until this bump.
-    key = ("wikiquote_v5", record.title, record.author)
+    # v6: the resolver now skips disambiguation PAGES rather than filtering
+    #     their bullets, so v5 payloads still hold whatever the wording filter
+    #     happened to miss.
+    key = ("wikiquote_v6", record.title, record.author)
     hit = cache.get(*key)
     if hit is not None:
         return hit or None
