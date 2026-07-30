@@ -1919,6 +1919,15 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
                         if wq:
                             cached["quotes"] = wq
                             healed = True
+                        elif _q_texts and any(_WQ_DISAMBIGUATION_RE.search(t) for t in _q_texts):
+                            # The fresh lookup came back empty BECAUSE every
+                            # entry was a disambiguation description and the
+                            # filter removed them all — Frankenstein's card was
+                            # three out of three. Healing only on success would
+                            # leave those on the page forever, so clear them.
+                            # An absent quotes card is the correct outcome here.
+                            cached["quotes"] = None
+                            healed = True
                     # Also heals summaries generated before NYT_API_KEY was
                     # configured; the 24h negative cache in _cached_nyt keeps
                     # this within NYT's 500/day budget.
