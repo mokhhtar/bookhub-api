@@ -83,6 +83,13 @@ MIN_SUMMARY_CHARS = 300
 # the standalone free-book value; everything else stays gated).
 # v4: pre-generated, quote-verified quiz (Gutenberg/Fandom-grounded) baked
 # into the static page at publish time — `quiz` + `quiz_source` fields.
+# v6: the Wikiquote resolver was picking DISAMBIGUATION pages, so published
+# pages carry film credits under "Notable Quotes" — "Dracula, the 1897 novel
+# by Bram Stoker…", "a film directed by Tod Browning…" — beside a line saying
+# the text is sourced verbatim and not AI-generated. Two of them were already
+# promoted into Google. Fixing the resolver healed the API response but not
+# the committed page, because publishing is create-only and those pages sit at
+# the current version. This bump is the only route to the file itself.
 # v5: lets a catalog mistyping reach pages that already exist. Publishing is
 # create-only and the Redis flag short-circuits before the repo is consulted,
 # so "Hg Wells" and "WHITE FANG / JACK LONDON" were frozen onto public pages
@@ -90,7 +97,7 @@ MIN_SUMMARY_CHARS = 300
 # carries the page's indexing state (_carried_index_state) and its original
 # date (_carried_date) forward instead of regenerating both — without those,
 # this bump would have silently demoted indexed pages and re-dated all 68.
-PUBLISH_CONTENT_VERSION = 5
+PUBLISH_CONTENT_VERSION = 6
 
 
 def is_enabled() -> bool:
