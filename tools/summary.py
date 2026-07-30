@@ -1156,9 +1156,13 @@ def _cached_free_ebook(record: book_data.BookRecord,
 def _cached_quotes(record: book_data.BookRecord) -> Optional[dict]:
     # v2: same 30-day-negative poisoning as free_ebook_v1 above.
     # v3: quotes gained parallel "speakers" attribution.
-    # v4: disambiguation-page entries ("the 1897 novel by…") are filtered
-    # out, so v3 payloads can still contain descriptions posing as quotes.
-    key = ("wikiquote_v4", record.title, record.author)
+    # v4: disambiguation-page entries ("the 1897 novel by…") are filtered out,
+    #     so v3 payloads can still contain descriptions posing as quotes.
+    # v5: v4 was written while the filter still only matched two phrasings, so
+    #     entries like "a 1936 sequel … written and directed by" passed it and
+    #     were cached with NO expiry (positive results are stored ttl=None).
+    #     Dracula healed to the same five descriptions until this bump.
+    key = ("wikiquote_v5", record.title, record.author)
     hit = cache.get(*key)
     if hit is not None:
         return hit or None
