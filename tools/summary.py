@@ -1016,10 +1016,17 @@ _WQ_SKIP_SECTIONS = ("about", "see also", "external links", "cast", "criticism",
 #
 # These read as encyclopaedia entries, and that is what is matched: a year-
 # stamped work description, or an explicit "novel/film/play by <someone>".
+#
+# The first pass at this was too literal — it matched "the 1818 novel by" but
+# not "a 1936 sequel to the 1931 English Dracula", "a 1979 horror comedy
+# written and directed by", or "a 1931 film based on the novel". A year
+# beside any production word is the reliable signal: characters in these books
+# do not speak in release dates and directing credits.
 _WQ_DISAMBIGUATION_RE = re.compile(
-    r"\b(?:the\s+)?(?:19|18|20)\d\d\s+(?:novel|film|play|opera|musical|series|adaptation)\b"
-    r"|\b(?:novel|film|play|opera|musical|series|adaptation)\s+(?:written\s+)?(?:by|directed by)\b"
-    r"|\ba\s+(?:film|television series|miniseries|stage play)\s+(?:directed|produced|written)\b",
+    r"(?=.*\b(?:1[5-9]|20)\d\d\b)"
+    r".*\b(?:novel|film|movie|play|opera|musical|series|miniseries|adaptation|sequel|"
+    r"remake|comedy|drama|directed|starring|screenplay|based on the)\b"
+    r"|\b(?:novel|film|play|opera|musical|series|adaptation)\s+(?:written\s+)?(?:by|directed by)\b",
     re.IGNORECASE,
 )
 
