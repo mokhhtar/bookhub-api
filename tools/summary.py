@@ -1029,7 +1029,7 @@ _WQ_DISAMBIG_TEMPLATE_RE = re.compile(r"\{\{\s*disambig", re.IGNORECASE)
 
 # Bump whenever resolve_wikiquote_quotes changes what it returns; the
 # on-read heal refreshes any cached payload stamped with less.
-_WQ_PAYLOAD_VERSION = 6
+_WQ_PAYLOAD_VERSION = 7
 
 _WQ_DISAMBIGUATION_RE = re.compile(
     r"(?=.*\b(?:1[5-9]|20)\d\d\b)"
@@ -1038,6 +1038,38 @@ _WQ_DISAMBIGUATION_RE = re.compile(
     r"|\b(?:novel|film|play|opera|musical|series|adaptation)\s+(?:written\s+)?(?:by|directed by)\b",
     re.IGNORECASE,
 )
+
+
+# A Wikiquote title can be a REDIRECT, and `redirects=1` follows it silently:
+# the API hands back the destination's wikitext while we go on believing we
+# read the page we asked for. "Kidnapped" redirects to "Crime", so Stevenson's
+# novel carried five quotations ABOUT CRIME as a topic — Dostoevsky, a film
+# production code — under our "sourced verbatim from Wikiquote" line. Most of
+# the rest redirect to the AUTHOR: "Around the World in Eighty Days" and "The
+# Mysterious Island" both land on "Jules Verne", so both pages showed the same
+# five quotes, in French.
+#
+# Dropping `redirects=1` is not the fix — plenty of redirects are correct
+# ("Emma" -> "Emma (novel)"). The fix is to check WHERE WE LANDED, which the
+# parse response reports as parse.title.
+#
+# The test is a word-level prefix either way, not a substring: a substring
+# accepts "Education" for "Educated" and "Italy" for "It". Word-level accepts
+# "Frankenstein" -> "Frankenstein; or, The Modern Prometheus" and "Emma" ->
+# "Emma (novel)", and rejects every redirect observed above.
+#
+# It also rejects "Alice in Wonderland" -> "Alice's Adventures in Wonderland",
+# which IS the right book. That is the intended trade: opensearch usually
+# offers the real title as its own candidate, and when it doesn't,
+# [[Grounding Rule|no quotes beats another book's quotes]].
+def _wq_titles_agree(asked: str, landed: str) -> bool:
+    strip_qualifier = lambda s: re.sub(r"\s*\([^)]*\)\s*$", "", s or "")
+    a = _norm_match(strip_qualifier(asked)).split()
+    b = _norm_match(strip_qualifier(landed)).split()
+    if not a or not b:
+        return False
+    n = min(len(a), len(b))
+    return a[:n] == b[:n]
 
 
 def _clean_wikitext(line: str) -> str:
@@ -1083,20 +1115,38 @@ def resolve_wikiquote_quotes(record: book_data.BookRecord, limit: int = 5) -> Op
         return None
 
     wikitext, page = None, None
+    author_norm = _norm_match(record.author) if record.author else ""
     for candidate in ordered[:3]:
         try:
             r = httpx.get(WIKIQUOTE_API, params={
                 "action": "parse", "page": candidate, "prop": "wikitext",
                 "format": "json", "redirects": 1,
             }, headers=_UA_HEADERS, timeout=8.0)
-            text = r.json()["parse"]["wikitext"]["*"]
+            parsed = r.json()["parse"]
+            text = parsed["wikitext"]["*"]
+            # Where the API actually landed after following redirects.
+            landed = parsed.get("title") or candidate
         except Exception as e:
             log.warning(f"Wikiquote parse failed for '{candidate}': {e}")
             continue
         if _WQ_DISAMBIG_TEMPLATE_RE.search(text):
             log.info(f"Wikiquote '{candidate}' is a disambiguation page — trying the next result.")
             continue
-        wikitext, page = text, candidate
+        # Checked against the BOOK title, not the candidate: an opensearch
+        # variant that redirects somewhere unrelated is no better than an
+        # exact title that does.
+        if not _wq_titles_agree(record.title, landed):
+            log.info(f"Wikiquote '{candidate}' redirects to '{landed}', which isn't "
+                     f"'{record.title}' — skipping.")
+            continue
+        # An author page reached by redirect passes nothing above by accident,
+        # but say it outright: its quotes span every work the author wrote, so
+        # attributing them to ONE book is wrong even when they are genuine.
+        if author_norm and _norm_match(landed) == author_norm:
+            log.info(f"Wikiquote '{candidate}' redirects to the author page '{landed}' — skipping.")
+            continue
+        # The resolved title, so source_url points where the text came from.
+        wikitext, page = text, landed
         break
 
     if not wikitext:
@@ -1198,7 +1248,11 @@ def _cached_quotes(record: book_data.BookRecord) -> Optional[dict]:
     # v6: the resolver now skips disambiguation PAGES rather than filtering
     #     their bullets, so v5 payloads still hold whatever the wording filter
     #     happened to miss.
-    key = ("wikiquote_v6", record.title, record.author)
+    # v7: `redirects=1` was being followed blindly, so a v6 payload can hold
+    #     the quotes of whatever page the title redirects TO — "Crime" for
+    #     Kidnapped, the author's page for eight others. Nothing about the
+    #     stored texts distinguishes those from real ones; only re-resolving does.
+    key = ("wikiquote_v7", record.title, record.author)
     hit = cache.get(*key)
     if hit is not None:
         return hit or None
@@ -1960,13 +2014,26 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
                         if wq:
                             cached["quotes"] = wq
                             healed = True
-                        elif _q_texts and any(_WQ_DISAMBIGUATION_RE.search(t) for t in _q_texts):
-                            # The fresh lookup came back empty BECAUSE every
-                            # entry was a disambiguation description and the
-                            # filter removed them all — Frankenstein's card was
-                            # three out of three. Healing only on success would
-                            # leave those on the page forever, so clear them.
-                            # An absent quotes card is the correct outcome here.
+                        elif _q_texts:
+                            # Stale payload + empty clean lookup = the entries
+                            # we were holding are ones this resolver will no
+                            # longer produce. Clear them.
+                            #
+                            # This used to clear only when the old texts LOOKED
+                            # like disambiguation descriptions, which is the
+                            # same mistake in miniature: it recognised one shape
+                            # of damage and so missed the next. The redirect bug
+                            # (Kidnapped's quotes came from "Crime") produces
+                            # texts that are perfectly well-formed quotations —
+                            # they simply belong to another page — and no
+                            # inspection of them would ever say so.
+                            #
+                            # A transient Wikiquote failure can also empty the
+                            # lookup, and this clears on that too. Accepted: the
+                            # negative is cached for 1h, so the next read after
+                            # it recovers restores the card, whereas keeping a
+                            # payload we know is stale is wrong until someone
+                            # notices. An absent card is the correct outcome.
                             cached["quotes"] = None
                             healed = True
                     # Also heals summaries generated before NYT_API_KEY was

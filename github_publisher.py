@@ -97,7 +97,15 @@ MIN_SUMMARY_CHARS = 300
 # promoted into Google. Fixing the resolver healed the API response but not
 # the committed page, because publishing is create-only and those pages sit at
 # the current version. This bump is the only route to the file itself.
-PUBLISH_CONTENT_VERSION = 6
+# v7: same resolver, the next layer down. `redirects=1` was followed blindly,
+# so a title that redirects elsewhere on Wikiquote published THAT page's
+# quotes: Kidnapped's five are about crime as a topic, and eight more books
+# carry their AUTHOR's quotes — "Around the World in Eighty Days" and "The
+# Mysterious Island" show the same five, in French. 17 of the 60 committed
+# pages with quotes are affected. Unlike v6's film credits, these texts read
+# as ordinary quotations, so nothing on the page reveals them; re-resolving is
+# the only thing that can.
+PUBLISH_CONTENT_VERSION = 7
 
 
 def is_enabled() -> bool:
