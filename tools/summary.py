@@ -1029,7 +1029,7 @@ _WQ_DISAMBIG_TEMPLATE_RE = re.compile(r"\{\{\s*disambig", re.IGNORECASE)
 
 # Bump whenever resolve_wikiquote_quotes changes what it returns; the
 # on-read heal refreshes any cached payload stamped with less.
-_WQ_PAYLOAD_VERSION = 7
+_WQ_PAYLOAD_VERSION = 8
 
 _WQ_DISAMBIGUATION_RE = re.compile(
     r"(?=.*\b(?:1[5-9]|20)\d\d\b)"
@@ -1062,7 +1062,23 @@ _WQ_DISAMBIGUATION_RE = re.compile(
 # which IS the right book. That is the intended trade: opensearch usually
 # offers the real title as its own candidate, and when it doesn't,
 # [[Grounding Rule|no quotes beats another book's quotes]].
+# Stripping the parenthetical is what lets "Emma" match "Emma (novel)" — and
+# it is also what let "Little Women" match "Little Women (2019 film)", whose
+# quotes are Greta Gerwig's screenplay, not Alcott. Same trap one level in:
+# the qualifier is the page telling us what it is, so read it instead of
+# discarding it. Adaptations are refused; "(novel)", "(book)", "(play)" and
+# the like are the work itself and pass.
+_WQ_ADAPTATION_QUALIFIER_RE = re.compile(
+    r"\b(?:film|movie|tv|television|series|miniseries|serial|musical|opera|"
+    r"ballet|video game|game|album|song|soundtrack|episode|season)\b",
+    re.IGNORECASE,
+)
+
+
 def _wq_titles_agree(asked: str, landed: str) -> bool:
+    qualifier = re.search(r"\(([^)]*)\)\s*$", landed or "")
+    if qualifier and _WQ_ADAPTATION_QUALIFIER_RE.search(qualifier.group(1)):
+        return False
     strip_qualifier = lambda s: re.sub(r"\s*\([^)]*\)\s*$", "", s or "")
     a = _norm_match(strip_qualifier(asked)).split()
     b = _norm_match(strip_qualifier(landed)).split()
@@ -1248,11 +1264,14 @@ def _cached_quotes(record: book_data.BookRecord) -> Optional[dict]:
     # v6: the resolver now skips disambiguation PAGES rather than filtering
     #     their bullets, so v5 payloads still hold whatever the wording filter
     #     happened to miss.
+    # v8: v7 accepted an adaptation page whose qualifier the title test stripped
+    #     — Little Women resolved to "Little Women (2019 film)" and cached the
+    #     screenplay's lines as Alcott's.
     # v7: `redirects=1` was being followed blindly, so a v6 payload can hold
     #     the quotes of whatever page the title redirects TO — "Crime" for
     #     Kidnapped, the author's page for eight others. Nothing about the
     #     stored texts distinguishes those from real ones; only re-resolving does.
-    key = ("wikiquote_v7", record.title, record.author)
+    key = ("wikiquote_v8", record.title, record.author)
     hit = cache.get(*key)
     if hit is not None:
         return hit or None
