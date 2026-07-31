@@ -108,7 +108,11 @@ MIN_SUMMARY_CHARS = 300
 # v8: v7's landing-page test stripped the parenthetical qualifier so a work
 # could match its own adaptation — "Little Women" landed on "Little Women
 # (2019 film)" and that page published Gerwig's screenplay as Alcott's prose.
-PUBLISH_CONTENT_VERSION = 8
+# v9: the free-ebook resolver trusted Open Library's ebook_access for Archive
+# scans. It called a lending copy "public", so Huckleberry Finn's page linked
+# an item that answers 401 to a download, under the heading "Public domain.
+# Free to download". Published pages carry that link until rewritten.
+PUBLISH_CONTENT_VERSION = 9
 
 
 def is_enabled() -> bool:

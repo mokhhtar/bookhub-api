@@ -894,6 +894,33 @@ _GUT_LANG_NAME = {"en": "english", "ar": "arabic"}
 _OL_LANG_CODE = {"en": "eng", "ar": "ara"}
 
 
+# Stamped for the same reason the Wikiquote payload is: a free_ebook entry
+# that predates a resolver change is indistinguishable from a current one by
+# inspection, and the self-heal used to fire only when the field was None —
+# which is exactly the case a WRONG entry is not.
+_FREE_EBOOK_PAYLOAD_VERSION = 1
+
+
+def _ia_item_is_free(ia_id: str) -> bool:
+    """
+    True only when Archive says the item is not lending-restricted. Failures
+    (timeout, malformed response) return False: an unverified item is not
+    offered, since the claim we print beside it is "free to download".
+    """
+    import httpx
+    try:
+        r = httpx.get(f"https://archive.org/metadata/{ia_id}/metadata",
+                      headers=_UA_HEADERS, timeout=8.0)
+        if r.status_code != 200:
+            return False
+        meta = (r.json() or {}).get("result") or {}
+    except Exception as e:
+        log.warning(f"Archive metadata lookup failed for '{ia_id}': {e}")
+        return False
+    restricted = str(meta.get("access-restricted-item", "")).lower() == "true"
+    return not restricted
+
+
 def resolve_free_ebook(record: book_data.BookRecord,
                        language: str = "en") -> Optional[dict]:
     """
@@ -943,6 +970,7 @@ def resolve_free_ebook(record: book_data.BookRecord,
             lang = _gutenberg_language(gid)
             if lang and lang.startswith(want_name):
                 return {
+                    "v": _FREE_EBOOK_PAYLOAD_VERSION,
                     "source": "project_gutenberg",
                     "gutenberg_id": gid,
                     "page_url": f"https://www.gutenberg.org/ebooks/{gid}",
@@ -956,7 +984,16 @@ def resolve_free_ebook(record: book_data.BookRecord,
         if (doc.get("ebook_access") == "public" and doc.get("ia")
                 and doc.get("language") == [want_code]):
             ia_id = doc["ia"][0]
+            # Open Library's "public" is not Archive's. It called
+            # `adventuresofhuck0000mark_f6b5` public; Archive marks that item
+            # access-restricted (it is a lending copy, one borrower at a time),
+            # and downloading it returns 401. Our page meanwhile promised
+            # "Public domain. Free to download". Ask the item itself.
+            if not _ia_item_is_free(ia_id):
+                log.info(f"Archive item '{ia_id}' is lending-restricted — not a free ebook.")
+                continue
             return {
+                "v": _FREE_EBOOK_PAYLOAD_VERSION,
                 "source": "internet_archive",
                 "page_url": f"https://archive.org/details/{ia_id}",
                 "read_url": f"https://archive.org/details/{ia_id}",
@@ -1244,7 +1281,11 @@ def _cached_free_ebook(record: book_data.BookRecord,
     # linked a wrong-language edition (e.g. the Finnish 'Merisusi' for
     # 'The Sea-Wolf') must be re-resolved. Keyed by language too, since the
     # answer now depends on it.
-    key = ("free_ebook_v4", record.title, record.author, language)
+    # v5: the Internet Archive branch trusted Open Library's ebook_access
+    #     ("public") for a lending-restricted scan, so v4 entries can point at
+    #     an item that answers 401 — under our "Free to download" heading.
+    #     Payloads are stamped now so a stale one is recognisable as stale.
+    key = ("free_ebook_v5", record.title, record.author, language)
     hit = cache.get(*key)
     if hit is not None:
         return hit or None  # {} negative marker → None
@@ -2015,7 +2056,14 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
             _quotes_stale = (_q is None
                              or (isinstance(_q, dict) and _q.get("v", 0) < _WQ_PAYLOAD_VERSION)
                              or any(_WQ_DISAMBIGUATION_RE.search(t) for t in _q_texts))
-            if (cached.get("free_ebook") is None or _quotes_stale
+            _fe = cached.get("free_ebook")
+            # Same invariant test as quotes, for the same reason: healing only
+            # when the field is None is healing only the case that is already
+            # harmless. A wrong entry is present, not absent.
+            _fe_stale = (_fe is None
+                         or (isinstance(_fe, dict)
+                             and _fe.get("v", 0) < _FREE_EBOOK_PAYLOAD_VERSION))
+            if (_fe_stale or _quotes_stale
                     or cached.get("nyt") is None or cached.get("editions") is None):
                 try:
                     tmp = book_data.BookRecord(
@@ -2023,10 +2071,16 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
                         open_library_work_key=cached.get("open_library_work_key"),
                     )
                     healed = False
-                    if cached.get("free_ebook") is None:
+                    if _fe_stale:
                         fe = _cached_free_ebook(tmp)
                         if fe:
                             cached["free_ebook"] = fe
+                            healed = True
+                        elif _fe is not None:
+                            # Re-resolved to nothing: the edition we were
+                            # offering no longer qualifies. Drop it rather than
+                            # keep promising a download that answers 401.
+                            cached["free_ebook"] = None
                             healed = True
                     if _quotes_stale:
                         wq = _cached_quotes(tmp)
