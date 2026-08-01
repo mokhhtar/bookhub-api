@@ -898,27 +898,73 @@ _OL_LANG_CODE = {"en": "eng", "ar": "ara"}
 # that predates a resolver change is indistinguishable from a current one by
 # inspection, and the self-heal used to fire only when the field was None —
 # which is exactly the case a WRONG entry is not.
-_FREE_EBOOK_PAYLOAD_VERSION = 1
+_FREE_EBOOK_PAYLOAD_VERSION = 2
 
 
-def _ia_item_is_free(ia_id: str) -> bool:
+def _ia_item_info(ia_id: str) -> tuple[bool, Optional[str]]:
     """
-    True only when Archive says the item is not lending-restricted. Failures
-    (timeout, malformed response) return False: an unverified item is not
-    offered, since the claim we print beside it is "free to download".
+    (is_free, pdf_url) for an Archive item, from ONE metadata call.
+
+    is_free is False unless Archive says the item is not lending-restricted;
+    an unverified item is not offered at all, because the claim printed
+    beside it is "free to download".
+
+    pdf_url is filled only when the item lists a PDF *and* a real request for
+    it succeeds. Not lending-restricted does not by itself mean every derived
+    file is fetchable, and a dead link under a "Free to download" heading is
+    precisely the bug this function was written to end. A missing PDF is not
+    a failure — the entry stays, minus that one button.
     """
     import httpx
-    try:
-        r = httpx.get(f"https://archive.org/metadata/{ia_id}/metadata",
-                      headers=_UA_HEADERS, timeout=8.0)
-        if r.status_code != 200:
-            return False
-        meta = (r.json() or {}).get("result") or {}
-    except Exception as e:
-        log.warning(f"Archive metadata lookup failed for '{ia_id}': {e}")
-        return False
-    restricted = str(meta.get("access-restricted-item", "")).lower() == "true"
-    return not restricted
+    import urllib.parse
+    # Retried for the same reason the probe below is, but the stake is higher:
+    # a failure here makes the whole edition unusable, not just its PDF, so a
+    # single flaky handshake would drop a book's "read it free" entirely.
+    payload = None
+    for attempt in (1, 2):
+        try:
+            r = httpx.get(f"https://archive.org/metadata/{ia_id}",
+                          headers=_UA_HEADERS, timeout=10.0)
+            if r.status_code != 200:
+                return False, None
+            payload = r.json() or {}
+            break
+        except Exception as e:
+            if attempt == 2:
+                log.warning(f"Archive metadata lookup failed for '{ia_id}': {e}")
+                return False, None
+
+    meta = payload.get("metadata") or {}
+    if str(meta.get("access-restricted-item", "")).lower() == "true":
+        return False, None
+
+    # Prefer "<id>.pdf" over derivatives like "<id>_bw.pdf" (a smaller
+    # black-and-white rendering), else the shortest .pdf name — Archive's
+    # extra PDFs are all suffixed variants of the primary one.
+    names = [f.get("name", "") for f in (payload.get("files") or [])]
+    pdfs = [n for n in names if n.lower().endswith(".pdf")]
+    if not pdfs:
+        return True, None
+    name = f"{ia_id}.pdf" if f"{ia_id}.pdf" in pdfs else sorted(pdfs, key=len)[0]
+
+    url = f"https://archive.org/download/{ia_id}/{urllib.parse.quote(name)}"
+    # Retried once, like verify_book_exists, because a positive free_ebook is
+    # cached with no expiry: without the retry one flaky TLS handshake would
+    # cost that book its download button permanently rather than for a moment.
+    for attempt in (1, 2):
+        try:
+            # One byte is enough to prove it serves; a bare HEAD is unreliable
+            # here because Archive answers some HEADs from a different tier.
+            probe = httpx.get(url, headers={**_UA_HEADERS, "Range": "bytes=0-0"},
+                              timeout=10.0, follow_redirects=True)
+            if probe.status_code in (200, 206):
+                return True, url
+            log.info(f"Archive PDF for '{ia_id}' answered {probe.status_code} — not offered.")
+            return True, None
+        except Exception as e:
+            if attempt == 2:
+                log.warning(f"Archive PDF probe failed for '{ia_id}': {e}")
+    return True, None
 
 
 def resolve_free_ebook(record: book_data.BookRecord,
@@ -989,7 +1035,8 @@ def resolve_free_ebook(record: book_data.BookRecord,
             # access-restricted (it is a lending copy, one borrower at a time),
             # and downloading it returns 401. Our page meanwhile promised
             # "Public domain. Free to download". Ask the item itself.
-            if not _ia_item_is_free(ia_id):
+            is_free, pdf_url = _ia_item_info(ia_id)
+            if not is_free:
                 log.info(f"Archive item '{ia_id}' is lending-restricted — not a free ebook.")
                 continue
             return {
@@ -999,6 +1046,12 @@ def resolve_free_ebook(record: book_data.BookRecord,
                 "read_url": f"https://archive.org/details/{ia_id}",
                 "epub_url": None,
                 "txt_url": None,
+                # Only Archive scans can carry this. Project Gutenberg
+                # publishes no PDF at all — not a setting we haven't found,
+                # the files do not exist: /ebooks/<id>.pdf and the cache path
+                # both 404, and an item's file listing holds .txt and an HTML
+                # directory only. Those 36 books need a different mechanism.
+                "pdf_url": pdf_url,
             }
     return None
 
@@ -1285,7 +1338,10 @@ def _cached_free_ebook(record: book_data.BookRecord,
     #     ("public") for a lending-restricted scan, so v4 entries can point at
     #     an item that answers 401 — under our "Free to download" heading.
     #     Payloads are stamped now so a stale one is recognisable as stale.
-    key = ("free_ebook_v5", record.title, record.author, language)
+    # v6: Archive entries gained a verified pdf_url. v5 payloads have no such
+    #     key at all, and the on-read heal compares payload versions, so they
+    #     re-resolve rather than sitting there permanently PDF-less.
+    key = ("free_ebook_v6", record.title, record.author, language)
     hit = cache.get(*key)
     if hit is not None:
         return hit or None  # {} negative marker → None

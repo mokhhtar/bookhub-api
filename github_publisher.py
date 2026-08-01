@@ -112,7 +112,10 @@ MIN_SUMMARY_CHARS = 300
 # scans. It called a lending copy "public", so Huckleberry Finn's page linked
 # an item that answers 401 to a download, under the heading "Public domain.
 # Free to download". Published pages carry that link until rewritten.
-PUBLISH_CONTENT_VERSION = 9
+# v10: Archive-sourced pages gained a verified PDF download. Publishing is
+# create-only, so the seven pages that can carry one only get it when the
+# file is rewritten.
+PUBLISH_CONTENT_VERSION = 10
 
 
 def is_enabled() -> bool:
