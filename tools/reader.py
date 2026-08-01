@@ -169,6 +169,15 @@ PRINT_MAX_BYTES = 4_000_000
 # Upstash's REST tier caps a single request at ~1MB, so the document is
 # stored in pieces, exactly as the reader's page bundles are.
 PRINT_CHUNK = 400_000
+# Versioned like every other cached value here, and for the reason this repo
+# keeps relearning: the sanitiser IS the stored value. The first fix after
+# shipping — restoring the line breaks of dropped containers — changed nothing
+# for anyone, because Redis kept serving the document produced by the old
+# parser for another 30 days.
+# v1: initial.
+# v2: closing a dropped block container emits <br>, so a table of contents
+#     stops printing as one run-on paragraph.
+PRINT_KEY = "readprint_v2"
 
 _PRINT_TAGS = {
     "h1", "h2", "h3", "h4", "p", "blockquote", "em", "i", "strong", "b",
@@ -321,11 +330,11 @@ def _ingest_print(gid: int) -> dict | None:
     chunks = [html[i:i + PRINT_CHUNK] for i in range(0, len(html), PRINT_CHUNK)]
     # Chunks first, meta LAST — a half-stored book never looks complete.
     for i, chunk in enumerate(chunks):
-        if not cache.set_key_strict(f"readprint:{gid}:{i}", chunk, ttl=TTL):
+        if not cache.set_key_strict(f"{PRINT_KEY}:{gid}:{i}", chunk, ttl=TTL):
             log.warning(f"Print: failed storing chunk {i} for {gid} — aborting")
             return None
     meta = {"chunks": len(chunks), "chars": len(html)}
-    cache.set_key(f"readprint:{gid}:meta", meta, ttl=TTL)
+    cache.set_key(f"{PRINT_KEY}:{gid}:meta", meta, ttl=TTL)
     return meta
 
 
@@ -339,19 +348,19 @@ def read_print(gid: int):
     """
     if gid <= 0:
         raise HTTPException(status_code=400, detail="Bad ebook id.")
-    meta = cache.get_key(f"readprint:{gid}:meta")
+    meta = cache.get_key(f"{PRINT_KEY}:{gid}:meta")
     if not meta:
-        cache.acquire_lock(f"readprint:lock:{gid}", ttl=120)
+        cache.acquire_lock(f"{PRINT_KEY}:lock:{gid}", ttl=120)
         meta = _ingest_print(gid)
         if not meta:
             raise HTTPException(status_code=503, detail="Printable edition unavailable.")
     parts = []
     for i in range(meta["chunks"]):
-        chunk = cache.get_key(f"readprint:{gid}:{i}")
+        chunk = cache.get_key(f"{PRINT_KEY}:{gid}:{i}")
         if not isinstance(chunk, str):
             # A chunk expired while meta survived — one re-ingest attempt.
             meta = _ingest_print(gid)
-            chunk = cache.get_key(f"readprint:{gid}:{i}") if meta else None
+            chunk = cache.get_key(f"{PRINT_KEY}:{gid}:{i}") if meta else None
             if not isinstance(chunk, str):
                 raise HTTPException(status_code=503, detail="Printable edition unavailable.")
         parts.append(chunk)
