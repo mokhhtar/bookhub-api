@@ -177,7 +177,10 @@ PRINT_CHUNK = 400_000
 # v1: initial.
 # v2: closing a dropped block container emits <br>, so a table of contents
 #     stops printing as one run-on paragraph.
-PRINT_KEY = "readprint_v2"
+# v3: v2 missed the commoner case — a contents list of bare <a> tags with no
+#     container at all. A newline in text OUTSIDE a prose element is now the
+#     line structure it plainly is.
+PRINT_KEY = "readprint_v3"
 
 _PRINT_TAGS = {
     "h1", "h2", "h3", "h4", "p", "blockquote", "em", "i", "strong", "b",
@@ -203,6 +206,12 @@ _PRINT_DROP_CONTENT = {"script", "style", "head", "title", "noscript"}
 # separated by whitespace, which HTML then collapses — "STORY OF THE DOOR
 # SEARCH FOR MR. HYDE DR. JEKYLL WAS QUITE AT EASE" as a single paragraph.
 # Closing one of these emits a <br> so the lines survive without the layout.
+# Elements whose text is prose: inside them the source's line wrapping is
+# meaningless and must collapse.
+_PRINT_PARAGRAPHISH = {"p", "h1", "h2", "h3", "h4", "blockquote", "li"}
+# A run of whitespace containing at least one newline, in bare text OUTSIDE
+# any prose element. There the newline is the only line structure present.
+_BARE_NEWLINE_RE = re.compile(r"[^\S\r\n]*\r?\n[\s]*")
 _PRINT_BLOCK_BREAK = {
     "div", "section", "article", "aside", "header", "footer", "nav",
     "table", "tr", "td", "th", "dl", "dt", "dd", "figure", "figcaption",
@@ -236,6 +245,13 @@ class _PrintHTMLSanitizer(HTMLParser):
         self._base = f"https://www.gutenberg.org/cache/epub/{gid}/"
         self._suppress_depth = 0   # >0 while inside a boilerplate section
         self._nesting = 0          # depth within that section
+        # >0 while inside a paragraph-level element. Outside one, a newline in
+        # the source is meaningful line structure; inside one it is only the
+        # source's own 70-column wrapping and must collapse. Jekyll & Hyde's
+        # contents are bare <a> tags separated by newlines — no container to
+        # drop, so the <br>-on-close rule below never fired for them and ten
+        # chapter titles printed as a single run-on line.
+        self._block_depth = 0
 
     @staticmethod
     def _is_boilerplate(attrs) -> bool:
@@ -254,6 +270,8 @@ class _PrintHTMLSanitizer(HTMLParser):
             return
         if tag not in _PRINT_TAGS:
             return
+        if tag in _PRINT_PARAGRAPHISH:
+            self._block_depth += 1
         if tag == "img":
             src = dict(attrs).get("src") or ""
             if not src or src.startswith("data:"):
@@ -276,13 +294,19 @@ class _PrintHTMLSanitizer(HTMLParser):
                     self._suppress_depth = 0
             return
         if tag in _PRINT_TAGS and tag not in _PRINT_VOID:
+            if tag in _PRINT_PARAGRAPHISH:
+                self._block_depth = max(0, self._block_depth - 1)
             self._out.append(f"</{tag}>")
         elif tag in _PRINT_BLOCK_BREAK:
             self._out.append("<br>")
 
     def handle_data(self, data):
-        if not self._suppress_depth:
-            self._out.append(_html_escape(data, quote=False))
+        if self._suppress_depth:
+            return
+        text = _html_escape(data, quote=False)
+        if self._block_depth == 0:
+            text = _BARE_NEWLINE_RE.sub("<br>", text)
+        self._out.append(text)
 
     def handle_comment(self, data):
         pass
@@ -293,6 +317,12 @@ class _PrintHTMLSanitizer(HTMLParser):
         # three divs would open with three blank lines. Two is the most any
         # gap needs to mean.
         html = re.sub(r"(?:\s*<br>\s*){3,}", "<br><br>", html)
+        # A break straight after a closing block tag is the source's own
+        # newline between elements, not a blank line the author wanted — and
+        # it would double every paragraph gap, since the stylesheet already
+        # spaces them.
+        html = re.sub(r"(</(?:p|h[1-4]|blockquote|li|ul|ol)>)(?:\s*<br>)+",
+                      r"\1", html)
         return re.sub(r"\n{3,}", "\n\n", html).strip()
 
 
