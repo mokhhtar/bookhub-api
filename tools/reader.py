@@ -188,6 +188,17 @@ _VOID_ELEMENTS = {
 # bug: Gutenberg's <style> block would print as a slab of CSS on page one of
 # every book.
 _PRINT_DROP_CONTENT = {"script", "style", "head", "title", "noscript"}
+# Block containers we don't emit but whose LINE STRUCTURE we must keep. The
+# table of contents made this concrete: Gutenberg lays it out as one block per
+# entry, and dropping those left ten chapter titles as adjacent text nodes
+# separated by whitespace, which HTML then collapses — "STORY OF THE DOOR
+# SEARCH FOR MR. HYDE DR. JEKYLL WAS QUITE AT EASE" as a single paragraph.
+# Closing one of these emits a <br> so the lines survive without the layout.
+_PRINT_BLOCK_BREAK = {
+    "div", "section", "article", "aside", "header", "footer", "nav",
+    "table", "tr", "td", "th", "dl", "dt", "dd", "figure", "figcaption",
+    "center", "address", "pre",
+}
 
 
 class _PrintHTMLSanitizer(HTMLParser):
@@ -257,6 +268,8 @@ class _PrintHTMLSanitizer(HTMLParser):
             return
         if tag in _PRINT_TAGS and tag not in _PRINT_VOID:
             self._out.append(f"</{tag}>")
+        elif tag in _PRINT_BLOCK_BREAK:
+            self._out.append("<br>")
 
     def handle_data(self, data):
         if not self._suppress_depth:
@@ -266,7 +279,12 @@ class _PrintHTMLSanitizer(HTMLParser):
         pass
 
     def result(self) -> str:
-        return re.sub(r"\n{3,}", "\n\n", "".join(self._out)).strip()
+        html = "".join(self._out)
+        # Nested containers each contribute a break, so a chapter wrapped in
+        # three divs would open with three blank lines. Two is the most any
+        # gap needs to mean.
+        html = re.sub(r"(?:\s*<br>\s*){3,}", "<br><br>", html)
+        return re.sub(r"\n{3,}", "\n\n", html).strip()
 
 
 def _fetch_print_html(gid: int) -> str | None:
