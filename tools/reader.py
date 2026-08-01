@@ -15,6 +15,8 @@ first request, guarded by the same best-effort lock /daily uses.
 """
 import logging
 import re
+from html import escape as _html_escape
+from html.parser import HTMLParser
 
 import httpx
 from fastapi import APIRouter, HTTPException, Response
@@ -136,6 +138,206 @@ def get_full_text_pages(gid: int) -> list[str] | None:
                 return None
         pages.extend(bundle)
     return pages or None
+
+
+# ── Printable edition (the route to a PDF) ───────────────────
+#
+# Project Gutenberg publishes NO PDF — /ebooks/<id>.pdf and the cache path
+# both 404, and an item's file listing holds a .txt and an HTML directory and
+# nothing else. Converting the EPUB ourselves would mean carrying a rendering
+# engine (Calibre ~500MB, or Chromium, or WeasyPrint's system libraries) on a
+# 512MB box with no persistent disk, and its first act would be to unzip the
+# EPUB to reach the XHTML that Gutenberg already serves directly.
+#
+# So we don't make a PDF. We serve the book as one clean document and let the
+# browser's own print engine make it — the best typesetter available, already
+# installed, free. This endpoint is the "clean document" half.
+#
+# The HTML edition is used rather than the plain text this module already
+# caches, because the difference is the point: it carries real <h1>/<h2>
+# chapter headings, emphasis, and illustrations. The text edition would print
+# as one undifferentiated slab.
+_PRINT_MIRRORS = [
+    "https://www.gutenberg.org/cache/epub/{gid}/pg{gid}-images.html",
+    "https://www.gutenberg.org/ebooks/{gid}.html.images",
+    "https://gutenberg.pglaf.org/cache/epub/{gid}/pg{gid}-images.html",
+]
+# Decompressed, an average novel is ~850KB — Pride and Prejudice measured
+# 852KB from a 137KB gzipped transfer. The cap is generous but real: it is
+# the memory this parses in on a box with 512MB.
+PRINT_MAX_BYTES = 4_000_000
+# Upstash's REST tier caps a single request at ~1MB, so the document is
+# stored in pieces, exactly as the reader's page bundles are.
+PRINT_CHUNK = 400_000
+
+_PRINT_TAGS = {
+    "h1", "h2", "h3", "h4", "p", "blockquote", "em", "i", "strong", "b",
+    "br", "hr", "img", "ul", "ol", "li", "small", "sup", "sub",
+}
+_PRINT_VOID = {"br", "hr", "img"}
+# Every HTML void element, for the suppression DEPTH COUNTER only. It has to
+# be the full list, not the three we emit: a <meta> or <link> inside <head>
+# never closes, so counting it as an open tag would leave suppression stuck
+# on and swallow the entire book.
+_VOID_ELEMENTS = {
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
+    "meta", "param", "source", "track", "wbr",
+}
+# Tags whose TEXT must go with them. The summary sanitiser lets the text of a
+# dropped tag survive escaped — inert, and correct there. Here it is a quality
+# bug: Gutenberg's <style> block would print as a slab of CSS on page one of
+# every book.
+_PRINT_DROP_CONTENT = {"script", "style", "head", "title", "noscript"}
+
+
+class _PrintHTMLSanitizer(HTMLParser):
+    """
+    Gutenberg's HTML reduced to an allow-list, with two jobs beyond safety.
+
+    It DROPS the Project Gutenberg boilerplate — the licence header and
+    footer, which are wrapped in elements carrying id="pg-header" /
+    id="pg-footer" or class "pg-boilerplate". Those run to hundreds of lines
+    and would print as the first and last pages of every book. Suppression is
+    depth-counted so nested tags inside a dropped section go with it.
+
+    And it REWRITES image sources. The document references them relatively
+    ("images/cover.jpg"), which would resolve against litheca.com and 404;
+    they are made absolute against the book's own Gutenberg directory. Images
+    are not subject to CORS when displayed, so they load normally.
+
+    Everything else follows the same contract as the summary sanitiser: no
+    attributes survive except img src/alt, all text is escaped, comments are
+    dropped.
+    """
+
+    def __init__(self, gid: int):
+        super().__init__(convert_charrefs=True)
+        self._out: list[str] = []
+        self._base = f"https://www.gutenberg.org/cache/epub/{gid}/"
+        self._suppress_depth = 0   # >0 while inside a boilerplate section
+        self._nesting = 0          # depth within that section
+
+    @staticmethod
+    def _is_boilerplate(attrs) -> bool:
+        d = dict(attrs)
+        return (d.get("id") in ("pg-header", "pg-footer", "pg-machine-header")
+                or "pg-boilerplate" in (d.get("class") or ""))
+
+    def handle_starttag(self, tag, attrs):
+        if self._suppress_depth:
+            if tag not in _VOID_ELEMENTS:
+                self._nesting += 1
+            return
+        if tag in _PRINT_DROP_CONTENT or self._is_boilerplate(attrs):
+            self._suppress_depth = 1
+            self._nesting = 1
+            return
+        if tag not in _PRINT_TAGS:
+            return
+        if tag == "img":
+            src = dict(attrs).get("src") or ""
+            if not src or src.startswith("data:"):
+                return
+            if not src.startswith(("http://", "https://")):
+                src = self._base + src.lstrip("./")
+            alt = _html_escape(dict(attrs).get("alt") or "", quote=True)
+            self._out.append(f'<img src="{_html_escape(src, quote=True)}" alt="{alt}">')
+            return
+        self._out.append(f"<{tag}>")
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+
+    def handle_endtag(self, tag):
+        if self._suppress_depth:
+            if tag not in _VOID_ELEMENTS:
+                self._nesting -= 1
+                if self._nesting <= 0:
+                    self._suppress_depth = 0
+            return
+        if tag in _PRINT_TAGS and tag not in _PRINT_VOID:
+            self._out.append(f"</{tag}>")
+
+    def handle_data(self, data):
+        if not self._suppress_depth:
+            self._out.append(_html_escape(data, quote=False))
+
+    def handle_comment(self, data):
+        pass
+
+    def result(self) -> str:
+        return re.sub(r"\n{3,}", "\n\n", "".join(self._out)).strip()
+
+
+def _fetch_print_html(gid: int) -> str | None:
+    timeout = httpx.Timeout(connect=8.0, read=90.0, write=10.0, pool=8.0)
+    for pattern in _PRINT_MIRRORS:
+        url = pattern.format(gid=gid)
+        for attempt in (1, 2):
+            try:
+                r = httpx.get(url, headers=_UA, timeout=timeout, follow_redirects=True)
+                if r.status_code != 200:
+                    log.warning(f"Print mirror {url} returned {r.status_code}")
+                    break
+                if len(r.content) > PRINT_MAX_BYTES:
+                    log.warning(f"Print: ebook {gid} too large ({len(r.content)}B) — refusing")
+                    return None
+                return r.text
+            except Exception as e:
+                log.warning(f"Print mirror {url} failed (attempt {attempt}): {e}")
+    return None
+
+
+def _ingest_print(gid: int) -> dict | None:
+    raw = _fetch_print_html(gid)
+    if not raw:
+        return None
+    parser = _PrintHTMLSanitizer(gid)
+    parser.feed(raw)
+    html = parser.result()
+    # A book that sanitises down to nothing means the document wasn't what we
+    # expected — serve no printable edition rather than a blank one.
+    if len(html) < 2000:
+        log.warning(f"Print: ebook {gid} sanitised to {len(html)} chars — refusing")
+        return None
+    chunks = [html[i:i + PRINT_CHUNK] for i in range(0, len(html), PRINT_CHUNK)]
+    # Chunks first, meta LAST — a half-stored book never looks complete.
+    for i, chunk in enumerate(chunks):
+        if not cache.set_key_strict(f"readprint:{gid}:{i}", chunk, ttl=TTL):
+            log.warning(f"Print: failed storing chunk {i} for {gid} — aborting")
+            return None
+    meta = {"chunks": len(chunks), "chars": len(html)}
+    cache.set_key(f"readprint:{gid}:meta", meta, ttl=TTL)
+    return meta
+
+
+# Registered BEFORE /read/{gid}/{page} so "print" isn't parsed as a page number.
+@router.get("/read/{gid}/print")
+def read_print(gid: int):
+    """
+    The whole book as one sanitised HTML document, for the site's print view.
+    503 when the text can't be fetched — the caller then shows the external
+    link instead, the same contract as the reader itself.
+    """
+    if gid <= 0:
+        raise HTTPException(status_code=400, detail="Bad ebook id.")
+    meta = cache.get_key(f"readprint:{gid}:meta")
+    if not meta:
+        cache.acquire_lock(f"readprint:lock:{gid}", ttl=120)
+        meta = _ingest_print(gid)
+        if not meta:
+            raise HTTPException(status_code=503, detail="Printable edition unavailable.")
+    parts = []
+    for i in range(meta["chunks"]):
+        chunk = cache.get_key(f"readprint:{gid}:{i}")
+        if not isinstance(chunk, str):
+            # A chunk expired while meta survived — one re-ingest attempt.
+            meta = _ingest_print(gid)
+            chunk = cache.get_key(f"readprint:{gid}:{i}") if meta else None
+            if not isinstance(chunk, str):
+                raise HTTPException(status_code=503, detail="Printable edition unavailable.")
+        parts.append(chunk)
+    return {"gid": gid, "html": "".join(parts)}
 
 
 # Registered BEFORE /read/{gid}/{page} so "search" isn't parsed as a page number.
