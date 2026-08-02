@@ -1,0 +1,133 @@
+# Push every book's printable edition to Cloudflare R2.
+#
+# WHY. /print/ currently reads the whole book through Render: measured 14.5s
+# total for a 788KB book WITH a warm Redis cache and a warm instance, and
+# another 30-60s on top when Render is asleep. The document is identical every
+# time and there are only ~36 of them, so serving it from Render at all is the
+# mistake. This uploads each one once; the site then reads a static file from
+# Cloudflare's edge and falls back to the API only on a miss.
+#
+# It is a paced crawl of our own API, exactly like warm-daily.yml — Render's
+# free tier has no cron, and this needs the API anyway to produce the
+# sanitised HTML.
+#
+# RUN IT WHEN: PRINT_KEY in tools/reader.py is bumped (the sanitiser changed,
+# so every stored document is stale), or new Gutenberg-backed book pages are
+# published. Manual only — there is nothing to schedule, the content is fixed.
+#
+# REQUIRES these repo secrets:
+#   CLOUDFLARE_API_TOKEN   — scoped to "Workers R2 Storage: Edit" on the bucket
+#   CLOUDFLARE_ACCOUNT_ID
+name: Warm printable editions to R2
+
+on:
+  workflow_dispatch:
+    inputs:
+      bucket:
+        description: "R2 bucket name"
+        default: "litheca-print"
+      limit:
+        description: "Stop after N books (0 = all). Use 1 as a canary FIRST."
+        default: "1"
+
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The version lives in one place — the sanitiser that produces the
+      # document. Deriving it here rather than hardcoding means the upload
+      # path cannot silently disagree with what the parser produced.
+      - name: Read the print cache version
+        id: ver
+        run: |
+          # POSIX sed, not grep -P: -P is a GNU extension and refuses to run
+          # outside a UTF-8 locale, so it works on the runner and fails on a
+          # laptop. A build step that only works in one place is a build step
+          # nobody can debug.
+          V=$(sed -n 's/^PRINT_KEY[[:space:]]*=[[:space:]]*"readprint_\([a-z0-9]*\)".*/\1/p' tools/reader.py)
+          if [ -z "$V" ]; then echo "Could not read PRINT_KEY from tools/reader.py"; exit 1; fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "Uploading under print/$V/"
+          echo "NOTE: bookhub/_config.yml must carry print_version: \"$V\" or the site will miss every object."
+
+      # Render sleeps after ~15 minutes. Wake it before the real calls so the
+      # first book doesn't eat the cold start inside a longer timeout.
+      - name: Wake the API
+        run: curl -sS -m 120 --retry 3 --retry-delay 10 "https://bookhub-api-hnv7.onrender.com/health" || true
+
+      - name: Upload each printable edition
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BUCKET: ${{ inputs.bucket }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          LIMIT: ${{ inputs.limit }}
+        run: |
+          set -uo pipefail
+
+          # books.json is the site's own machine-readable index — the same list
+          # the site renders from, so it cannot drift from what is published.
+          curl -sS -m 60 --retry 3 "https://litheca.com/books.json" -o books.json
+          mapfile -t IDS < <(jq -r '.[] | select(.gutenberg_id != null and .gutenberg_id != "") | .gutenberg_id' books.json | sort -un)
+          echo "${#IDS[@]} book(s) carry a Gutenberg id."
+          [ "${#IDS[@]}" -eq 0 ] && { echo "Nothing to do."; exit 0; }
+
+          ok=0; skipped=0; failed=0; n=0
+          for GID in "${IDS[@]}"; do
+            if [ "$LIMIT" != "0" ] && [ "$n" -ge "$LIMIT" ]; then break; fi
+            n=$((n+1))
+            echo "::group::$GID"
+
+            # The API produces the sanitised document. Extracting .html with jq
+            # also proves the response was well-formed JSON.
+            if ! curl -sS -m 300 "https://bookhub-api-hnv7.onrender.com/read/$GID/print" -o resp.json; then
+              echo "fetch failed"; failed=$((failed+1)); echo "::endgroup::"; continue
+            fi
+            if ! jq -er '.html' resp.json > book.html 2>/dev/null; then
+              echo "no printable edition (API returned no html)"; skipped=$((skipped+1)); echo "::endgroup::"; continue
+            fi
+            SIZE=$(wc -c < book.html)
+            # Same floor the API applies before storing anything: a document
+            # that sanitises down to nothing is a failure, not a short book.
+            if [ "$SIZE" -lt 2000 ]; then
+              echo "suspiciously small ($SIZE bytes) — refusing"; failed=$((failed+1)); echo "::endgroup::"; continue
+            fi
+
+            KEY="print/$VERSION/$GID.html"
+            if ! npx --yes wrangler@latest r2 object put "$BUCKET/$KEY" \
+                 --file=book.html \
+                 --content-type "text/html; charset=utf-8" \
+                 --cache-control "public, max-age=31536000, immutable"; then
+              echo "upload failed"; failed=$((failed+1)); echo "::endgroup::"; continue
+            fi
+
+            echo "uploaded $KEY ($SIZE bytes)"
+            ok=$((ok+1))
+            echo "::endgroup::"
+            sleep 3   # Render's free tier is not in a hurry and neither are we
+          done
+
+          echo "uploaded=$ok  skipped=$skipped  failed=$failed"
+          echo "uploaded=$ok" >> "$GITHUB_ENV"
+          [ "$failed" -gt 0 ] && exit 1
+          exit 0
+
+      # Uploading is not the same as being readable. The public URL is what the
+      # site will actually request, so check THAT — a bucket without a custom
+      # domain, or without public access, uploads perfectly and serves nothing.
+      - name: Verify one object over the public URL
+        if: ${{ success() }}
+        run: |
+          CDN="${{ vars.PRINT_CDN }}"
+          if [ -z "$CDN" ]; then
+            echo "PRINT_CDN repo variable not set — skipping the public read check."
+            echo "Set it to the bucket's custom domain (e.g. https://files.litheca.com) to enable this."
+            exit 0
+          fi
+          GID=$(jq -r '[.[] | select(.gutenberg_id != null and .gutenberg_id != "") | .gutenberg_id] | sort | .[0]' books.json)
+          URL="$CDN/print/${{ steps.ver.outputs.version }}/$GID.html"
+          CODE=$(curl -sS -o /dev/null -w '%{http_code}' -m 60 "$URL")
+          echo "$URL -> $CODE"
+          [ "$CODE" = "200" ] || { echo "Public read failed. Is the bucket public with a custom domain?"; exit 1; }
