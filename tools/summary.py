@@ -21,6 +21,7 @@ Pipeline:
 import logging
 import os
 import re
+import unicodedata
 from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -852,7 +853,20 @@ _UA_HEADERS = {"User-Agent": "BookHub/1.0 (mokhhtar@github.com)"}
 
 
 def _norm_match(s: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+    # Accents are FOLDED, not stripped. Dropping them silently truncated the
+    # word — "Brontë" became "bront" while a reader typing "Bronte" produced
+    # "bronte", so the two never matched and Jane Eyre resolved to no free
+    # ebook at all. Every accented author had the same hole: Zola, Dumas fils,
+    # Čapek. NFKD splits the accent into a combining mark, which the existing
+    # a-z0-9 filter then removes on its own, leaving the base letter.
+    # The combining marks must be DELETED, not left for the filter below —
+    # that filter turns anything non-alphanumeric into a space, so a mark in
+    # the middle of a word splits it: "Misérables" became "mise rables".
+    # "Brontë" passed anyway because its accent is on the last letter, which
+    # is the kind of luck that hides a bug until a different book finds it.
+    decomposed = unicodedata.normalize("NFKD", (s or "").lower())
+    folded = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return re.sub(r"[^a-z0-9]+", " ", folded).strip()
 
 
 def _gutenberg_language(gid: str) -> Optional[str]:
@@ -898,7 +912,7 @@ _OL_LANG_CODE = {"en": "eng", "ar": "ara"}
 # that predates a resolver change is indistinguishable from a current one by
 # inspection, and the self-heal used to fire only when the field was None —
 # which is exactly the case a WRONG entry is not.
-_FREE_EBOOK_PAYLOAD_VERSION = 2
+_FREE_EBOOK_PAYLOAD_VERSION = 3
 
 
 def _ia_item_info(ia_id: str) -> tuple[bool, Optional[str]]:
@@ -967,13 +981,51 @@ def _ia_item_info(ia_id: str) -> tuple[bool, Optional[str]]:
     return True, None
 
 
+def _pool_gutenberg_id(title: str, author: str) -> Optional[str]:
+    """
+    The hand-verified Guess the Book pool, used as a free-ebook source.
+
+    Open Library is the primary source and it has holes: it returned five
+    matching documents for "The Wonderful Wizard of Oz" and
+    `id_project_gutenberg: None` on every one of them, so a book that has been
+    free on Gutenberg since 1993 showed no read button. Twenty-six published
+    pages were in that state.
+
+    Our own pool is a better source than any API for the books it covers,
+    because scripts/verify_gtb_pool.py checks each entry against the actual
+    Gutenberg text — title, author and character names matched verbatim. This
+    is the same "no data beats wrong data" rule read forwards: we already did
+    the verification, we simply never wired it in.
+
+    Deliberately NOT used: Wikidata's P2034. Asked for the same book it
+    answered 43936, while the id that actually serves the text is 55. A
+    plausible wrong answer is exactly what this codebase refuses.
+
+    Matching is on the slug of title + author surname, so a catalog's
+    punctuation ("Dr Jekyll" vs "Dr. Jekyll") does not decide the outcome.
+    """
+    from tools.gtb_pool import GTB_POOL
+
+    want = slug_mod.book_slug(title or "")
+    if not want:
+        return None
+    surname = _norm_match(author or "").split(" ")[-1]
+    for entry in GTB_POOL:
+        if slug_mod.book_slug(entry.title) != want:
+            continue
+        if surname and surname not in _norm_match(entry.author):
+            continue
+        return str(entry.gutenberg_id)
+    return None
+
+
 def resolve_free_ebook(record: book_data.BookRecord,
                        language: str = "en") -> Optional[dict]:
     """
-    Free-to-read edition via Open Library: a Project Gutenberg ebook when
-    the record carries one (public domain by definition), else a public
-    Internet Archive scan (ebook_access == "public"). Two guards, because
-    linking the WRONG free ebook is worse than none:
+    Free-to-read edition, from the hand-verified pool first and Open Library
+    second: a Project Gutenberg ebook when one exists (public domain by
+    definition), else a public Internet Archive scan. Two guards on the Open
+    Library path, because linking the WRONG free ebook is worse than none:
 
       * title must match exact-ish with a matching author surname;
       * the edition must be in the expected language. Open Library lists
@@ -986,6 +1038,24 @@ def resolve_free_ebook(record: book_data.BookRecord,
     import httpx
     want_name = _GUT_LANG_NAME.get(language, "english")
     want_code = _OL_LANG_CODE.get(language, "eng")
+
+    # Our own verified pool first — English only, since every entry was
+    # checked against the English text. The language check that follows on the
+    # Open Library path exists precisely because that path cannot be trusted
+    # about language; this one can, so it is skipped rather than faked.
+    if language == "en":
+        pool_gid = _pool_gutenberg_id(record.title, record.author)
+        if pool_gid:
+            return {
+                "v": _FREE_EBOOK_PAYLOAD_VERSION,
+                "source": "project_gutenberg",
+                "gutenberg_id": pool_gid,
+                "page_url": f"https://www.gutenberg.org/ebooks/{pool_gid}",
+                "read_url": f"https://www.gutenberg.org/ebooks/{pool_gid}.html.images",
+                "epub_url": f"https://www.gutenberg.org/ebooks/{pool_gid}.epub3.images",
+                "txt_url": f"https://www.gutenberg.org/ebooks/{pool_gid}.txt.utf-8",
+                "pdf_url": None,   # Gutenberg publishes no PDF; /print/ covers these
+            }
     try:
         r = httpx.get("https://openlibrary.org/search.json", params={
             "title": record.title,
@@ -1119,7 +1189,7 @@ _WQ_DISAMBIG_TEMPLATE_RE = re.compile(r"\{\{\s*disambig", re.IGNORECASE)
 
 # Bump whenever resolve_wikiquote_quotes changes what it returns; the
 # on-read heal refreshes any cached payload stamped with less.
-_WQ_PAYLOAD_VERSION = 8
+_WQ_PAYLOAD_VERSION = 9
 
 _WQ_DISAMBIGUATION_RE = re.compile(
     r"(?=.*\b(?:1[5-9]|20)\d\d\b)"
@@ -1338,6 +1408,9 @@ def _cached_free_ebook(record: book_data.BookRecord,
     #     ("public") for a lending-restricted scan, so v4 entries can point at
     #     an item that answers 401 — under our "Free to download" heading.
     #     Payloads are stamped now so a stale one is recognisable as stale.
+    # v6: the hand-verified pool is consulted first, and _norm_match folds
+    #     accents instead of stripping them. Both change the answer: 26 books
+    #     that resolved to nothing now resolve, Jane Eyre among them.
     # v6: Archive entries gained a verified pdf_url. v5 payloads have no such
     #     key at all, and the on-read heal compares payload versions, so they
     #     re-resolve rather than sitting there permanently PDF-less.
@@ -1361,6 +1434,8 @@ def _cached_quotes(record: book_data.BookRecord) -> Optional[dict]:
     # v6: the resolver now skips disambiguation PAGES rather than filtering
     #     their bullets, so v5 payloads still hold whatever the wording filter
     #     happened to miss.
+    # v9: _norm_match folds accents now, so the landing-page test can agree
+    #     where it previously could not ("Les Misérables" vs "Les Miserables").
     # v8: v7 accepted an adaptation page whose qualifier the title test stripped
     #     — Little Women resolved to "Little Women (2019 film)" and cached the
     #     screenplay's lines as Alcott's.
@@ -1368,7 +1443,7 @@ def _cached_quotes(record: book_data.BookRecord) -> Optional[dict]:
     #     the quotes of whatever page the title redirects TO — "Crime" for
     #     Kidnapped, the author's page for eight others. Nothing about the
     #     stored texts distinguishes those from real ones; only re-resolving does.
-    key = ("wikiquote_v8", record.title, record.author)
+    key = ("wikiquote_v9", record.title, record.author)
     hit = cache.get(*key)
     if hit is not None:
         return hit or None
