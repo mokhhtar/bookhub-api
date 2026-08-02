@@ -1,0 +1,52 @@
+# Weekly R2 free-tier usage check.
+#
+# WHY. R2's free tier is 10 GB of storage, 1M Class A and 10M Class B
+# operations a month. Our expected use is ~29 MB and ~38 writes — three orders
+# of magnitude below every limit. That is exactly why this exists: nobody
+# watches a number they expect to be zero, and the first sign of a runaway
+# loop, or a crawler hammering files.litheca.com, would otherwise be a bill.
+#
+# It FAILS the job when a dimension crosses the threshold, because a failed
+# GitHub Action emails the owner by itself. No new dashboard to remember.
+#
+# It also fails when it cannot READ a dimension — see the script's docstring.
+#
+# The logic lives in scripts/r2_usage_check.py rather than inline here, so it
+# can be run and tested. The first draft was jq embedded in this YAML, which
+# cannot be executed anywhere except a runner; the classification rules now
+# have unit tests behind them instead of hope.
+#
+# REQUIRES:
+#   CLOUDFLARE_ACCOUNT_ID
+#   CLOUDFLARE_USAGE_TOKEN — "Workers R2 Storage: Read" AND
+#     "Account Analytics: Read". NOT the upload token warm-print.yml uses:
+#     that one is scoped to object read/write on one bucket and can see
+#     neither metrics nor analytics. Two jobs, two tokens, each with the
+#     narrowest rights that do its work.
+name: R2 usage alert
+
+on:
+  schedule:
+    # 07:41 UTC on Mondays. Not :00 — every scheduled job in the world fires
+    # on the hour and GitHub queues them.
+    - cron: "41 7 * * 1"
+  workflow_dispatch:
+    inputs:
+      threshold:
+        description: "Percent of any free-tier limit that trips the alarm"
+        default: "90"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet httpx
+      - name: Compare R2 usage against the free tier
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_USAGE_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: python scripts/r2_usage_check.py --threshold "${{ inputs.threshold || '90' }}"
