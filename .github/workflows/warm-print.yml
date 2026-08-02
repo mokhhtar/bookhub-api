@@ -16,7 +16,11 @@
 # published. Manual only — there is nothing to schedule, the content is fixed.
 #
 # REQUIRES these repo secrets:
-#   CLOUDFLARE_API_TOKEN   — scoped to "Workers R2 Storage: Edit" on the bucket
+#   R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY — the S3 credentials shown once
+#     when an R2 API token is created, with "Object Read & Write" scoped to
+#     this bucket alone. NOT a REST bearer token: that permission is
+#     documented as supported by the S3 API only, and the REST endpoint
+#     answers 403 for it.
 #   CLOUDFLARE_ACCOUNT_ID
 name: Warm printable editions to R2
 
@@ -59,13 +63,27 @@ jobs:
 
       - name: Upload each printable edition
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # S3 credentials, not a REST bearer token — see the header.
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          # R2 does not implement the newer default checksum headers the AWS
+          # CLI v2 sends; asking for them only when required keeps put-object
+          # from failing on a header R2 will never return.
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           BUCKET: ${{ inputs.bucket }}
           VERSION: ${{ steps.ver.outputs.version }}
           LIMIT: ${{ inputs.limit }}
         run: |
           set -uo pipefail
+          if [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ]; then
+            echo "::error::R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY are not set."
+            echo "Both are shown once, on the R2 API token screen, at creation."
+            exit 1
+          fi
+          ENDPOINT="https://$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com"
 
           # books.json is the site's own machine-readable index — the same list
           # the site renders from, so it cannot drift from what is published.
@@ -95,22 +113,23 @@ jobs:
               echo "suspiciously small ($SIZE bytes) — refusing"; failed=$((failed+1)); echo "::endgroup::"; continue
             fi
 
-            # The REST API, not `wrangler r2 object put`. The first version of
-            # this step used wrangler, which reported success for every book
-            # and wrote NOTHING to the bucket — it had gone to the local
-            # simulator. Exit code 0, zero objects stored. The REST call
-            # returns a body that says whether it worked, and that body is
-            # checked below, so "it said fine" and "it is fine" stop being
-            # different things.
+            # Third mechanism, and the trail is worth keeping because each
+            # failed differently:
+            #   wrangler r2 object put — reported success, wrote to a LOCAL
+            #     simulator. Exit 0, zero objects stored.
+            #   Cloudflare REST API — 403 "Authentication error" for a token
+            #     scoped exactly right, because R2's "Object Read & Write"
+            #     permission is documented as supported by the S3 API ONLY.
+            #   S3 endpoint — what this token was actually made for.
             KEY="print/$VERSION/$GID.html"
-            HTTP=$(curl -sS -m 300 -o put.json -w '%{http_code}' -X PUT \
-              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets/$BUCKET/objects/$KEY" \
-              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-              -H "Content-Type: text/html; charset=utf-8" \
-              -H "Cache-Control: public, max-age=31536000, immutable" \
-              --data-binary @book.html)
-            if [ "$HTTP" != "200" ] || ! jq -e '.success == true' put.json >/dev/null 2>&1; then
-              echo "upload failed (HTTP $HTTP)"; jq -c '.errors // .' put.json 2>/dev/null || cat put.json
+            if ! aws s3api put-object \
+                 --endpoint-url "$ENDPOINT" \
+                 --bucket "$BUCKET" --key "$KEY" \
+                 --body book.html \
+                 --content-type "text/html; charset=utf-8" \
+                 --cache-control "public, max-age=31536000, immutable" \
+                 >put.json 2>put.err; then
+              echo "upload failed"; sed -n "1,4p" put.err
               failed=$((failed+1)); echo "::endgroup::"; continue
             fi
 
@@ -136,26 +155,32 @@ jobs:
       - name: Verify the objects are really there, and really public
         if: ${{ success() }}
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # Same S3 credentials as the upload — the REST API rejects this
+          # token, and a verification that cannot authenticate is a
+          # verification that fails for the wrong reason.
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           BUCKET: ${{ inputs.bucket }}
           CDN: ${{ vars.PRINT_CDN }}
         run: |
           set -uo pipefail
+          ENDPOINT="https://$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com"
           VERSION="${{ steps.ver.outputs.version }}"
           GID=$(jq -r '[.[] | select(.gutenberg_id != null and .gutenberg_id != "") | .gutenberg_id] | sort | .[0]' books.json)
           KEY="print/$VERSION/$GID.html"
 
           # 1. Does the object exist in the bucket, at the size we sent?
-          curl -sS -m 60 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets/$BUCKET/objects" \
-            -o listing.json
-          if ! jq -e --arg k "$KEY" '[.result[]? | select(.key == $k)] | length > 0' listing.json >/dev/null 2>&1; then
+          if ! aws s3api head-object --endpoint-url "$ENDPOINT" \
+               --bucket "$BUCKET" --key "$KEY" >head.json 2>head.err; then
             echo "::error::$KEY is NOT in the bucket. The upload reported success and stored nothing."
-            jq -c '[.result[]?.key] // .' listing.json
+            sed -n "1,4p" head.err
             exit 1
           fi
-          echo "stored: $(jq -r --arg k "$KEY" '.result[] | select(.key == $k) | "\(.key) \(.size) bytes"' listing.json)"
+          echo "stored: $KEY $(jq -r '.ContentLength' head.json) bytes, $(jq -r '.ContentType' head.json)"
 
           # 2. Can the browser actually read it? A bucket with no custom domain
           #    or no public access passes step 1 and serves nobody.
