@@ -900,11 +900,40 @@ def _prefer_requested_author(resolved: str, requested: str) -> str:
     alone. "F. Scott Fitzgerald" vs "Francis Scott Key Fitzgerald" is a
     different rendering of the name, not a mistyping of it, and this must
     never quietly overwrite a genuinely different author string.
+
+    Also accepts a catalog value that is the caller's, with a run of tokens
+    STUTTERED. Google Books really does return
+    authors: ["Alexandre Alexandre Dumas"] for The Three Musketeers, and
+    "Henry Henry James", and "L. Frank L. Frank Baum" — and those went out as
+    live pages, taking a duplicate book page and a malformed author page with
+    them each time. Letters-only comparison could not save us there: the extra
+    letters are genuinely extra.
+
+    The collapse is grounded, not guessed. A repetition is only removed when
+    what remains equals what the CALLER asked for — so "Sirhan Sirhan", a real
+    name nobody asked us to correct, is untouched. We never invent a name; we
+    only recognise the caller's.
     """
     if not requested or not resolved:
         return resolved
     only_letters = lambda s: re.sub(r"[^a-z]", "", s.lower())
-    return requested if only_letters(resolved) == only_letters(requested) else resolved
+    if only_letters(resolved) == only_letters(requested):
+        return requested
+
+    tokens = resolved.split()
+    want = only_letters(requested)
+    # Try every run length: "Henry Henry James" repeats one token,
+    # "L. Frank L. Frank Baum" repeats two.
+    for size in range(1, len(tokens) // 2 + 1):
+        for start in range(len(tokens) - 2 * size + 1):
+            a = tokens[start:start + size]
+            b = tokens[start + size:start + 2 * size]
+            if [only_letters(x) for x in a] != [only_letters(x) for x in b]:
+                continue
+            collapsed = tokens[:start + size] + tokens[start + 2 * size:]
+            if only_letters(" ".join(collapsed)) == want:
+                return requested
+    return resolved
 
 
 def _strip_author_from_title(title: str, author: str) -> str:
