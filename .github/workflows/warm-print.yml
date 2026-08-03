@@ -134,6 +134,13 @@ jobs:
             fi
 
             echo "uploaded $KEY ($SIZE bytes)"
+            # Hand the verifier a key we KNOW was written, rather than let it
+            # recompute one. It used to derive the key by re-sorting books.json
+            # with jq's string sort while this loop uses `sort -un`, so at
+            # limit=1 the upload wrote 12.html and the check looked for
+            # 103.html — "103" < "12" as text, 12 < 103 as numbers. It failed,
+            # correctly, on an object nobody had claimed to store.
+            [ "$ok" -eq 0 ] && echo "VERIFY_KEY=$KEY" >> "$GITHUB_ENV"
             ok=$((ok+1))
             echo "::endgroup::"
             sleep 3   # Render's free tier is not in a hurry and neither are we
@@ -169,9 +176,12 @@ jobs:
         run: |
           set -uo pipefail
           ENDPOINT="https://$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com"
-          VERSION="${{ steps.ver.outputs.version }}"
-          GID=$(jq -r '[.[] | select(.gutenberg_id != null and .gutenberg_id != "") | .gutenberg_id] | sort | .[0]' books.json)
-          KEY="print/$VERSION/$GID.html"
+          KEY="${VERIFY_KEY:-}"
+          if [ -z "$KEY" ]; then
+            echo "::error::The upload step recorded no key — nothing was stored."
+            echo "Every book was skipped or failed. Read the upload step's summary line."
+            exit 1
+          fi
 
           # 1. Does the object exist in the bucket, at the size we sent?
           if ! aws s3api head-object --endpoint-url "$ENDPOINT" \
