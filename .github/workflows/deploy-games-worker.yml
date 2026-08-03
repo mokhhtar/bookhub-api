@@ -50,7 +50,19 @@ jobs:
       - name: Prove the deployed Worker answers
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          BASE: ${{ vars.GAMES_STATS_URL || 'https://litheca-games-stats.mok243643.workers.dev' }}
+          # NOT the workers.dev URL. Cloudflare's own docs: "It's recommended
+          # to run production Workers on a route or custom domain, rather
+          # than on your workers.dev subdomain... intended for personal or
+          # hobby projects that aren't business-critical." Confirmed by
+          # testing both from outside this network: a request to litheca.com
+          # succeeded immediately, the same request to
+          # litheca-games-stats.mok243643.workers.dev failed silently, and a
+          # GitHub Actions run against it returned Cloudflare error 1042. Same
+          # shape as r2.dev being unsuitable for production, one docs page
+          # over. games-stats.litheca.com is a Custom Domain attached to this
+          # Worker (Workers & Pages -> litheca-games-stats -> Settings ->
+          # Domains & Routes), the same pattern as files.litheca.com for R2.
+          BASE: ${{ vars.GAMES_STATS_URL || 'https://games-stats.litheca.com' }}
         run: |
           set -uo pipefail
           DAY=$(date -u +%F)
