@@ -172,7 +172,12 @@ jobs:
           AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           BUCKET: ${{ inputs.bucket }}
-          CDN: ${{ vars.PRINT_CDN }}
+          # The bucket's public hostname is public by definition — it is in
+          # every page that reads from it. Requiring it to be configured added
+          # a failure mode and bought no secrecy, and it duly failed twice:
+          # once unset, once set as a Secret when `vars` reads Variables. The
+          # repo variable still overrides, for a rename or a second bucket.
+          CDN: ${{ vars.PRINT_CDN || 'https://files.litheca.com' }}
         run: |
           set -uo pipefail
           ENDPOINT="https://$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com"
