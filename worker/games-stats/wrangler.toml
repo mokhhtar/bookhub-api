@@ -1,0 +1,21 @@
+name = "litheca-games-stats"
+main = "index.js"
+compatibility_date = "2026-08-01"
+
+# The counter's whole reason for existing on Workers rather than Render: no
+# cold start at the moment someone has just solved the puzzle. Keep it that
+# way — do not add anything here that needs a container or a filesystem.
+
+[[d1_databases]]
+binding = "DB"
+database_name = "litheca-games"
+database_id = "46317a78-c491-4203-a8a4-93c7761d8afe"
+
+# TURNSTILE_SECRET is a SECRET, not a var, and is set with
+#   wrangler secret put TURNSTILE_SECRET
+# or from the dashboard. It is deliberately absent here: while it is unset the
+# Worker answers 503 on /solved rather than recording unverified solves, so a
+# half-configured deploy fails loudly instead of collecting junk.
+
+[observability]
+enabled = true

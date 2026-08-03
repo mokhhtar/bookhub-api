@@ -1,0 +1,73 @@
+# Deploy the daily-games stats Worker.
+#
+# WHY A WORKFLOW rather than a one-off `wrangler deploy` from a laptop: the
+# same reason every other moving part of this project runs from CI. A deploy
+# nobody can repeat is a deploy nobody can audit, and the one machine that
+# could have run it cannot reach Cloudflare's edge at all.
+#
+# REQUIRES:
+#   CLOUDFLARE_ACCOUNT_ID
+#   CLOUDFLARE_WORKERS_TOKEN — "Workers Scripts: Edit" and "D1: Edit".
+#     A third token, and narrow on purpose: the R2 upload credentials cannot
+#     deploy code, and this one cannot touch the bucket.
+#
+# AFTER THE FIRST DEPLOY, once and by hand:
+#   wrangler secret put TURNSTILE_SECRET
+# Until that exists the Worker answers 503 on /solved by design — it will not
+# record a solve it cannot verify. /stats keeps working, and returns
+# { enough: false } until there are enough solvers to report.
+name: Deploy games stats Worker
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "worker/games-stats/**"
+      - ".github/workflows/deploy-games-worker.yml"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy
+        working-directory: worker/games-stats
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -uo pipefail
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "::error::CLOUDFLARE_WORKERS_TOKEN is not set."
+            exit 1
+          fi
+          npx --yes wrangler@latest deploy
+
+      # A deploy that reports success and serves nothing is the exact failure
+      # this project spent a day on with R2. Ask the Worker itself.
+      - name: Prove the deployed Worker answers
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BASE: ${{ vars.GAMES_STATS_URL || 'https://litheca-games-stats.mok243643.workers.dev' }}
+        run: |
+          set -uo pipefail
+          DAY=$(date -u +%F)
+
+          # /stats must answer, and must WITHHOLD counts while the day is
+          # below the reporting floor. Both halves matter: an endpoint that
+          # answers 200 with numbers nobody should see yet is not working.
+          OUT=$(curl -sS -m 30 "$BASE/stats?game=guess-the-book&day=$DAY")
+          echo "stats -> $OUT"
+          echo "$OUT" | jq -e '.enough == false or (.enough == true and .solvers >= 20)' >/dev/null \
+            || { echo "::error::/stats did not answer in the expected shape."; exit 1; }
+
+          # /solved must REFUSE an unverified write. Whether that is 503 (no
+          # secret configured yet) or 400/403 (rejected payload), what must
+          # never happen is a 200 for a request carrying no Turnstile token.
+          CODE=$(curl -sS -m 30 -o solved.json -w '%{http_code}' -X POST "$BASE/solved" \
+                 -H "Content-Type: application/json" \
+                 -d "{\"game\":\"guess-the-book\",\"day\":\"$DAY\",\"player\":\"ci-probe-000000\",\"guesses\":3}")
+          echo "solved (no token) -> $CODE $(cat solved.json)"
+          [ "$CODE" != "200" ] || { echo "::error::/solved accepted a write with no Turnstile token."; exit 1; }
