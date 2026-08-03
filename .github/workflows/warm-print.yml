@@ -205,6 +205,25 @@ jobs:
             exit 1
           fi
           URL="$CDN/$KEY"
-          CODE=$(curl -sS -o /dev/null -w '%{http_code}' -m 60 -H "Origin: https://litheca.com" "$URL")
-          echo "$URL -> $CODE"
-          [ "$CODE" = "200" ] || { echo "::error::Public read failed ($CODE). Is the bucket public with a custom domain?"; exit 1; }
+          READ=$(curl -sS -o /dev/null -m 60 -H "Origin: https://litheca.com" \
+                 -w '%{http_code} %{time_starttransfer} %{time_total} %{size_download}' "$URL")
+          set -- $READ
+          echo "$URL -> HTTP $1 | first byte ${2}s | total ${3}s | $4 bytes"
+          [ "$1" = "200" ] || { echo "::error::Public read failed ($1). Is the bucket public with a custom domain?"; exit 1; }
+
+          # The point of the whole exercise, measured rather than asserted.
+          # Through Render the same document took 14.3s total for 788KB with a
+          # warm Redis cache and a warm instance; the number above is what it
+          # costs now. Printed on every run so a regression shows up as a
+          # number instead of a feeling — and measured from the runner because
+          # the machine this was developed on cannot route to Cloudflare's edge
+          # at all, which is exactly why a local measurement would have lied.
+          {
+            echo "### Printable editions"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Verified object | \`$KEY\` |"
+            echo "| Public read | HTTP $1, ${3}s total, $4 bytes |"
+            echo "| Same document via Render (measured 2026-08-02) | 14.3s total for 788KB |"
+          } >> "$GITHUB_STEP_SUMMARY"
