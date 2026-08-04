@@ -1395,7 +1395,8 @@ def resolve_wikiquote_quotes(record: book_data.BookRecord, limit: int = 5) -> Op
 # expire after 1h so a transient Gutendex/Wikiquote failure at generation
 # time doesn't hide a "read free" button or the quotes card for a month.
 def _cached_free_ebook(record: book_data.BookRecord,
-                       language: str = "en") -> Optional[dict]:
+                       language: str = "en", *,
+                       force: bool = False) -> Optional[dict]:
     # v2: v1 negatives were written with the 30-day default TTL (pre-fix
     # code), permanently blocking the self-heal — bump past them.
     # v3: v2 negatives are all Gutendex 403s (blocked from Render's IP);
@@ -1415,15 +1416,29 @@ def _cached_free_ebook(record: book_data.BookRecord,
     #     key at all, and the on-read heal compares payload versions, so they
     #     re-resolve rather than sitting there permanently PDF-less.
     key = ("free_ebook_v6", record.title, record.author, language)
-    hit = cache.get(*key)
-    if hit is not None:
-        return hit or None  # {} negative marker → None
+    # `force` exists because this is a SECOND cache layer under the summary.
+    # The on-read heal inspects the free_ebook payload embedded in the cached
+    # summary, correctly calls it stale, then lands here and is handed an entry
+    # that is stale in precisely the same way — so it writes the same wrong
+    # value back and reports success. "Peter Pan" by "J. M. Barrie" survived
+    # every heal on a v2 internet_archive entry that way, while the same book
+    # under "J.M. Barrie" resolved to Gutenberg 16 correctly; the resolver was
+    # never at fault. A version check that asks one layer sees one layer, so
+    # the caller that has already decided must be able to say so.
+    #
+    # Bumping v6 to v7 would clear these entries and leave the shape intact for
+    # the next resolver change — fixing the instance instead of the shape.
+    if not force:
+        hit = cache.get(*key)
+        if hit is not None:
+            return hit or None  # {} negative marker → None
     ebook = resolve_free_ebook(record, language)
     cache.set(ebook or {}, *key, ttl=None if ebook else 3600)
     return ebook
 
 
-def _cached_quotes(record: book_data.BookRecord) -> Optional[dict]:
+def _cached_quotes(record: book_data.BookRecord, *,
+                   force: bool = False) -> Optional[dict]:
     # v2: same 30-day-negative poisoning as free_ebook_v1 above.
     # v3: quotes gained parallel "speakers" attribution.
     # v4: disambiguation-page entries ("the 1897 novel by…") are filtered out,
@@ -1444,9 +1459,13 @@ def _cached_quotes(record: book_data.BookRecord) -> Optional[dict]:
     #     Kidnapped, the author's page for eight others. Nothing about the
     #     stored texts distinguishes those from real ones; only re-resolving does.
     key = ("wikiquote_v9", record.title, record.author)
-    hit = cache.get(*key)
-    if hit is not None:
-        return hit or None
+    # Same two-layer trap as _cached_free_ebook above, latent rather than
+    # observed here only because this key's version has been bumped often
+    # enough to keep clearing it by accident. See that function for the why.
+    if not force:
+        hit = cache.get(*key)
+        if hit is not None:
+            return hit or None
     quotes = resolve_wikiquote_quotes(record)
     cache.set(quotes or {}, *key, ttl=None if quotes else 3600)
     return quotes
@@ -2203,7 +2222,12 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
                     )
                     healed = False
                     if _fe_stale:
-                        fe = _cached_free_ebook(tmp)
+                        # force: our own staleness test is what got us here, and
+                        # the sub-cache entry underneath was written by the same
+                        # resolver run that produced the payload we just
+                        # rejected. Serving it back is how this heal used to
+                        # "succeed" without changing anything.
+                        fe = _cached_free_ebook(tmp, force=True)
                         if fe:
                             cached["free_ebook"] = fe
                             healed = True
@@ -2214,7 +2238,7 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
                             cached["free_ebook"] = None
                             healed = True
                     if _quotes_stale:
-                        wq = _cached_quotes(tmp)
+                        wq = _cached_quotes(tmp, force=True)  # same reason as above
                         if wq:
                             cached["quotes"] = wq
                             healed = True
