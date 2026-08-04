@@ -115,7 +115,14 @@ MIN_SUMMARY_CHARS = 300
 # v10: Archive-sourced pages gained a verified PDF download. Publishing is
 # create-only, so the seven pages that can carry one only get it when the
 # file is rewritten.
-PUBLISH_CONTENT_VERSION = 10
+# v11: two quiz corrections reach the committed pages. Three books whose quiz
+# came from a fan wiki turn out to have their real Gutenberg text available —
+# Les Miserables, Peter Pan, The Count of Monte Cristo — and a quiz from the
+# book itself beats one from a summary of it with no trade at all. The other
+# five have no text, and their wiki pages are now filtered for ones that
+# declare they also cover a screen adaptation: V for Vendetta's quiz asked
+# about a television show that exists only in the 2006 film.
+PUBLISH_CONTENT_VERSION = 11
 
 
 def is_enabled() -> bool:
