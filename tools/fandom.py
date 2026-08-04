@@ -1398,6 +1398,16 @@ _ADAPTATION_DECLARATION = re.compile(
     re.IGNORECASE,
 )
 
+# The cheapest declaration of all: the page TITLE. Wikis disambiguate a book
+# from its adaptation exactly this way — "V for Vendetta (Film)" sits beside
+# "V for Vendetta" on the same wiki, and the search that gathers quiz pages
+# had queued it. Caught before a single request is spent on it.
+_ADAPTATION_TITLE = re.compile(
+    r"\((?:\d{4}\s+)?(?:film|movie|tv|television)[^)]*\)|"
+    r"\b(?:film|movie|television)\s+(?:series|adaptation|version)\b",
+    re.IGNORECASE,
+)
+
 
 def fetch_fandom_quiz_text(subdomain: str, book_title: str) -> Optional[str]:
     """
@@ -1412,8 +1422,9 @@ def fetch_fandom_quiz_text(subdomain: str, book_title: str) -> Optional[str]:
     # verifiable text from a completely unrelated book (the wiki genuinely
     # is book-ish, just not about the requested title). v2: main-story-first
     # page ordering (v1 let side stories dominate).
-    # v4: pages that DECLARE they also cover a screen adaptation are dropped,
-    # so a v3 blob can still contain film-only events described as the book's.
+    # v4: pages that DECLARE they also cover a screen adaptation are dropped
+    # — by their opening sentence, and by their title — so a v3 blob can
+    # still contain film-only events described as the book's.
     cache_key = ("fandom_quiz_text_v4", subdomain, book_title)
     cached = cache.get(*cache_key)
     if cached is not None:
@@ -1468,6 +1479,10 @@ def fetch_fandom_quiz_text(subdomain: str, book_title: str) -> Optional[str]:
     for page_title in page_titles[:8]:
         if total >= MAX_TOTAL:
             break
+        if _ADAPTATION_TITLE.search(page_title):
+            log.info(f"Skipping Fandom page '{page_title}' on '{subdomain}' — "
+                     f"its title says it is an adaptation.")
+            continue
         params = {"action": "parse", "page": page_title, "prop": "text", "format": "json"}
         try:
             r = httpx.get(url, params=params, headers=headers, timeout=4.0)
