@@ -177,15 +177,17 @@ def health():
 @app.get("/models")
 def list_models():
     # Restricted in production (M-07): enumerates provider models AND makes a
-    # live upstream call on every hit. 404 unless diagnostics are enabled.
+    # live upstream call on every hit (to Gemini AND, if configured, Groq).
+    # 404 unless diagnostics are enabled. Never hit by the keep-warm workflow.
     if not EXPOSE_DIAGNOSTICS:
         raise HTTPException(status_code=404, detail="Not found")
-    if not gemini_client.is_configured():
-        return {"error": "Client not initialized"}
+    result = {}
     try:
-        return {"models": gemini_client.list_gemini_models()}
+        result["models"] = gemini_client.list_gemini_models()
     except Exception as e:
-        return {"error": str(e)}
+        result["gemini_error"] = str(e)
+    result["groq"] = gemini_client.check_groq()
+    return result
 
 
 @app.get("/")

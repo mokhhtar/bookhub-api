@@ -157,6 +157,19 @@ def list_gemini_models():
     return [m.name for m in _clients[0].models.list()]
 
 
+def check_groq():
+    """Diagnostics only: a real, minimal call straight to Groq — bypassing
+    Gemini entirely — so connectivity can be confirmed without waiting for
+    every Gemini key to fail first. Exists because this repo has a known
+    precedent (Gutendex) of an external API being blocked from Render's
+    datacenter IP while working fine locally; this is how that gets
+    checked for Groq specifically, on demand rather than automatically."""
+    if not GROQ_API_KEY:
+        return {"configured": False}
+    text = _groq_generate("Reply with exactly one word: OK", DEFAULT_CONFIG)
+    return {"configured": True, "reachable": bool(text), "model": GROQ_MODEL}
+
+
 def generate(prompt: str, config: genai_types.GenerateContentConfig = None) -> str:
     """Single shared call path. Every tool module calls this — never the SDK directly.
 
