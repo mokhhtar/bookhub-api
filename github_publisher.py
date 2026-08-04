@@ -194,6 +194,7 @@ def _update_file(path: str, content: str, message: str, sha: str) -> bool:
 
 
 _CONTENT_VERSION_RE = re.compile(r"^content_version:\s*(\d+)", re.MULTILINE)
+_FREE_EBOOK_LINE_RE = re.compile(r"^free_ebook: (\{.*\})\s*$", re.MULTILINE)
 
 
 def _page_content_version(markdown: str) -> int:
@@ -201,6 +202,49 @@ def _page_content_version(markdown: str) -> int:
     original pre-versioning format)."""
     m = _CONTENT_VERSION_RE.search(markdown or "")
     return int(m.group(1)) if m else 1
+
+
+def _free_ebook_payload_version() -> int:
+    # Lazy: tools.summary imports this module, so a module-level import here
+    # would be circular.
+    from tools.summary import _FREE_EBOOK_PAYLOAD_VERSION
+    return _FREE_EBOOK_PAYLOAD_VERSION
+
+
+def _payload_version_of(free_ebook) -> int:
+    """The free_ebook payload version a page (or a /summary result) was built
+    from. No free_ebook at all is not staleness — there is no payload to be
+    out of date — so it counts as current."""
+    if not isinstance(free_ebook, dict):
+        return _free_ebook_payload_version()
+    return int(free_ebook.get("v", 0) or 0)
+
+
+def _page_is_stale(markdown: str) -> bool:
+    """Whether a published page needs rewriting.
+
+    content_version alone is not the test, because it records the FORMAT the
+    page was written in, not whether what was written was right. A page
+    refreshed in the window between a resolver fix and the cache heal that
+    makes it take gets stamped with the current version while still holding
+    the old payload — and is then frozen forever, since every later check
+    reads the stamp and stops. Peter Pan sat at v11 carrying the poisoned v2
+    internet_archive ebook for exactly that reason: correct format, wrong book.
+
+    So the payload's own version is part of the question. This is the same
+    shape as the sub-cache bug underneath it (tools/summary.py's `force`): a
+    freshness check that consults a proxy for the data instead of the data.
+    """
+    if _page_content_version(markdown) < PUBLISH_CONTENT_VERSION:
+        return True
+    m = _FREE_EBOOK_LINE_RE.search(markdown or "")
+    if not m:
+        return False           # `free_ebook: null` or absent — nothing stale
+    try:
+        payload = json.loads(m.group(1))
+    except Exception:
+        return True            # unparseable: rewriting regenerates the line
+    return _payload_version_of(payload) < _free_ebook_payload_version()
 
 
 # ── Front-matter emission ────────────────────────────────────
@@ -552,21 +596,22 @@ def publish_book(result: dict) -> None:
                 return
 
         a_slug = slug_mod.author_slug(result.get("author") or "")
+        fev = _payload_version_of(result.get("free_ebook"))
 
         # Dedupe layer 2 + collision handling: the repo itself.
         path = f"_books/{book_slug}.md"
         exists, content, sha = _file_exists(path)
         if exists:
             if (gid and gid in content) or _same_book(content, title, a_slug):
-                # Same book already published. Refresh it in place only if its
-                # content format is older than the current version; otherwise
-                # it's up to date.
-                if _page_content_version(content) < PUBLISH_CONTENT_VERSION:
+                # Same book already published. Refresh it in place only if it
+                # is stale — an older content format, OR a current format
+                # holding an out-of-date payload (see _page_is_stale).
+                if _page_is_stale(content):
                     md = _book_markdown(result, book_slug, a_slug, content)
                     if _update_file(path, md,
                                     f"Refresh book page to v{PUBLISH_CONTENT_VERSION}: {title}", sha):
                         log.info(f"Refreshed stale book page ({path}) to v{PUBLISH_CONTENT_VERSION}")
-                _mark_published(book_slug, gid, a_slug)
+                _mark_published(book_slug, gid, a_slug, fev)
                 return
             # Different book shares the slug — suffix with author, then -2.
             for candidate in (f"{book_slug}-{a_slug}", f"{book_slug}-2"):
@@ -575,12 +620,12 @@ def publish_book(result: dict) -> None:
                 c_exists, c_content, c_sha = _file_exists(f"_books/{candidate}.md")
                 if c_exists:
                     if (gid and gid in c_content) or _same_book(c_content, title, a_slug):
-                        if _page_content_version(c_content) < PUBLISH_CONTENT_VERSION:
+                        if _page_is_stale(c_content):
                             md = _book_markdown(result, candidate, a_slug, c_content)
                             if _update_file(f"_books/{candidate}.md", md,
                                             f"Refresh book page to v{PUBLISH_CONTENT_VERSION}: {title}", c_sha):
                                 log.info(f"Refreshed stale book page (_books/{candidate}.md)")
-                        _mark_published(candidate, gid, a_slug)
+                        _mark_published(candidate, gid, a_slug, fev)
                         return
                     continue
                 book_slug, path = candidate, f"_books/{candidate}.md"
@@ -592,16 +637,27 @@ def publish_book(result: dict) -> None:
         md = _book_markdown(result, book_slug, a_slug)
         if _create_file(path, md, f"Add book page: {title}"):
             log.info(f"Published book page: {path}")
-        _mark_published(book_slug, gid, a_slug)  # set flags even on benign-skip
+        _mark_published(book_slug, gid, a_slug, fev)  # set flags even on benign-skip
     except Exception as e:
         log.warning(f"publish_book failed (non-fatal): {e}")
 
 
 def _flag_is_current(flag) -> bool:
     """A published:* / published_gid:* flag counts as 'done' only if it records
-    a content version >= the current one. Absent flag or a pre-versioning flag
-    (no 'v', treated as 1) is stale → allow the repo check to refresh."""
-    return isinstance(flag, dict) and flag.get("v", 1) >= PUBLISH_CONTENT_VERSION
+    a content version >= the current one AND the free_ebook payload version the
+    page was published with. Absent flag or a pre-versioning flag (no 'v',
+    treated as 1) is stale → allow the repo check to refresh.
+
+    The payload half matters because this flag is checked BEFORE the repo is
+    read: without it, a page published from a stale payload short-circuits here
+    and _page_is_stale never gets to see it. Flags written before 'fev' existed
+    have no such record, so they are distrusted once — one repo read per page,
+    after which the flag carries it and the short-circuit resumes. That sweep
+    is the point, not a cost to avoid: it is how the pages already frozen in
+    that state get re-examined."""
+    return (isinstance(flag, dict)
+            and flag.get("v", 1) >= PUBLISH_CONTENT_VERSION
+            and flag.get("fev", 0) >= _free_ebook_payload_version())
 
 
 # ── Published-books index (single Redis key) ─────────────────
@@ -729,14 +785,18 @@ def _same_book(content: str, title: str, a_slug: str) -> bool:
         return False
 
 
-def _mark_published(book_slug: str, gid: str, a_slug: str = "") -> None:
+def _mark_published(book_slug: str, gid: str, a_slug: str = "",
+                    fev: int = 0) -> None:
     ts = datetime.now(timezone.utc).timestamp()
     v = PUBLISH_CONTENT_VERSION
     # "a" (author_slug) joined the flags for /search static-link identity
     # checks — two books sharing a title must never swap static pages.
-    cache.set_key(f"published:{book_slug}", {"gid": gid, "ts": ts, "v": v, "a": a_slug})
+    # "fev" is the free_ebook payload version the page was written from, so a
+    # page built on a stale payload cannot be short-circuited as done. It
+    # records what was PUBLISHED, never the current constant.
+    cache.set_key(f"published:{book_slug}", {"gid": gid, "ts": ts, "v": v, "a": a_slug, "fev": fev})
     if gid:
-        cache.set_key(f"published_gid:{gid}", {"slug": book_slug, "ts": ts, "v": v, "a": a_slug})
+        cache.set_key(f"published_gid:{gid}", {"slug": book_slug, "ts": ts, "v": v, "a": a_slug, "fev": fev})
     _index_published(book_slug, gid, a_slug)
 
 
