@@ -23,10 +23,19 @@ Every key is tried in order; each attempt is wrapped so a failure never
 raises past this module — same fail-open shape as book_data.py's Google
 Books -> Open Library chain and cache.py's L1 -> L2 layering. Only when
 every key has failed does generate()/generate_stream() raise.
+
+Groq fallback: if every Gemini key fails, GROQ_API_KEY (optional) is tried
+last via Groq's OpenAI-compatible REST endpoint over httpx (already a
+dependency — no new SDK). Same prompt string reaches Groq as reached
+Gemini; this module never rewrites prompts per-provider, so output shape
+stays comparable and downstream verification (e.g. quiz_core.py's
+supporting_quote match) still guards whichever backend answered.
 """
 
 import os
+import json
 import logging
+import httpx
 from fastapi import HTTPException
 from google import genai
 from google.genai import types as genai_types
@@ -49,6 +58,13 @@ elif len(GEMINI_API_KEYS) > 1:
 
 _clients = [genai.Client(api_key=key) for key in GEMINI_API_KEYS]
 
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip() or None
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
+GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+if GROQ_API_KEY:
+    log.info(f"Groq fallback configured (model={GROQ_MODEL}) — used only once every Gemini key has failed.")
+
 DEFAULT_CONFIG = genai_types.GenerateContentConfig(
     temperature=0.3,
     max_output_tokens=4096,
@@ -56,7 +72,82 @@ DEFAULT_CONFIG = genai_types.GenerateContentConfig(
 
 
 def is_configured() -> bool:
-    return len(_clients) > 0
+    return len(_clients) > 0 or GROQ_API_KEY is not None
+
+
+def _groq_generate(prompt: str, config: genai_types.GenerateContentConfig):
+    """Final fallback once every Gemini key has failed. Never raises — mirrors
+    the fail-open shape of the Gemini attempts above; returns None on any
+    failure so the caller can report the same "all providers exhausted"
+    error it always has."""
+    if not GROQ_API_KEY:
+        return None
+    try:
+        resp = httpx.post(
+            GROQ_CHAT_URL,
+            headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+            json={
+                "model": GROQ_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": config.temperature,
+                "max_tokens": config.max_output_tokens,
+            },
+            timeout=60.0,
+        )
+        resp.raise_for_status()
+        text = resp.json()["choices"][0]["message"]["content"].strip()
+        return text or None
+    except Exception as e:
+        log.warning(f"Groq fallback failed: {e}")
+        return None
+
+
+def _groq_generate_stream(prompt: str, config: genai_types.GenerateContentConfig):
+    """Streaming Groq fallback. Returns a generator on success, None if the
+    stream couldn't even be started (mirrors _groq_generate's fail-open
+    shape) — mirrors the Gemini streaming loop's "fail before first byte"
+    contract in generate_stream()."""
+    if not GROQ_API_KEY:
+        return None
+    client = httpx.Client(timeout=60.0)
+    try:
+        request = client.build_request(
+            "POST", GROQ_CHAT_URL,
+            headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+            json={
+                "model": GROQ_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": config.temperature,
+                "max_tokens": config.max_output_tokens,
+                "stream": True,
+            },
+        )
+        response = client.send(request, stream=True)
+        response.raise_for_status()
+    except Exception as e:
+        log.warning(f"Groq stream setup failed: {e}")
+        client.close()
+        return None
+
+    def _iter_groq_chunks():
+        try:
+            for line in response.iter_lines():
+                if not line or not line.startswith("data: "):
+                    continue
+                payload = line[len("data: "):].strip()
+                if payload == "[DONE]":
+                    break
+                try:
+                    delta = json.loads(payload)["choices"][0]["delta"].get("content")
+                except Exception:
+                    continue
+                if delta:
+                    yield delta
+        finally:
+            response.close()
+            client.close()
+
+    return _iter_groq_chunks()
 
 
 def list_gemini_models():
@@ -72,9 +163,10 @@ def generate(prompt: str, config: genai_types.GenerateContentConfig = None) -> s
     Tries each configured Gemini key in order; a key that errors (quota,
     rate limit, transient outage) is logged and skipped rather than
     breaking the whole request, mirroring this repo's other provider
-    fallback chains.
+    fallback chains. Falls through to Groq only once every Gemini key has
+    failed.
     """
-    if not _clients:
+    if not is_configured():
         raise HTTPException(status_code=503, detail="AI service not configured.")
     cfg = config or DEFAULT_CONFIG
     for i, client in enumerate(_clients):
@@ -92,8 +184,12 @@ def generate(prompt: str, config: genai_types.GenerateContentConfig = None) -> s
             log.warning(f"Gemini key #{i + 1} returned an empty response.")
         except Exception as e:
             log.warning(f"Gemini key #{i + 1} failed: {e}")
-    log.error("All Gemini keys failed or returned empty responses.")
-    raise HTTPException(status_code=502, detail="AI generation failed: all Gemini keys exhausted.")
+    groq_text = _groq_generate(prompt, cfg)
+    if groq_text:
+        log.warning("All Gemini keys failed — Groq fallback answered.")
+        return groq_text
+    log.error("All Gemini keys and the Groq fallback failed or returned empty responses.")
+    raise HTTPException(status_code=502, detail="AI generation failed: all providers exhausted.")
 
 
 def generate_stream(prompt: str, config: genai_types.GenerateContentConfig = None):
@@ -102,39 +198,64 @@ def generate_stream(prompt: str, config: genai_types.GenerateContentConfig = Non
     them. Used by /summary/stream so the reader sees text within seconds
     instead of waiting for the full generation.
 
-    Falls through to the next Gemini key only while *starting* the stream
-    (before any chunk has been yielded to the caller) — once bytes are on
-    their way to the client we don't switch keys mid-stream; a mid-stream
-    error just propagates, same as before.
+    Falls through to the next Gemini key, and finally to Groq, only while
+    *starting* the stream (before any chunk has been yielded to the
+    caller) — once bytes are on their way to the client we don't switch
+    backends mid-stream; a mid-stream error just propagates, same as
+    before.
+
+    Note: the SDK's generate_content_stream() is lazy — it doesn't make
+    the actual network call (and so doesn't raise on e.g. an invalid key)
+    until the returned iterator is first advanced. Pulling the first chunk
+    inside the try below is what actually exercises the key; without it,
+    a bad key's error would surface later in the unguarded loop instead
+    of triggering fallback.
     """
-    if not _clients:
+    if not is_configured():
         raise HTTPException(status_code=503, detail="AI service not configured.")
     cfg = config or DEFAULT_CONFIG
-    stream = None
+    iterator = None
+    first_chunk_text = None
     for i, client in enumerate(_clients):
         try:
-            stream = client.models.generate_content_stream(
+            it = iter(client.models.generate_content_stream(
                 model=MODEL_NAME,
                 contents=prompt,
                 config=cfg,
-            )
+            ))
+            first = next(it)  # forces the real request; raises on a bad key
+            iterator = it
+            first_chunk_text = getattr(first, "text", None)
+            if i > 0:
+                log.warning(f"Gemini key #1..#{i} failed to start a stream — key #{i + 1} started one.")
+            break
+        except StopIteration:
+            iterator = iter(())  # started fine, just an empty stream
             if i > 0:
                 log.warning(f"Gemini key #1..#{i} failed to start a stream — key #{i + 1} started one.")
             break
         except Exception as e:
             log.warning(f"Gemini key #{i + 1} stream setup failed: {e}")
-    if stream is None:
-        log.error("All Gemini keys failed to start a stream.")
-        raise HTTPException(status_code=502, detail="AI generation failed: all Gemini keys exhausted.")
-    for chunk in stream:
-        text = getattr(chunk, "text", None)
-        if text:
-            yield text
+    if iterator is not None:
+        if first_chunk_text:
+            yield first_chunk_text
+        for chunk in iterator:
+            text = getattr(chunk, "text", None)
+            if text:
+                yield text
+        return
+    groq_stream = _groq_generate_stream(prompt, cfg)
+    if groq_stream is not None:
+        log.warning("All Gemini keys failed to start a stream — Groq fallback started one.")
+        for chunk in groq_stream:
+            yield chunk
+        return
+    log.error("All Gemini keys and the Groq fallback failed to start a stream.")
+    raise HTTPException(status_code=502, detail="AI generation failed: all providers exhausted.")
 
 
 def parse_json_response(text: str):
     """Gemini sometimes wraps JSON in ```json fences — strip them before parsing."""
-    import json
     cleaned = text.strip()
     if cleaned.startswith("```"):
         cleaned = cleaned.split("```")[1]
