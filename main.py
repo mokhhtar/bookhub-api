@@ -160,6 +160,10 @@ def health():
         "status": "ok",
         "model": gemini_client.MODEL_NAME,
         "configured": gemini_client.is_configured(),
+        # Multi-key/multi-provider fallback status — counts and booleans
+        # only, never the key values themselves.
+        "gemini_keys_configured": len(gemini_client.GEMINI_API_KEYS),
+        "groq_configured": gemini_client.GROQ_API_KEY is not None,
         "amazon_api_configured": bool(os.environ.get("AMAZON_CREDENTIAL_ID") and os.environ.get("AMAZON_CREDENTIAL_SECRET")),
         # Static-page publishing to the Jekyll repo (GITHUB_PUBLISH_ENABLED
         # + PAT). Surfaced here so flipping the env var is verifiable at a glance.
