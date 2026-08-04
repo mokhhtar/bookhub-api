@@ -179,8 +179,7 @@ def list_models():
     if not gemini_client.is_configured():
         return {"error": "Client not initialized"}
     try:
-        models = [m.name for m in gemini_client._client.models.list()]
-        return {"models": models}
+        return {"models": gemini_client.list_gemini_models()}
     except Exception as e:
         return {"error": str(e)}
 

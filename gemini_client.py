@@ -1,5 +1,5 @@
 """
-gemini_client.py — single shared Gemini client used by every tool module.
+gemini_client.py — single shared AI client used by every tool module.
 
 Model: gemini-3.1-flash-lite (confirmed live name as of June 2026 — the
        successor to the now-retired 2.0 Flash-Lite line; NOT the
@@ -14,6 +14,15 @@ Temperature 0.3: lower than the previous 0.7. We are NOT asking the model
 to be creative — we are asking it to faithfully summarize GIVEN context.
 Lower temperature reduces the model's tendency to embellish beyond the
 grounding data it was given.
+
+Multi-key fallback: GEMINI_API_KEYS (comma-separated, same split idiom as
+main.py's ALLOWED_ORIGINS) lets Render run more than one Gemini key so a
+single key hitting its quota doesn't take every AI endpoint down at once.
+Falls back to the single GEMINI_API_KEY var if GEMINI_API_KEYS is unset.
+Every key is tried in order; each attempt is wrapped so a failure never
+raises past this module — same fail-open shape as book_data.py's Google
+Books -> Open Library chain and cache.py's L1 -> L2 layering. Only when
+every key has failed does generate()/generate_stream() raise.
 """
 
 import os
@@ -26,11 +35,19 @@ log = logging.getLogger("bookhub-api.gemini")
 
 MODEL_NAME = "gemini-3.1-flash-lite"
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-if not GEMINI_API_KEY:
-    log.warning("GEMINI_API_KEY is not set — AI endpoints will return 503 until configured.")
+_raw_keys = os.environ.get("GEMINI_API_KEYS", "").strip()
+if _raw_keys:
+    GEMINI_API_KEYS = [k.strip() for k in _raw_keys.split(",") if k.strip()]
+else:
+    _single_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    GEMINI_API_KEYS = [_single_key] if _single_key else []
 
-_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+if not GEMINI_API_KEYS:
+    log.warning("No Gemini API key configured (GEMINI_API_KEYS/GEMINI_API_KEY) — AI endpoints will return 503 until configured.")
+elif len(GEMINI_API_KEYS) > 1:
+    log.info(f"{len(GEMINI_API_KEYS)} Gemini API keys configured — will fall through on failure.")
+
+_clients = [genai.Client(api_key=key) for key in GEMINI_API_KEYS]
 
 DEFAULT_CONFIG = genai_types.GenerateContentConfig(
     temperature=0.3,
@@ -39,49 +56,76 @@ DEFAULT_CONFIG = genai_types.GenerateContentConfig(
 
 
 def is_configured() -> bool:
-    return _client is not None
+    return len(_clients) > 0
+
+
+def list_gemini_models():
+    """Live model list from the first configured Gemini key. Diagnostics only."""
+    if not _clients:
+        raise HTTPException(status_code=503, detail="AI service not configured.")
+    return [m.name for m in _clients[0].models.list()]
 
 
 def generate(prompt: str, config: genai_types.GenerateContentConfig = None) -> str:
-    """Single shared call path. Every tool module calls this — never the SDK directly."""
-    if not _client:
+    """Single shared call path. Every tool module calls this — never the SDK directly.
+
+    Tries each configured Gemini key in order; a key that errors (quota,
+    rate limit, transient outage) is logged and skipped rather than
+    breaking the whole request, mirroring this repo's other provider
+    fallback chains.
+    """
+    if not _clients:
         raise HTTPException(status_code=503, detail="AI service not configured.")
-    try:
-        response = _client.models.generate_content(
-            model=MODEL_NAME,
-            contents=prompt,
-            config=config or DEFAULT_CONFIG,
-        )
-        text = (response.text or "").strip()
-        if not text:
-            raise HTTPException(status_code=502, detail="AI returned an empty response.")
-        return text
-    except HTTPException:
-        raise
-    except Exception as e:
-        log.error(f"Gemini call failed: {e}")
-        raise HTTPException(status_code=502, detail=f"AI generation failed: {str(e)}")
+    cfg = config or DEFAULT_CONFIG
+    for i, client in enumerate(_clients):
+        try:
+            response = client.models.generate_content(
+                model=MODEL_NAME,
+                contents=prompt,
+                config=cfg,
+            )
+            text = (response.text or "").strip()
+            if text:
+                if i > 0:
+                    log.warning(f"Gemini key #1..#{i} failed — key #{i + 1} answered.")
+                return text
+            log.warning(f"Gemini key #{i + 1} returned an empty response.")
+        except Exception as e:
+            log.warning(f"Gemini key #{i + 1} failed: {e}")
+    log.error("All Gemini keys failed or returned empty responses.")
+    raise HTTPException(status_code=502, detail="AI generation failed: all Gemini keys exhausted.")
 
 
 def generate_stream(prompt: str, config: genai_types.GenerateContentConfig = None):
     """
     Streaming variant of generate(): yields text chunks as Gemini produces
     them. Used by /summary/stream so the reader sees text within seconds
-    instead of waiting for the full generation. Raises HTTPException on
-    setup failure; mid-stream errors propagate to the caller, which decides
-    how to surface a partial stream.
+    instead of waiting for the full generation.
+
+    Falls through to the next Gemini key only while *starting* the stream
+    (before any chunk has been yielded to the caller) — once bytes are on
+    their way to the client we don't switch keys mid-stream; a mid-stream
+    error just propagates, same as before.
     """
-    if not _client:
+    if not _clients:
         raise HTTPException(status_code=503, detail="AI service not configured.")
-    try:
-        stream = _client.models.generate_content_stream(
-            model=MODEL_NAME,
-            contents=prompt,
-            config=config or DEFAULT_CONFIG,
-        )
-    except Exception as e:
-        log.error(f"Gemini stream setup failed: {e}")
-        raise HTTPException(status_code=502, detail=f"AI generation failed: {str(e)}")
+    cfg = config or DEFAULT_CONFIG
+    stream = None
+    for i, client in enumerate(_clients):
+        try:
+            stream = client.models.generate_content_stream(
+                model=MODEL_NAME,
+                contents=prompt,
+                config=cfg,
+            )
+            if i > 0:
+                log.warning(f"Gemini key #1..#{i} failed to start a stream — key #{i + 1} started one.")
+            break
+        except Exception as e:
+            log.warning(f"Gemini key #{i + 1} stream setup failed: {e}")
+    if stream is None:
+        log.error("All Gemini keys failed to start a stream.")
+        raise HTTPException(status_code=502, detail="AI generation failed: all Gemini keys exhausted.")
     for chunk in stream:
         text = getattr(chunk, "text", None)
         if text:
