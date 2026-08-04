@@ -154,6 +154,20 @@ BOOK DIGEST:
 EXCERPTS:
 {excerpts}
 
+BEFORE WRITING ANYTHING, DECIDE WHETHER YOU SHOULD:
+- If the excerpts are not about the narrative of a book — if they are a
+  filmography, a cast list, a production or publication history, a list of
+  editions, a disambiguation page, an author biography, or an article about a
+  FILM, TELEVISION or STAGE adaptation rather than the book itself — return an
+  empty array `[]` and nothing else.
+- If a passage describes events that happen in an ADAPTATION rather than in
+  the book, do not build a question on it, even if the passage is right there
+  in front of you. A wiki article often covers a book and its film in one
+  page; the film's events are not this book's events.
+- Returning `[]` is a correct and expected outcome. A missing quiz costs a
+  reader nothing. A quiz about the wrong work teaches them something false
+  and tells them we checked.
+
 REQUIREMENTS for every question:
 - Answerable purely from the excerpts (no outside knowledge).
 - SELF-CONTAINED: a reader who has read the book but CANNOT see these excerpts must fully understand the question. Never write "in the excerpt", "in this passage", "according to the text", "in Chunk N", or refer to any page/section structure. Name the characters, places, and events explicitly instead.

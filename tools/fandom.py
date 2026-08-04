@@ -1375,6 +1375,30 @@ def character_details(req: CharacterDetailsRequest):
     return {"found": False}
 
 
+# A page that DECLARES it also covers a screen adaptation is dropped
+# whole, before a single question is generated from it.
+#
+# V for Vendetta's page for Gordon Deitrich opens: "a character in the
+# V for Vendetta graphic novel as well as its 2006 film adaptation" —
+# and then describes his television show and an unapproved sketch, which
+# happen only in the film. In the book he is a small-time crook with no
+# TV show at all. The quote we published was verbatim from the wiki and
+# verified against it; the wiki was simply telling us about a different
+# work in the same article.
+#
+# This reads the page's own OPENING DECLARATION rather than hunting for
+# film vocabulary in the body. Chasing wording is what failed three times
+# in this codebase already — the disambiguation filter, the Wikiquote
+# redirect, the adaptation qualifier. A page that says what it is can be
+# believed; a page that does not is judged on nothing.
+_ADAPTATION_DECLARATION = re.compile(
+    r"\b(?:as well as|and(?: in)?|also(?: appears)? in)\b[^.]{0,80}?"
+    r"\b(?:\d{4}\s+)?(?:film|movie|television series|TV series|miniseries|"
+    r"anime|musical)\b(?:\s+adaptation)?",
+    re.IGNORECASE,
+)
+
+
 def fetch_fandom_quiz_text(subdomain: str, book_title: str) -> Optional[str]:
     """
     Grounding text for the per-book quiz: the wiki's own PLOT/RECAP prose
@@ -1388,7 +1412,9 @@ def fetch_fandom_quiz_text(subdomain: str, book_title: str) -> Optional[str]:
     # verifiable text from a completely unrelated book (the wiki genuinely
     # is book-ish, just not about the requested title). v2: main-story-first
     # page ordering (v1 let side stories dominate).
-    cache_key = ("fandom_quiz_text_v3", subdomain, book_title)
+    # v4: pages that DECLARE they also cover a screen adaptation are dropped,
+    # so a v3 blob can still contain film-only events described as the book's.
+    cache_key = ("fandom_quiz_text_v4", subdomain, book_title)
     cached = cache.get(*cache_key)
     if cached is not None:
         return cached or None
@@ -1450,6 +1476,13 @@ def fetch_fandom_quiz_text(subdomain: str, book_title: str) -> Optional[str]:
             html = r.json().get("parse", {}).get("text", {}).get("*", "")
             text = clean_wiki_html(html)
             if len(text) < MIN_PAGE_TEXT:
+                continue
+            # Only the opening: that is where a wiki states what the article
+            # covers. Later paragraphs mention adaptations in passing on
+            # pages that are perfectly about the book.
+            if _ADAPTATION_DECLARATION.search(text[:400]):
+                log.info(f"Skipping Fandom page '{page_title}' on '{subdomain}' — "
+                         f"it declares it also covers a screen adaptation.")
                 continue
             take = text[:MAX_TOTAL - total]
             parts.append(f"=== Wiki page: {page_title} ===\n{take}")
