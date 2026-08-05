@@ -20,3 +20,11 @@ venv/
 /*.mp4
 /.playwright-mcp/
 /_site/
+
+# Wrangler local dev. .dev.vars holds REAL secrets when testing a Worker
+# locally (INGEST_SECRET, TURNSTILE_SECRET); .wrangler/ is local state.
+# Neither belongs in a public repo, and the whole point of `wrangler secret
+# put` is that the value never reaches git.
+.dev.vars
+.dev.vars.*
+.wrangler/

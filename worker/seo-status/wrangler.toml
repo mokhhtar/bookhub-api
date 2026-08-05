@@ -1,0 +1,23 @@
+name = "litheca-seo-status"
+main = "index.js"
+compatibility_date = "2026-08-01"
+
+# NO workers.dev URL. Cloudflare Access protects a hostname on the zone, so a
+# live *.workers.dev address would be an unauthenticated route into the same
+# script — and one where the Cf-Access-Jwt-Assertion header could be forged,
+# because nothing upstream would be stripping it. The Custom Domain
+# (seo.litheca.com) is the only way in, exactly as games-stats.litheca.com is
+# for the other Worker.
+workers_dev = false
+
+[[kv_namespaces]]
+binding = "SEO"
+id = "af053a2768b9458388f261ebc62b2250"   # litheca-seo-status
+
+# INGEST_SECRET is a SECRET, not a var:
+#   wrangler secret put INGEST_SECRET
+# While it is unset /ingest answers 503 rather than accepting anonymous
+# writes — the same refusal the games Worker makes without TURNSTILE_SECRET.
+
+[observability]
+enabled = true

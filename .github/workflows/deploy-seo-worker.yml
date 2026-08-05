@@ -1,0 +1,66 @@
+# Deploy the indexing-dashboard Worker.
+#
+# REQUIRES (both already present for the games Worker):
+#   CLOUDFLARE_ACCOUNT_ID
+#   CLOUDFLARE_WORKERS_TOKEN — "Workers Scripts: Edit", plus "Workers KV
+#     Storage: Edit" for the SEO binding.
+#
+# AFTER THE FIRST DEPLOY, by hand and once:
+#   1. wrangler secret put INGEST_SECRET      (same value as the site repo's
+#                                              SEO_INGEST_SECRET)
+#   2. Attach the Custom Domain seo.litheca.com to this Worker.
+#   3. Put Cloudflare Access in front of seo.litheca.com.
+# Until step 3 the dashboard shows nothing at all: GET / requires the Access
+# assertion header and fails closed without it.
+name: Deploy SEO status Worker
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "worker/seo-status/**"
+      - ".github/workflows/deploy-seo-worker.yml"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy
+        working-directory: worker/seo-status
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -uo pipefail
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "::error::CLOUDFLARE_WORKERS_TOKEN is not set."
+            exit 1
+          fi
+          npx --yes wrangler@latest deploy
+
+      # A deploy that reports success and guards nothing is the failure this
+      # project has already paid for once. Ask the Worker to prove it refuses.
+      - name: Prove the deployed Worker refuses what it should
+        env:
+          BASE: ${{ vars.SEO_STATUS_URL || 'https://seo.litheca.com' }}
+        run: |
+          set -uo pipefail
+
+          # GET / with no Access assertion must NOT return the dashboard.
+          CODE=$(curl -sS -m 30 -o body.txt -w '%{http_code}' "$BASE/")
+          echo "GET / (no Access header) -> $CODE"
+          if [ "$CODE" = "200" ] && grep -qi "Indexing status" body.txt; then
+            echo "::error::the dashboard rendered without an Access assertion."
+            exit 1
+          fi
+
+          # /ingest must refuse an unauthenticated write. 503 (no secret yet)
+          # and 403 (wrong secret) are both correct; 200 never is.
+          CODE=$(curl -sS -m 30 -o ing.txt -w '%{http_code}' -X POST "$BASE/ingest" \
+                 -H "Content-Type: application/json" -d '{"pages":[]}')
+          echo "POST /ingest (no secret) -> $CODE $(cat ing.txt)"
+          [ "$CODE" != "200" ] || {
+            echo "::error::/ingest accepted a write with no secret."; exit 1; }
