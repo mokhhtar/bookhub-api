@@ -51,8 +51,41 @@ MIN_LIKELIHOOD = 0.02
 # lists are reasonably complete when present. But never conclusive.
 CHAR_ABSENT_CONFIDENCE = 0.06
 
+# What "we don't know this book's cast" means for "is one of them named X?".
+#
+# MEASURED CORRECTION, and the most useful thing phase 0 found. This was
+# 0.5 — the requirements note's "unknown = 0.5" rule, applied literally.
+# It cost books with no recorded cast 20 points of success rate (56% -> 36%)
+# the moment character questions were switched on, which is the opposite of
+# what a neutral value is supposed to do.
+#
+# The reason: 0.5 is only neutral for a feature that is a coin flip a
+# priori. "Is one of them named Hermione?" is not — by construction a
+# character token appears in under 2% of books. So when the player says no,
+# a book whose cast is known-without-Hermione scores 0.94 while a book with
+# no cast data scores 0.5, and the unknown book is punished for the
+# library's gap rather than left alone. "Unknown" has to mean **the base
+# rate**, not a coin flip; only then does an absent record neither help nor
+# hurt. Slightly above CHAR_ABSENT_CONFIDENCE, because this book genuinely
+# might have the character and simply not be catalogued.
+CHAR_UNKNOWN_CONFIDENCE = 0.10
+
 # Character questions only once the field has narrowed this far.
 ENDGAME_CANDIDATES = 30
+
+# How sure the engine must be that the player's book HAS a named cast before
+# it spends endgame turns asking about names. Swept, not guessed — measured
+# on 25 books with a recorded cast and 25 without:
+#
+#   gate   has cast          no cast
+#   0.50   84% (16q)   +8    44% (22q)  -12
+#   0.75   84% (16q)   +8    52% (25q)   -4     <- chosen
+#   0.90   76% (18q)    0    56% (25q)    0     (never opens; same as off)
+#
+# 0.75 keeps the entire gain for books we have a cast for while cutting the
+# cost to books we don't by two thirds. Deltas are against the same run with
+# character questions disabled (76% / 56%).
+NAMED_CHARS_GATE = 0.75
 
 
 class Matrix:
@@ -66,6 +99,7 @@ class Matrix:
                  char_questions: list[str] | None = None):
         self.books = books
         self.questions = questions
+        self.question_set = set(questions)
         self.char_questions = char_questions or []
         self.char_question_set = set(self.char_questions)
 
@@ -102,8 +136,9 @@ class Matrix:
                 else:
                     # No cast recorded at all. Absence here is not a denial —
                     # scoring it as "no" would eliminate every book whose
-                    # characters OL simply never catalogued.
-                    row[q] = UNKNOWN_CONFIDENCE
+                    # characters OL simply never catalogued. See the constant
+                    # for why this is a base rate and not 0.5.
+                    row[q] = CHAR_UNKNOWN_CONFIDENCE
             self.rows.append(row)
 
         # Prior: popularity, log-compressed. Raw readinglog_count spans
@@ -178,6 +213,24 @@ class Engine:
                 break
         return n
 
+    def _expects_named_characters(self, threshold: float = NAMED_CHARS_GATE) -> bool:
+        """Does current belief say the player's book even has a named cast?
+
+        The gate that stops character questions from wasting the endgame on
+        a memoir or a physics textbook. `fact:namedchars` is already one of
+        the ordinary questions, so by the time the endgame arrives the
+        player has usually answered it — this just reads the answer back
+        out of the belief state instead of asking again.
+
+        Without this gate, switching character questions on cost books with
+        no recorded cast 16 points of success rate: every name asked was a
+        turn spent learning nothing about their book.
+        """
+        q = "fact:namedchars"
+        if q not in self.m.question_set:
+            return True
+        return sum(b * row[q] for b, row in zip(self.belief, self.m.rows)) >= threshold
+
     def _pool(self) -> list[str]:
         """Which questions are worth scoring this turn.
 
@@ -191,6 +244,8 @@ class Engine:
         if not self.m.char_questions:
             return pool
         if self.effective_candidates() > ENDGAME_CANDIDATES:
+            return pool
+        if not self._expects_named_characters():
             return pool
 
         live = {idx for idx, _p in self.ranking(ENDGAME_CANDIDATES)}
