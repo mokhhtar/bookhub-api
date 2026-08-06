@@ -51,7 +51,7 @@ SITE = os.path.abspath(os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "bookhub"))
 BOOKS = os.path.join(SITE, "_books")
 WQ_API = "https://en.wikiquote.org/w/api.php"
-UA = {"User-Agent": "Litheca/1.0 (https://litheca.com; contact@litheca.com)"}
+UA = {"User-Agent": "Litheca/1.0 (https://litheca.com; hello@litheca.com)"}
 
 PACE_SECONDS = 4.0      # Render free tier; the crawl is not in a hurry.
 REQUEST_TIMEOUT = 180.0  # a cold instance takes 30-60s to wake.

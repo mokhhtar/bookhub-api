@@ -42,7 +42,7 @@ OPEN_LIBRARY_COVERS_API = "https://covers.openlibrary.org/b"
 # `github.com/yourusername/bookhub` — an unedited template placeholder that
 # resolves to nothing, on the module every Open Library call in the codebase
 # goes through. Same form as scripts/refresh_quote_pages.py now.
-HEADERS = {"User-Agent": "Litheca/1.0 (https://litheca.com; contact@litheca.com)"}
+HEADERS = {"User-Agent": "Litheca/1.0 (https://litheca.com; hello@litheca.com)"}
 
 GOOGLE_BOOKS_API_KEY = os.environ.get("GOOGLE_BOOKS_API_KEY")  # optional — works without one at low volume
 

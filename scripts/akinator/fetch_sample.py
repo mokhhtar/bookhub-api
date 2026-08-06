@@ -41,7 +41,7 @@ SEARCH_API = "https://openlibrary.org/search.json"
 
 # Identified requests get 3 req/s from Open Library against 1 req/s for
 # anonymous ones, and identification has to include a working contact.
-HEADERS = {"User-Agent": "Litheca/1.0 (https://litheca.com; contact@litheca.com)"}
+HEADERS = {"User-Agent": "Litheca/1.0 (https://litheca.com; hello@litheca.com)"}
 
 # Only the fields the feature pipeline reads. Asking for `*` pulls ~100
 # fields per doc including 30 trending-score columns we have no use for.
