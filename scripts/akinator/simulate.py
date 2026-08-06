@@ -54,6 +54,7 @@ from features import QUESTION_TEXT, STRUCTURAL_QUESTIONS, extract  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SAMPLE_PATH = os.path.join(REPO_ROOT, "data", "akinator_sample.json")
+CORPUS_PATH = os.path.join(REPO_ROOT, "data", "akinator_corpus.jsonl")
 
 # A feature carried by 2% of books eliminates almost nothing; one carried by
 # 80% tells almost nothing. The requirements note settled on a 5%-60% band.
@@ -67,12 +68,35 @@ MIN_CHAR_BOOKS = 1
 MAX_CHAR_SHARE = 0.02
 
 
-def load_books() -> list[dict]:
-    with open(SAMPLE_PATH, encoding="utf-8") as fh:
-        docs = json.load(fh)
+def load_docs(corpus_size: int = 0) -> list[dict]:
+    """Prefer the real corpus; fall back to the Phase 0 sample.
+
+    `corpus_size` truncates by popularity, which is what makes the
+    corpus-size sweep meaningful: the top N of a popularity-sorted list is
+    the same set the shipped game would carry at that size.
+    """
+    if os.path.exists(CORPUS_PATH):
+        docs = []
+        with open(CORPUS_PATH, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line:
+                    try:
+                        docs.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+        docs.sort(key=lambda d: -(d.get("readinglog_count") or 0))
+    else:
+        with open(SAMPLE_PATH, encoding="utf-8") as fh:
+            docs = json.load(fh)
+    return docs[:corpus_size] if corpus_size else docs
+
+
+def load_books(corpus_size: int = 0) -> list[dict]:
+    docs = load_docs(corpus_size)
     n = len(docs)
     books = []
-    # Docs arrive already sorted by readinglog_count, so index == rank.
+    # Docs are sorted by readinglog_count, so index == popularity rank.
     for rank, doc in enumerate(docs):
         book = extract(doc, rank, n)
         names, tokens = extract_characters(book.pop("persons"))
@@ -202,10 +226,12 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--sample", type=int, default=0,
                     help="test only the N most popular books (0 = all)")
+    ap.add_argument("--corpus-size", type=int, default=0,
+                    help="truncate the corpus by popularity (0 = all)")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
-    books = load_books()
+    books = load_books(args.corpus_size)
     verbose = not args.quiet
     if verbose:
         print(f"Corpus: {len(books)} books\n")

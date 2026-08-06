@@ -211,6 +211,34 @@ SUBJECT_RULES: list[tuple[str, str, list[str]]] = [
      ["city and town life", "urban", "new york n y", "london england",
       "paris france", "metropolitan"]),
 
+    # Geography, from the `place` field. It is present on 44% of works and
+    # holds 2,071 distinct values, of which a short head does real work:
+    # United States, England, London, New York, France, Great Britain.
+    # The first version folded all of this into two vague rules and left the
+    # rest unused — these are among the sharpest questions available, because
+    # "where does it happen" is something a reader always knows.
+    ("place:usa", "Does it take place in the United States?",
+     ["united states", "america", "new york", "california", "chicago",
+      "texas", "boston", "washington", "maine", "florida"]),
+    ("place:britain", "Does it take place in Britain?",
+     ["england", "london", "great britain", "britain", "scotland", "wales",
+      "yorkshire", "cornwall", "oxford", "cambridge"]),
+    ("place:france", "Does it take place in France?", ["france", "paris"]),
+    ("place:europe_other", "Does it take place elsewhere in Europe?",
+     ["germany", "italy", "spain", "russia", "greece", "ireland", "norway",
+      "sweden", "poland", "berlin", "rome", "moscow", "vienna"]),
+    ("place:asia", "Does it take place in Asia?",
+     ["japan", "china", "india", "korea", "vietnam", "tokyo", "afghanistan",
+      "iran", "middle east", "arabia"]),
+    ("place:africa", "Does it take place in Africa?",
+     ["africa", "nigeria", "egypt", "kenya", "south africa", "congo"]),
+    ("place:latam", "Does it take place in Latin America?",
+     ["mexico", "brazil", "colombia", "argentina", "chile", "peru",
+      "caribbean", "cuba"]),
+    ("place:imaginary", "Does it take place somewhere imaginary?",
+     ["imaginary places", "fictitious place", "imaginary wars",
+      "middle earth", "narnia", "wonderland", "oz"]),
+
     # --- themes ---
     ("theme:magic", "Is there magic in it?",
      ["magic", "witch", "sorcer", "spells", "supernatural", "enchant"]),
@@ -266,16 +294,36 @@ def map_subject(normalized: str) -> list[str]:
 # Structural features — facts, not subjects
 # ---------------------------------------------------------------------------
 
+# Graded rather than three coarse buckets. Measured on the real corpus:
+# `first_publish_year` is present on 99% of works and `number_of_pages_median`
+# on 94%, but the first version asked only "before 1900 / before 1950 / last
+# 25 years" and "over 400 / under 200" — leaving the best-covered fields in
+# the dataset barely used while the game ran short of early questions.
+#
+# Thresholds sit on the corpus quartiles (years 1911/1969/1999/2014, pages
+# 142/224/320/448) so each one splits near the middle of whatever is left.
+# They are deliberately correlated: information gain drops a redundant
+# question automatically once its neighbour has been answered, so the cost
+# of offering both "before 1970" and "before 2000" is nothing, and the
+# benefit is a sharp split available at several different points.
 STRUCTURAL_QUESTIONS = {
-    "fact:old": "Was it written before 1950?",
     "fact:veryold": "Was it written before 1900?",
+    "fact:old": "Was it written before 1950?",
+    "fact:pre1970": "Was it written before 1970?",
+    "fact:pre2000": "Was it written before 2000?",
     "fact:recent": "Was it published in the last 25 years?",
-    "fact:long": "Is it a long book (over 400 pages)?",
+    "fact:verrecent": "Was it published in the last 10 years?",
     "fact:short": "Is it a short book (under 200 pages)?",
+    "fact:midshort": "Is it under 300 pages?",
+    "fact:long": "Is it a long book (over 400 pages)?",
+    "fact:verylong": "Is it over 600 pages?",
     "fact:famous": "Is it very widely read?",
     "fact:freeebook": "Is it freely available to read online?",
     "fact:namedchars": "Does it have well-known named characters?",
     "fact:highlyrated": "Is it very highly rated by readers?",
+    "fact:wellrated": "Do readers generally rate it well?",
+    "fact:translated": "Has it been translated into many languages?",
+    "fact:manyeditions": "Has it been printed in many different editions?",
 }
 
 
@@ -289,18 +337,35 @@ def structural_features(doc: dict, popularity_rank: int, corpus_size: int) -> di
     pages = doc.get("number_of_pages_median")
     ratings_n = doc.get("ratings_count") or 0
     ratings_avg = doc.get("ratings_average")
+    languages = doc.get("language") or []
+    editions = doc.get("edition_count") or 0
 
     feats: dict[str, bool | None] = {}
-    feats["fact:old"] = (year < 1950) if year else None
     feats["fact:veryold"] = (year < 1900) if year else None
+    feats["fact:old"] = (year < 1950) if year else None
+    feats["fact:pre1970"] = (year < 1970) if year else None
+    feats["fact:pre2000"] = (year < 2000) if year else None
     feats["fact:recent"] = (year >= 2001) if year else None
-    feats["fact:long"] = (pages > 400) if pages else None
+    feats["fact:verrecent"] = (year >= 2016) if year else None
+
     feats["fact:short"] = (pages < 200) if pages else None
+    feats["fact:midshort"] = (pages < 300) if pages else None
+    feats["fact:long"] = (pages > 400) if pages else None
+    feats["fact:verylong"] = (pages > 600) if pages else None
+
     # Top decile of a popularity-sorted corpus.
     feats["fact:famous"] = popularity_rank < max(1, corpus_size // 10)
     feats["fact:freeebook"] = (doc.get("ebook_access") in ("public", "borrowable"))
     feats["fact:namedchars"] = bool(doc.get("person"))
+
     feats["fact:highlyrated"] = (ratings_avg >= 4.2) if (ratings_avg and ratings_n >= 20) else None
+    feats["fact:wellrated"] = (ratings_avg >= 3.9) if (ratings_avg and ratings_n >= 20) else None
+
+    # "English?" is useless — 96% of the corpus is in English. How WIDELY
+    # translated it is, though, splits near the middle and is a question a
+    # player can actually answer about a book they know.
+    feats["fact:translated"] = len(languages) >= 5 if languages else None
+    feats["fact:manyeditions"] = editions >= 50 if editions else None
     return feats
 
 
