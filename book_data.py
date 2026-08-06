@@ -32,8 +32,17 @@ GOOGLE_BOOKS_API = "https://www.googleapis.com/books/v1/volumes"
 OPEN_LIBRARY_SEARCH_API = "https://openlibrary.org/search.json"
 OPEN_LIBRARY_COVERS_API = "https://covers.openlibrary.org/b"
 
-# Open Library asks integrators to identify their app via User-Agent.
-HEADERS = {"User-Agent": "BookHub/1.0 (https://github.com/yourusername/bookhub)"}
+# Open Library asks integrators to identify their app via User-Agent, and
+# it is not a formality: their API docs give identified requests (app name
+# plus a working contact) 3 requests/second against 1/second for anonymous
+# ones, and warn that unidentified traffic risks "aggressive rate limiting
+# or blocking".
+#
+# This header shipped for the life of the project pointing at
+# `github.com/yourusername/bookhub` — an unedited template placeholder that
+# resolves to nothing, on the module every Open Library call in the codebase
+# goes through. Same form as scripts/refresh_quote_pages.py now.
+HEADERS = {"User-Agent": "Litheca/1.0 (https://litheca.com; contact@litheca.com)"}
 
 GOOGLE_BOOKS_API_KEY = os.environ.get("GOOGLE_BOOKS_API_KEY")  # optional — works without one at low volume
 
