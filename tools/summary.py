@@ -172,11 +172,32 @@ RULES:
 - Maximum 6 awards."""
 
 
+# The Associates tracking ID every outbound Amazon link carries. Litheca's
+# own, and the default deliberately IS Litheca's: this repo produces Litheca's
+# pages, so a missing env var must attribute the sale to Litheca rather than
+# quietly credit whichever site the previous default belonged to.
+#
+# It exists as ONE constant because the old value was written out three times
+# in this file, which is three chances to change two of them. Reporting in
+# Amazon Associates is per tracking ID, so a link left on the old tag does not
+# lose money — the tags share an account — it lands in another site's column
+# and silently understates this one. That is the whole reason for the change.
+DEFAULT_AMAZON_TAG = "litheca-20"
+
+
+def _amazon_tag() -> str:
+    """Env wins, so Render can move the tag without a deploy."""
+    import os
+    return (os.environ.get("AMAZON_PARTNER_TAG")
+            or os.environ.get("AMAZON_TAG")
+            or DEFAULT_AMAZON_TAG)
+
+
 def _get_amazon_url_from_api(title: str, author: str = "") -> Optional[str]:
     import os
     credential_id = os.environ.get("AMAZON_CREDENTIAL_ID")
     credential_secret = os.environ.get("AMAZON_CREDENTIAL_SECRET")
-    partner_tag = os.environ.get("AMAZON_PARTNER_TAG") or os.environ.get("AMAZON_TAG") or "oceansidehair-20"
+    partner_tag = _amazon_tag()
 
     if not credential_id or not credential_secret:
         return None
@@ -1816,7 +1837,7 @@ def _gather_extras(record: book_data.BookRecord) -> dict:
         import urllib.parse
         amazon_url = _get_amazon_url_from_api(record.title, record.author)
         if not amazon_url:
-            tag = os.environ.get("AMAZON_TAG", "oceansidehair-20")
+            tag = _amazon_tag()
             if record.isbn_10 and (record.isbn_10.startswith("0") or record.isbn_10.startswith("1")):
                 amazon_url = f"https://www.amazon.com/dp/{record.isbn_10}?tag={tag}"
             else:
@@ -2094,7 +2115,7 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
             import urllib.parse
             amazon_url = _get_amazon_url_from_api(cached.get("title", req.title), cached.get("author", req.author))
             if not amazon_url:
-                tag = os.environ.get("AMAZON_TAG", "oceansidehair-20")
+                tag = _amazon_tag()
                 isbn_10 = cached.get("isbn_10")
                 if not isbn_10 and cached.get("isbn_13"):
                     from book_data import isbn13_to_isbn10
