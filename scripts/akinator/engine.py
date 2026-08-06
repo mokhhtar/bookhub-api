@@ -256,38 +256,68 @@ class Engine:
                  if f"char:{t}" in self.m.char_question_set]
         return pool
 
-    def next_question(self) -> str | None:
-        """The unasked question with the highest expected information gain.
+    def next_question(self, exact: bool = False) -> str | None:
+        """The most informative unasked question.
 
-        Equivalent to "splits the probability mass closest to half", but
-        computed properly: for each candidate question, the expected
-        entropy after a yes and after a no, weighted by how likely each
-        answer is given current belief.
+        Two implementations of the same idea. `exact` computes the real
+        expected information gain — the entropy after a yes and after a no,
+        weighted by how likely each answer is. The default computes the
+        belief-weighted P(yes) and picks whichever question lands closest
+        to half, which is the formulation the requirements note describes
+        and a well-known approximation of the same thing.
+
+        The approximation is the default because of cost, and the cost is
+        not academic: exact gain makes six passes over the candidate set per
+        question and allocates two lists each time, so at 5,000 books a
+        single simulated game took long enough to time out a ten-minute
+        run. The fast path makes ONE pass over the books, accumulating
+        every question's total as it goes, and allocates nothing.
+
+        The same arithmetic has to run in the browser on every turn, so the
+        cheap version is what ships; `exact=True` stays for offline
+        comparison of the two.
         """
+        pool = [q for q in self._pool() if q not in self.asked]
+        if not pool:
+            return None
+
+        if exact:
+            return self._next_question_exact(pool)
+
+        # One pass over books, accumulating P(yes) for every question at
+        # once. Question-major would re-walk the belief vector per question.
+        totals = dict.fromkeys(pool, 0.0)
+        for b, row in zip(self.belief, self.m.rows):
+            if b <= 0.0:
+                continue
+            for q in pool:
+                totals[q] += b * row[q]
+
+        best, best_dist = None, 2.0
+        for q, p_yes in totals.items():
+            if p_yes <= 0.02 or p_yes >= 0.98:
+                continue  # everyone answers the same way; asking wastes a turn
+            dist = abs(p_yes - 0.5)
+            if dist < best_dist:
+                best, best_dist = q, dist
+        return best
+
+    def _next_question_exact(self, pool: list[str]) -> str | None:
         base = self._entropy(self.belief)
         best, best_gain = None, -1.0
-        rows = self.m.rows
-        belief = self.belief
+        rows, belief = self.m.rows, self.belief
 
-        for q in self._pool():
-            if q in self.asked:
-                continue
-
-            p_yes = 0.0
-            for b, row in zip(belief, rows):
-                p_yes += b * row[q]
+        for q in pool:
+            p_yes = sum(b * row[q] for b, row in zip(belief, rows))
             if p_yes <= 0.02 or p_yes >= 0.98:
-                continue  # everyone would answer the same way; asking wastes a turn
-
+                continue
             yes_branch = [b * row[q] for b, row in zip(belief, rows)]
             no_branch = [b - y for b, y in zip(belief, yes_branch)]
-
             expected = (p_yes * self._entropy(yes_branch)
                         + (1 - p_yes) * self._entropy(no_branch))
             gain = base - expected
             if gain > best_gain:
                 best, best_gain = q, gain
-
         return best
 
     # -- reading the state -------------------------------------------------
