@@ -48,6 +48,29 @@ jobs:
           BASE: ${{ vars.SEO_STATUS_URL || 'https://seo.litheca.com' }}
         run: |
           set -uo pipefail
+          HOST=${BASE#https://}; HOST=${HOST%%/*}
+
+          # A first deploy legitimately has nowhere to answer FROM. With
+          # workers_dev disabled and the Custom Domain not yet attached,
+          # wrangler prints "No targets deployed" and the hostname does not
+          # resolve — that is the documented setup order, not a fault, and
+          # failing the run for it teaches everyone to ignore a red build.
+          #
+          # Only the DNS case is forgiven, and only by curl's own exit 6
+          # ("could not resolve host"). A hostname that DOES resolve gets the
+          # full interrogation below, so a Worker that is reachable and
+          # guarding nothing still fails loudly.
+          curl -sS -m 20 -o /dev/null "$BASE/" 2>/tmp/probe.err
+          if [ $? -eq 6 ]; then
+            echo "::notice title=Custom Domain not attached yet::$HOST does not resolve. The Worker uploaded fine; attach $HOST to it (Workers & Pages -> litheca-seo-status -> Settings -> Domains & Routes), then re-run this workflow to verify the guards."
+            {
+              echo "### Uploaded, not yet reachable"
+              echo
+              echo "\`$HOST\` does not resolve, so there is nothing to verify yet."
+              echo "Attach the Custom Domain to **litheca-seo-status**, then re-run."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
 
           # GET / with no Access assertion must NOT return the dashboard.
           CODE=$(curl -sS -m 30 -o body.txt -w '%{http_code}' "$BASE/")
