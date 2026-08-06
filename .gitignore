@@ -35,3 +35,8 @@ venv/
 # (Phase 1 of the build plan flags it), and untracked scratch input is the
 # safe side of that question.
 /data/akinator_sample.json
+
+# Akinator corpus: 20k Open Library works, rebuilt monthly by
+# scripts/akinator/build_corpus.py. Same reasoning as the sample above —
+# OL names no licence for their catalogue data, so we do not redistribute it.
+/data/akinator_corpus.jsonl
