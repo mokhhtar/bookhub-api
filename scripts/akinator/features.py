@@ -112,18 +112,18 @@ def is_stop_subject(normalized: str) -> bool:
 SUBJECT_RULES: list[tuple[str, str, list[str]]] = [
     # --- genre: fiction ---
     ("genre:fantasy", "Is it a fantasy story?",
-     ["fantasy", "wizard", "dragon", "elves", "sword and sorcery", "mythical"]),
+     ["fantasy", "wizard*", "dragon*", "elves", "sword and sorcery", "mythical"]),
     ("genre:scifi", "Is it science fiction?",
-     ["science fiction", "sciencefiction", "dystopi", "space opera", "time travel",
+     ["science fiction", "sciencefiction", "dystopi*", "space opera", "time travel",
       "cyberpunk", "steampunk", "extraterrestrial"]),
     ("genre:mystery", "Is it a mystery or detective story?",
-     ["mystery", "detective", "whodunit", "private investigator", "sleuth"]),
+     ["mystery", "detective*", "whodunit", "private investigator", "sleuth"]),
     ("genre:thriller", "Is it a thriller or suspense story?",
-     ["thriller", "suspense", "spies", "espionage", "conspiracy"]),
+     ["thriller", "suspense", "spies*", "espionage", "conspiracy"]),
     ("genre:horror", "Is it a horror story?",
-     ["horror", "ghost", "vampire", "haunted", "zombie", "monsters", "occult"]),
+     ["horror", "ghost*", "vampire*", "haunted", "zombie", "monsters", "occult"]),
     ("genre:romance", "Is it a romance?",
-     ["romance", "love stor", "romantic", "courtship", "enemies to lovers",
+     ["romance", "love stor*", "romantic", "courtship", "enemies to lovers",
       "forbidden love", "first love"]),
     ("genre:historicalfic", "Is it historical fiction?",
      ["historical fiction", "fiction historical", "historical romance"]),
@@ -132,16 +132,16 @@ SUBJECT_RULES: list[tuple[str, str, list[str]]] = [
     ("genre:war", "Does it involve war?",
      ["war", "world war", "military", "soldiers", "battle", "holocaust"]),
     ("genre:crime", "Does it involve a crime?",
-     ["crime", "murder", "criminals", "homicide", "serial killer", "theft"]),
+     ["crime", "murder*", "criminals", "homicide", "serial killer", "theft"]),
     ("genre:poetry", "Is it poetry?", ["poetry", "poems", "verse", "sonnets"]),
     ("genre:drama", "Is it a play or drama?",
      ["drama", "plays", "theater", "theatre", "tragedies", "comedies"]),
     ("genre:comics", "Is it a comic or graphic novel?",
-     ["comic", "graphic novel", "manga", "cartoons"]),
+     ["comic*", "graphic novel", "manga", "cartoons"]),
     ("genre:shortstories", "Is it a collection of short stories?",
-     ["short stories", "short storie", "anthology", "collections"]),
+     ["short stories", "short storie*", "anthology", "collections"]),
     ("genre:humor", "Is it humorous?",
-     ["humor", "humour", "satire", "comedy", "wit and humor"]),
+     ["humor*", "humour*", "satire", "comedy", "wit and humor"]),
 
     # --- genre: non-fiction ---
     ("genre:biography", "Is it a biography or memoir?",
@@ -164,10 +164,10 @@ SUBJECT_RULES: list[tuple[str, str, list[str]]] = [
      ["history", "historia", "civilization", "ancient", "medieval", "empire",
       "archaeology"]),
     ("genre:politics", "Is it about politics or society?",
-     ["politic", "government", "social science", "sociology", "democracy",
+     ["politic*", "government", "social science", "sociology", "democracy",
       "race relations", "feminism", "human rights", "law"]),
     ("genre:religion", "Is it a religious or spiritual book?",
-     ["religion", "christian", "bible", "god", "spiritual", "islam", "buddhis",
+     ["religion", "christian", "bible", "god", "spiritual", "islam", "buddhis*",
       "faith", "prayer", "church", "theology", "mysticism"]),
     ("genre:philosophy", "Is it about philosophy?",
      ["philosophy", "ethics", "metaphysics", "existential", "stoic", "logic"]),
@@ -193,7 +193,7 @@ SUBJECT_RULES: list[tuple[str, str, list[str]]] = [
      ["children", "juvenile", "picture book", "kids", "infantil", "jeunesse",
       "nursery", "toddler", "board book"]),
     ("audience:ya", "Is it aimed at teenagers?",
-     ["young adult", "teenage", "teen", "adolescen", "high school stories"]),
+     ["young adult", "teenage", "teen*", "adolescen*", "high school stories"]),
 
     # --- setting ---
     ("setting:school", "Does it take place at a school?",
@@ -241,7 +241,7 @@ SUBJECT_RULES: list[tuple[str, str, list[str]]] = [
 
     # --- themes ---
     ("theme:magic", "Is there magic in it?",
-     ["magic", "witch", "sorcer", "spells", "supernatural", "enchant"]),
+     ["magic*", "witch*", "sorcer*", "spells", "supernatural", "enchant*"]),
     ("theme:family", "Is family central to the story?",
      ["family", "mothers", "fathers", "brothers", "sisters", "siblings",
       "parent", "marriage", "married people", "domestic fiction"]),
@@ -269,8 +269,44 @@ SUBJECT_RULES: list[tuple[str, str, list[str]]] = [
      ["series", "sequel", "trilogy", "saga"]),
 ]
 
+# Compound place names that a keyword match gets WRONG, checked before any
+# rule fires. Every one of these was found in the live corpus, not imagined:
+#
+#   'New England'            matched britain     — it is in Massachusetts
+#   'Indiana'                matched asia        — it contains "india"
+#   'New Mexico'             matched latam       — it is in the USA
+#   'Latin/South America'    matched usa         — "america" is in both
+#   'Cambridge Massachusetts' matched britain    — the other Cambridge
+#   'Warsaw'                 matched genre:war   — "war" is inside it
+#
+# Word-boundary matching (below) fixes Indiana and Warsaw. It cannot fix
+# 'Latin America' or 'New England', where the misleading token really is a
+# whole word, so those need naming. Order matters: first match wins.
+_PLACE_OVERRIDES: list[tuple[str, list[str]]] = [
+    ("place:latam", ["latin america", "south america", "central america"]),
+    ("place:usa", ["new england", "new mexico", "cambridge massachusetts",
+                   "massachusetts", "new york", "new orleans", "new jersey",
+                   "new hampshire"]),
+    ("", ["new south wales", "new zealand", "american samoa"]),  # neither
+]
+
+
+def _compile(keyword: str) -> re.Pattern:
+    """Whole word by default; a trailing '*' means 'this is a stem'.
+
+    Naive substring matching is what let "war" match Warsaw and "india"
+    match Indiana. Whole-word is the right default, but several rules
+    genuinely want a stem — 'politic*' for political/politics, 'sorcer*'
+    for sorcery/sorcerer — so the table says which is which instead of the
+    matcher guessing.
+    """
+    if keyword.endswith("*"):
+        return re.compile(r"\b" + re.escape(keyword[:-1]), re.I)
+    return re.compile(r"\b" + re.escape(keyword) + r"\b", re.I)
+
+
 # Fast lookup: which rules could a normalized string trigger?
-_RULE_INDEX = [(key, kws) for key, _q, kws in SUBJECT_RULES]
+_RULE_INDEX = [(key, [_compile(k) for k in kws]) for key, _q, kws in SUBJECT_RULES]
 
 QUESTION_TEXT: dict[str, str] = {key: q for key, q, _ in SUBJECT_RULES}
 
@@ -283,11 +319,13 @@ def map_subject(normalized: str) -> list[str]:
     """
     if not normalized or is_stop_subject(normalized):
         return []
-    hits = []
-    for key, keywords in _RULE_INDEX:
-        if any(kw in normalized for kw in keywords):
-            hits.append(key)
-    return hits
+
+    for key, phrases in _PLACE_OVERRIDES:
+        if any(p in normalized for p in phrases):
+            return [key] if key else []
+
+    return [key for key, patterns in _RULE_INDEX
+            if any(p.search(normalized) for p in patterns)]
 
 
 # ---------------------------------------------------------------------------
