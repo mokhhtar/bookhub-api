@@ -15,9 +15,25 @@ binding = "SEO"
 id = "af053a2768b9458388f261ebc62b2250"   # litheca-seo-status
 
 # INGEST_SECRET is a SECRET, not a var:
-#   wrangler secret put INGEST_SECRET
+#   wrangler secret put INGEST_SECRET      (or the dashboard, as type Secret)
 # While it is unset /ingest answers 503 rather than accepting anonymous
 # writes — the same refusal the games Worker makes without TURNSTILE_SECRET.
+#
+# The dashboard says "Update your wrangler config file with these changes to
+# keep your local development environment in sync" after you add a secret or a
+# domain there. Deliberately NOT followed for the secret: putting its value in
+# this file would commit it to a public repo, which is the one thing
+# `wrangler secret put` exists to prevent. The local equivalent is `.dev.vars`,
+# which is gitignored.
+#
+# seo.litheca.com is likewise attached in the dashboard (Settings -> Domains &
+# Routes) rather than declared here as `[[routes]] custom_domain = true`. Two
+# reasons: games-stats.litheca.com has been attached the same way across many
+# deploys without wrangler removing it, and declaring a Custom Domain makes
+# the deploy need zone-level DNS permission that CLOUDFLARE_WORKERS_TOKEN was
+# scoped narrowly to avoid. Recorded here rather than left implicit, because
+# console state that no file mentions is exactly how the Firestore rules and
+# the Firebase auth settings drifted out of sight.
 
 [observability]
 enabled = true
