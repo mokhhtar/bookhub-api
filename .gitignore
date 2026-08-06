@@ -28,3 +28,10 @@ venv/
 .dev.vars
 .dev.vars.*
 .wrangler/
+
+# Akinator prototype input: a 1 MB cache of Open Library's search API,
+# regenerable in a minute by scripts/akinator/fetch_sample.py. Kept out of
+# the repo deliberately — the licence terms on OL's data are still unchecked
+# (Phase 1 of the build plan flags it), and untracked scratch input is the
+# safe side of that question.
+/data/akinator_sample.json

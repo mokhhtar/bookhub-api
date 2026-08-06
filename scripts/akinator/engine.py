@@ -1,0 +1,258 @@
+"""
+scripts/akinator/engine.py — the inference engine.
+
+WHAT AKINATOR ACTUALLY IS (from [[Akinator for books — requirements]]):
+not a stored decision tree but a **Bayesian belief update over a candidate
+set**, with questions chosen by expected information gain.
+
+  1. A matrix of probabilities, not facts: P(yes | book, question).
+  2. After each answer: P(book | answer) proportional to
+     P(answer | book) * P(book), the prior being popularity.
+  3. Ask whichever question splits the current probability mass closest to
+     half — that is all the apparent cleverness is.
+  4. Guess when the leader crosses a confidence threshold.
+
+Point 2 is why a wrong answer *weakens* a candidate instead of eliminating
+it, and therefore why the game survives a player's mistakes and their
+"probably"s. Nothing here is ever hard-filtered out of the candidate set.
+
+TWO QUESTION POOLS. Subject/fact questions carry the early game. Character
+questions ("is one of them named Poirot?") are held back for the endgame —
+with 20k candidates a name splits off a handful and wastes a turn, but with
+30 candidates left it is decisive, and it is the moment that makes the game
+feel like it read your mind.
+
+This module is deliberately dependency-free: the same arithmetic has to run
+in JavaScript in the browser at play time, so it must not lean on anything
+numpy-shaped that won't port.
+"""
+from __future__ import annotations
+
+import math
+
+from features import PRESENCE_CONFIDENCE, UNKNOWN_CONFIDENCE, absence_confidence
+
+# The five answers a player can give, and how strongly each is trusted.
+# "probably" answers move belief in the same direction as a firm answer but
+# less far, which is what makes the scale worth having at all.
+ANSWER_WEIGHTS = {
+    "yes": 1.0,
+    "probably_yes": 0.65,
+    "unknown": 0.0,
+    "probably_no": -0.65,
+    "no": -1.0,
+}
+
+# Belief floor. No candidate's likelihood is ever allowed to reach zero, so
+# a book can always climb back after a player answers something wrong.
+MIN_LIKELIHOOD = 0.02
+
+# A named character the record does not list is decent evidence — OL's cast
+# lists are reasonably complete when present. But never conclusive.
+CHAR_ABSENT_CONFIDENCE = 0.06
+
+# Character questions only once the field has narrowed this far.
+ENDGAME_CANDIDATES = 30
+
+
+class Matrix:
+    """Precomputed P(yes | book, question) for every book and question.
+
+    Built once and shared across games. It is static data — rebuilding it
+    per game was the prototype's whole runtime cost.
+    """
+
+    def __init__(self, books: list[dict], questions: list[str],
+                 char_questions: list[str] | None = None):
+        self.books = books
+        self.questions = questions
+        self.char_questions = char_questions or []
+        self.char_question_set = set(self.char_questions)
+
+        # token -> indices of books whose cast contains it. Lets the endgame
+        # consider only names some live candidate actually has, instead of
+        # scoring every name in the corpus on every turn.
+        self.char_index: dict[str, set[int]] = {}
+        for i, book in enumerate(books):
+            for token in book.get("char_tokens") or ():
+                self.char_index.setdefault(token, set()).add(i)
+
+        self.rows: list[dict[str, float]] = []
+        for book in books:
+            present = set(book["present"])
+            unknown = set(book["unknown"])
+            absent_p = absence_confidence(book["richness"])
+            tokens = set(book.get("char_tokens") or ())
+            has_char_data = bool(tokens)
+
+            row: dict[str, float] = {}
+            for q in questions:
+                if q in present:
+                    row[q] = PRESENCE_CONFIDENCE
+                elif q in unknown:
+                    row[q] = UNKNOWN_CONFIDENCE
+                else:
+                    row[q] = absent_p
+            for q in self.char_questions:
+                token = q.split(":", 1)[1]
+                if token in tokens:
+                    row[q] = PRESENCE_CONFIDENCE
+                elif has_char_data:
+                    row[q] = CHAR_ABSENT_CONFIDENCE
+                else:
+                    # No cast recorded at all. Absence here is not a denial —
+                    # scoring it as "no" would eliminate every book whose
+                    # characters OL simply never catalogued.
+                    row[q] = UNKNOWN_CONFIDENCE
+            self.rows.append(row)
+
+        # Prior: popularity, log-compressed. Raw readinglog_count spans
+        # 62,023 (Atomic Habits) to single digits; used linearly it would
+        # make the top few books unbeatable regardless of answers.
+        priors = [math.log1p(b["popularity"]) + 1.0 for b in books]
+        total = sum(priors)
+        self.prior = [p / total for p in priors]
+
+
+class Engine:
+    """Belief state over a candidate set of books."""
+
+    def __init__(self, matrix: Matrix):
+        self.m = matrix
+        self.belief = list(matrix.prior)
+        self.asked: set[str] = set()
+
+    # -- inference ---------------------------------------------------------
+
+    def update(self, question: str, answer: str) -> None:
+        """Fold one answer into the belief state."""
+        self.asked.add(question)
+        weight = ANSWER_WEIGHTS[answer]
+        if weight == 0.0:
+            return  # "don't know" genuinely tells us nothing; don't fake a signal
+
+        total = 0.0
+        for i, row in enumerate(self.m.rows):
+            p = row[question]
+            # Interpolate between "they said yes" and "they said no"
+            # according to how firm the answer was.
+            if weight > 0:
+                likelihood = (1 - weight) * 0.5 + weight * p
+            else:
+                likelihood = (1 + weight) * 0.5 + (-weight) * (1 - p)
+            self.belief[i] *= max(likelihood, MIN_LIKELIHOOD)
+            total += self.belief[i]
+
+        if total > 0:
+            self.belief = [b / total for b in self.belief]
+
+    def reject(self, index: int) -> None:
+        """The player said our guess was wrong. Weaken, never erase."""
+        self.belief[index] *= 0.001
+        total = sum(self.belief)
+        if total > 0:
+            self.belief = [b / total for b in self.belief]
+
+    # -- question selection ------------------------------------------------
+
+    @staticmethod
+    def _entropy(weights: list[float]) -> float:
+        total = sum(weights)
+        if total <= 0:
+            return 0.0
+        h = 0.0
+        for w in weights:
+            if w > 0:
+                p = w / total
+                h -= p * math.log2(p)
+        return h
+
+    def effective_candidates(self, mass: float = 0.9) -> int:
+        """How many books still hold most of the belief."""
+        ordered = sorted(self.belief, reverse=True)
+        acc, n = 0.0, 0
+        for b in ordered:
+            acc += b
+            n += 1
+            if acc >= mass:
+                break
+        return n
+
+    def _pool(self) -> list[str]:
+        """Which questions are worth scoring this turn.
+
+        Subject questions always. Character questions only in the endgame,
+        and then only names carried by a book still in contention — a name
+        no live candidate has cannot split anything, and scoring the whole
+        corpus's cast every turn is what made the first prototype
+        unrunnable.
+        """
+        pool = list(self.m.questions)
+        if not self.m.char_questions:
+            return pool
+        if self.effective_candidates() > ENDGAME_CANDIDATES:
+            return pool
+
+        live = {idx for idx, _p in self.ranking(ENDGAME_CANDIDATES)}
+        tokens: set[str] = set()
+        for idx in live:
+            tokens.update(self.m.books[idx].get("char_tokens") or ())
+        pool += [f"char:{t}" for t in tokens
+                 if f"char:{t}" in self.m.char_question_set]
+        return pool
+
+    def next_question(self) -> str | None:
+        """The unasked question with the highest expected information gain.
+
+        Equivalent to "splits the probability mass closest to half", but
+        computed properly: for each candidate question, the expected
+        entropy after a yes and after a no, weighted by how likely each
+        answer is given current belief.
+        """
+        base = self._entropy(self.belief)
+        best, best_gain = None, -1.0
+        rows = self.m.rows
+        belief = self.belief
+
+        for q in self._pool():
+            if q in self.asked:
+                continue
+
+            p_yes = 0.0
+            for b, row in zip(belief, rows):
+                p_yes += b * row[q]
+            if p_yes <= 0.02 or p_yes >= 0.98:
+                continue  # everyone would answer the same way; asking wastes a turn
+
+            yes_branch = [b * row[q] for b, row in zip(belief, rows)]
+            no_branch = [b - y for b, y in zip(belief, yes_branch)]
+
+            expected = (p_yes * self._entropy(yes_branch)
+                        + (1 - p_yes) * self._entropy(no_branch))
+            gain = base - expected
+            if gain > best_gain:
+                best, best_gain = q, gain
+
+        return best
+
+    # -- reading the state -------------------------------------------------
+
+    def ranking(self, n: int = 5) -> list[tuple[int, float]]:
+        """(book index, probability), most likely first."""
+        pairs = sorted(enumerate(self.belief), key=lambda x: -x[1])
+        return pairs[:n]
+
+    def should_guess(self, threshold: float = 0.85) -> bool:
+        """Guess on absolute confidence, or on a decisive lead.
+
+        The ratio test matters when two books are genuinely similar: 0.55
+        against 0.06 is a confident guess even though it never reaches
+        0.85, and refusing to guess there just burns questions the player
+        experiences as the game stalling.
+        """
+        top = self.ranking(2)
+        if top[0][1] >= threshold:
+            return True
+        if len(top) > 1 and top[1][1] > 0:
+            return top[0][1] / top[1][1] >= 12 and top[0][1] >= 0.35
+        return False
