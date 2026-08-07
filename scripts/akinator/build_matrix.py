@@ -45,6 +45,7 @@ from authors import AuthorIndex                                     # noqa: E402
 from work_traits import (WORK_QUESTIONS, load_protagonists,         # noqa: E402
                          load_works, merge_into)
 from characters import extract_characters, usable_token             # noqa: E402
+from corpus_filter import filter_corpus                             # noqa: E402
 from features import (EXCLUSIVE_GROUPS, FORCE_KEEP,                  # noqa: E402
                       PRESENCE_CONFIDENCE,
                       QUESTION_TEXT, STRUCTURAL_QUESTIONS,
@@ -84,7 +85,9 @@ def load_corpus(path: str) -> list[dict]:
     # The corpus is written in popularity order, but a resumed run can
     # interleave pages. Sort so index really does mean rank.
     docs.sort(key=lambda d: -(d.get("readinglog_count") or 0))
-    return docs
+    # Filter before the caller truncates, so dropping a workbook promotes a
+    # real book into the shipped corpus instead of leaving a hole.
+    return filter_corpus(docs)
 
 
 def build_books(docs: list[dict]) -> tuple[list[dict], AuthorIndex]:

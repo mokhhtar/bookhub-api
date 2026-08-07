@@ -214,11 +214,18 @@ def main() -> None:
             # Only keep works we actually carry — Wikidata knows far more.
             if not title or title not in wanted_titles.get(key, ()):
                 continue
-            rec = found.setdefault(f"{key}|{title}", {"film": False, "series": False})
+            rec = found.setdefault(f"{key}|{title}",
+                                   {"film": False, "series": False, "sid": None})
             if "adapted" in b:
                 rec["film"] = True
             if "series" in b:
                 rec["series"] = True
+                # The series IDENTITY, not just its existence. The first
+                # version stored a boolean, which answers "is it part of a
+                # series?" but cannot group Harry Potter's twelve rows into
+                # one candidate — and that grouping is the fix for both the
+                # wrong-volume guesses and the question count.
+                rec["sid"] = b["series"]["value"].rsplit("/", 1)[-1]
 
         asked.update(chunk)
         with open(args.out, "w", encoding="utf-8") as fh:
@@ -233,9 +240,11 @@ def main() -> None:
     if found:
         films = sum(1 for r in found.values() if r["film"])
         series = sum(1 for r in found.values() if r["series"])
+        sids = {r.get("sid") for r in found.values() if r.get("sid")}
         print(f"\n{len(found)} corpus books matched to a Wikidata work")
         print(f"  screen adaptation  {films:>6} ({films * 100 // len(found)}%)")
-        print(f"  in a series        {series:>6} ({series * 100 // len(found)}%)")
+        print(f"  in a series        {series:>6} ({series * 100 // len(found)}%)"
+              f" across {len(sids)} distinct series")
         print(f"\n  -> {args.out}")
 
 

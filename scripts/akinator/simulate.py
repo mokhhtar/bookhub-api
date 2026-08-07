@@ -50,6 +50,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from author_traits import AUTHOR_QUESTIONS, book_traits, load_wikidata  # noqa: E402
 from characters import extract_characters, usable_token          # noqa: E402
+from corpus_filter import filter_corpus                          # noqa: E402
 from engine import Engine, Matrix                                # noqa: E402
 from work_traits import (WORK_QUESTIONS, load_protagonists,        # noqa: E402
                          load_works, merge_into)
@@ -93,6 +94,9 @@ def load_docs(corpus_size: int = 0) -> list[dict]:
     else:
         with open(SAMPLE_PATH, encoding="utf-8") as fh:
             docs = json.load(fh)
+    # Filter BEFORE truncating, so removing a workbook promotes a real book
+    # into the corpus rather than leaving a hole.
+    docs = filter_corpus(docs, verbose=False)
     return docs[:corpus_size] if corpus_size else docs
 
 
