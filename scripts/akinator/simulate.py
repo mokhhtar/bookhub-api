@@ -51,6 +51,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from author_traits import AUTHOR_QUESTIONS, book_traits, load_wikidata  # noqa: E402
 from characters import extract_characters, usable_token          # noqa: E402
 from engine import Engine, Matrix                                # noqa: E402
+from work_traits import (WORK_QUESTIONS, load_protagonists,        # noqa: E402
+                         load_works, merge_into)
 from features import (FORCE_KEEP, QUESTION_TEXT,                    # noqa: E402
                       STRUCTURAL_QUESTIONS, extract)
 
@@ -101,6 +103,8 @@ def load_books(corpus_size: int = 0, with_author_traits: bool = True) -> list[di
     # Phase 2: Wikidata author facts, if they have been harvested. Absent
     # file = the game simply has fewer questions, never wrong ones.
     wd = load_wikidata() if with_author_traits else {}
+    works = load_works() if with_author_traits else {}
+    protagonists = load_protagonists() if with_author_traits else {}
     book_counts: dict[str, int] = {}
     for doc in docs:
         for key in doc.get("author_key") or []:
@@ -127,6 +131,7 @@ def load_books(corpus_size: int = 0, with_author_traits: bool = True) -> list[di
                 # absence, scored by absence_confidence like any other.
             book["present"] = sorted(present)
             book["unknown"] = sorted(unknown)
+            merge_into(book, doc, works, protagonists)
 
         books.append(book)
     return books
@@ -151,7 +156,7 @@ def select_questions(books: list[dict], verbose: bool = True) -> list[str]:
               f"kept {len(kept)}, dropped {len(dropped)}")
         for key, freq in sorted(kept, key=lambda x: -x[1])[:12]:
             label = (QUESTION_TEXT.get(key) or STRUCTURAL_QUESTIONS.get(key)
-                     or AUTHOR_QUESTIONS.get(key, key))
+                     or AUTHOR_QUESTIONS.get(key) or WORK_QUESTIONS.get(key, key))
             print(f"     {freq:5.1%}  {label}")
         print(f"     ... and {max(0, len(kept) - 12)} more")
     return [k for k, _ in kept]

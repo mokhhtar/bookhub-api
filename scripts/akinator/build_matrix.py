@@ -42,6 +42,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from author_traits import AUTHOR_QUESTIONS, book_traits, load_wikidata  # noqa: E402
 from authors import AuthorIndex                                     # noqa: E402
+from work_traits import (WORK_QUESTIONS, load_protagonists,         # noqa: E402
+                         load_works, merge_into)
 from characters import extract_characters, usable_token             # noqa: E402
 from features import (FORCE_KEEP, PRESENCE_CONFIDENCE,               # noqa: E402
                       QUESTION_TEXT, STRUCTURAL_QUESTIONS,
@@ -92,6 +94,8 @@ def build_books(docs: list[dict]) -> tuple[list[dict], AuthorIndex]:
     # Phase 2 author facts. Missing file is fine — the game gets fewer
     # questions, never wrong ones.
     wd = load_wikidata()
+    works = load_works()
+    protagonists = load_protagonists()
     book_counts: dict[str, int] = {}
     for doc in docs:
         for key in doc.get("author_key") or []:
@@ -113,6 +117,7 @@ def build_books(docs: list[dict]) -> tuple[list[dict], AuthorIndex]:
             elif value:
                 present.add(key)
         book["present"], book["unknown"] = sorted(present), sorted(unknown)
+        merge_into(book, doc, works, protagonists)
 
         keys = doc.get("author_key") or []
         ids = []
@@ -218,7 +223,7 @@ def main() -> None:
     sizes = {}
     sizes["questions.json"] = write("questions.json", [
         {"id": q, "text": (QUESTION_TEXT.get(q) or STRUCTURAL_QUESTIONS.get(q)
-                           or AUTHOR_QUESTIONS.get(q, q))}
+                           or AUTHOR_QUESTIONS.get(q) or WORK_QUESTIONS.get(q, q))}
         for q in questions
     ])
     sizes["books.json"] = write("books.json", [

@@ -49,3 +49,10 @@ venv/
 # Wikidata author harvest: regenerable by scripts/akinator/harvest_authors.py.
 /data/akinator_authors_wd.json
 /data/akinator_authors_wd_asked.json
+
+# Wikidata works harvest (screen adaptations + series), regenerable.
+/data/akinator_works_wd.json
+/data/akinator_works_wd_asked.json
+
+# Protagonist gender cache (Wikipedia pronoun counting), regenerable.
+/data/akinator_protagonist.json
