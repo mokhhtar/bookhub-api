@@ -56,3 +56,6 @@ venv/
 
 # Protagonist gender cache (Wikipedia pronoun counting), regenerable.
 /data/akinator_protagonist.json
+
+# Question-review dump, regenerated on demand for the owner review pass.
+/data/akinator_questions_review.json
