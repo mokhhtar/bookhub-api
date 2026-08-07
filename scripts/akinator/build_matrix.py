@@ -40,6 +40,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from author_traits import AUTHOR_QUESTIONS, book_traits, load_wikidata  # noqa: E402
 from authors import AuthorIndex                                     # noqa: E402
 from characters import extract_characters, usable_token             # noqa: E402
 from features import (PRESENCE_CONFIDENCE, QUESTION_TEXT,           # noqa: E402
@@ -87,11 +88,31 @@ def build_books(docs: list[dict]) -> tuple[list[dict], AuthorIndex]:
     n = len(docs)
     authors = AuthorIndex()
     books = []
+
+    # Phase 2 author facts. Missing file is fine — the game gets fewer
+    # questions, never wrong ones.
+    wd = load_wikidata()
+    book_counts: dict[str, int] = {}
+    for doc in docs:
+        for key in doc.get("author_key") or []:
+            book_counts[key] = book_counts.get(key, 0) + 1
+    if wd:
+        print(f"Author facts: {len(wd)} authors from Wikidata")
+
     for rank, doc in enumerate(docs):
         book = extract(doc, rank, n)
         names, tokens = extract_characters(book.pop("persons"))
         book["char_names"] = sorted(names)
         book["char_tokens"] = sorted(t for t in tokens if usable_token(t))
+
+        present, unknown = set(book["present"]), set(book["unknown"])
+        for key, value in book_traits(doc.get("author_key") or [],
+                                      wd, book_counts).items():
+            if value is None:
+                unknown.add(key)
+            elif value:
+                present.add(key)
+        book["present"], book["unknown"] = sorted(present), sorted(unknown)
 
         keys = doc.get("author_key") or []
         ids = []
@@ -193,7 +214,8 @@ def main() -> None:
 
     sizes = {}
     sizes["questions.json"] = write("questions.json", [
-        {"id": q, "text": QUESTION_TEXT.get(q) or STRUCTURAL_QUESTIONS.get(q, q)}
+        {"id": q, "text": (QUESTION_TEXT.get(q) or STRUCTURAL_QUESTIONS.get(q)
+                           or AUTHOR_QUESTIONS.get(q, q))}
         for q in questions
     ])
     sizes["books.json"] = write("books.json", [
