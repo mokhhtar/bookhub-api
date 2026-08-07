@@ -45,7 +45,8 @@ from authors import AuthorIndex                                     # noqa: E402
 from work_traits import (WORK_QUESTIONS, load_protagonists,         # noqa: E402
                          load_works, merge_into)
 from characters import extract_characters, usable_token             # noqa: E402
-from features import (FORCE_KEEP, PRESENCE_CONFIDENCE,               # noqa: E402
+from features import (EXCLUSIVE_GROUPS, FORCE_KEEP,                  # noqa: E402
+                      PRESENCE_CONFIDENCE,
                       QUESTION_TEXT, STRUCTURAL_QUESTIONS,
                       UNKNOWN_CONFIDENCE, absence_confidence, extract)
 
@@ -109,14 +110,20 @@ def build_books(docs: list[dict]) -> tuple[list[dict], AuthorIndex]:
         book["char_names"] = sorted(names)
         book["char_tokens"] = sorted(t for t in tokens if usable_token(t))
 
-        present, unknown = set(book["present"]), set(book["unknown"])
+        present = set(book["present"])
+        unknown = set(book["unknown"])
+        known_false = set(book.get("known_false") or ())
         for key, value in book_traits(doc.get("author_key") or [],
                                       wd, book_counts).items():
             if value is None:
                 unknown.add(key)
             elif value:
                 present.add(key)
-        book["present"], book["unknown"] = sorted(present), sorted(unknown)
+            else:
+                known_false.add(key)
+        book["present"] = sorted(present)
+        book["unknown"] = sorted(unknown)
+        book["known_false"] = sorted(known_false)
         merge_into(book, doc, works, protagonists)
 
         keys = doc.get("author_key") or []
@@ -221,9 +228,30 @@ def main() -> None:
         return os.path.getsize(path)
 
     sizes = {}
+    # PER-QUESTION BASE RATE, and it is a correction rather than a
+    # refinement. A flat p_unknown of 0.5 is only neutral for a question
+    # that is a coin flip; "is the author British?" is true of 14% of the
+    # corpus, so scoring an unmatched author at 0.5 asserts they are three
+    # times more likely to be British than anyone else. That is what let
+    # "is the author American? yes" still be followed by "is the author
+    # from Asia, Africa or Latin America?" even after the known-false state
+    # went in: the contradiction was gone for matched authors (0.03) and
+    # alive for the 31% unmatched ones (0.50), which averaged to 0.17 and
+    # cleared the engine's filter.
+    #
+    # Third appearance of this exact error — phase 0 found it on character
+    # names, and it was written up as "unknown must mean the base rate, not
+    # a coin flip". Applying it per question rather than per feature-family
+    # is what stops a fourth.
+    present_counts: dict[str, int] = {}
+    for b in books:
+        for f in b["present"]:
+            present_counts[f] = present_counts.get(f, 0) + 1
     sizes["questions.json"] = write("questions.json", [
-        {"id": q, "text": (QUESTION_TEXT.get(q) or STRUCTURAL_QUESTIONS.get(q)
-                           or AUTHOR_QUESTIONS.get(q) or WORK_QUESTIONS.get(q, q))}
+        {"id": q,
+         "text": (QUESTION_TEXT.get(q) or STRUCTURAL_QUESTIONS.get(q)
+                  or AUTHOR_QUESTIONS.get(q) or WORK_QUESTIONS.get(q, q)),
+         "base": round(present_counts.get(q, 0) / max(1, len(books)), 4)}
         for q in questions
     ])
     sizes["books.json"] = write("books.json", [
@@ -263,6 +291,10 @@ def main() -> None:
         # The client derives probabilities from these — one rule, both sides.
         "p_present": PRESENCE_CONFIDENCE,
         "p_unknown": UNKNOWN_CONFIDENCE,
+        # Published rather than duplicated in the page: one definition of
+        # what contradicts what, read by both engines.
+        "exclusive_groups": [[q for q in g if q in set(questions)]
+                             for g in EXCLUSIVE_GROUPS],
         "p_absent_by_richness": [
             {"max_richness": 2, "p": absence_confidence(2)},
             {"max_richness": 6, "p": absence_confidence(6)},

@@ -468,11 +468,17 @@ def extract(doc: dict, popularity_rank: int, corpus_size: int) -> dict:
         present.update(map_subject(normalize(extra)))
 
     unknown: set[str] = set()
+    known_false: set[str] = set()
     for key, value in structural_features(doc, popularity_rank, corpus_size).items():
         if value is None:
             unknown.add(key)
         elif value:
             present.add(key)
+        else:
+            # A computed False, not a missing subject — see
+            # KNOWN_FALSE_CONFIDENCE. A book with a publication year is
+            # definitively not "before 1900" if that year is 1998.
+            known_false.add(key)
 
     return {
         "key": doc.get("key"),
@@ -484,8 +490,38 @@ def extract(doc: dict, popularity_rank: int, corpus_size: int) -> dict:
         "persons": doc.get("person") or [],
         "present": sorted(present),
         "unknown": sorted(unknown),
+        "known_false": sorted(known_false),
         "richness": len(content_subjects),
     }
+
+
+# Questions that cannot both be true. Answering "yes" to one suppresses its
+# siblings outright.
+#
+# The probability work (known-false at 0.03, per-question base rates for
+# unknowns) already pushes a contradicted sibling from 0.45 down to about
+# 0.07, and the engine picks whichever question sits closest to half, so it
+# would not normally choose one. "Would not normally" is not the standard
+# here: the owner hit exactly this playing the game — "is the author
+# American?" answered yes, then "is the author from Asia, Africa or Latin
+# America?" — and a player who sees that once stops believing the game is
+# reading their mind.
+#
+# So the arithmetic is the fix and this is the guarantee. Cheap, explicit,
+# and it cannot drift with the data the way a threshold can.
+EXCLUSIVE_GROUPS: list[list[str]] = [
+    ["author:american", "author:british", "author:european", "author:nonwestern"],
+    ["place:usa", "place:britain", "place:france", "place:europe_other",
+     "place:asia", "place:africa", "place:latam", "place:imaginary"],
+    ["form:fiction", "form:nonfiction"],
+    ["audience:children", "audience:ya"],
+]
+
+# question -> the siblings it rules out when answered yes.
+EXCLUDES: dict[str, set[str]] = {}
+for _group in EXCLUSIVE_GROUPS:
+    for _q in _group:
+        EXCLUDES[_q] = {x for x in _group if x != _q}
 
 
 # Questions kept regardless of the 5% frequency floor (owner, 2026-08-07).
@@ -533,3 +569,23 @@ def absence_confidence(richness: int) -> float:
 
 PRESENCE_CONFIDENCE = 0.90   # a subject IS stated: strong but never certain
 UNKNOWN_CONFIDENCE = 0.50    # we genuinely cannot say
+
+# A fact we positively computed as FALSE, which is not the same thing as a
+# subject the record happens not to mention.
+#
+# THE BUG THIS FIXES, found by the owner playing the game (2026-08-07):
+# answering "yes" to "Is the author American?" was followed by "Is the
+# author from Asia, Africa, or Latin America?".
+#
+# `absence_confidence()` is calibrated for SUBJECTS, where a gap is weak
+# evidence — Open Library may simply not have tagged a sea story. It was
+# also being applied to derived booleans, where a `False` means Wikidata
+# told us the author is American and therefore certainly not African. At
+# 0.15-0.45 the contradiction stayed well clear of the engine's
+# "everyone would answer the same way" filter at 0.02, so the question got
+# asked. Not a wording problem and not one question: every mutually
+# exclusive pair in the set could do it.
+#
+# Low but not zero, because our own derivation can be wrong — an author
+# with two nationalities, a mis-linked Wikidata item.
+KNOWN_FALSE_CONFIDENCE = 0.03

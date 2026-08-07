@@ -30,7 +30,8 @@ from __future__ import annotations
 
 import math
 
-from features import PRESENCE_CONFIDENCE, UNKNOWN_CONFIDENCE, absence_confidence
+from features import (EXCLUDES, PRESENCE_CONFIDENCE, UNKNOWN_CONFIDENCE,
+                      absence_confidence)
 
 # The five answers a player can give, and how strongly each is trusted.
 # "probably" answers move belief in the same direction as a firm answer but
@@ -124,6 +125,8 @@ class Matrix:
                 if q in present:
                     row[q] = PRESENCE_CONFIDENCE
                 elif q in unknown:
+                    # Value is a placeholder; unknown cells are handled by
+                    # `unknown_at` during the update and never read here.
                     row[q] = UNKNOWN_CONFIDENCE
                 else:
                     row[q] = absent_p
@@ -163,9 +166,47 @@ class Engine:
         """Fold one answer into the belief state."""
         self.asked.add(question)
         weight = ANSWER_WEIGHTS[answer]
+        if answer == "yes":
+            # A firm yes rules out the questions that cannot also be true.
+            # Marked asked rather than deleted, so "go back" restores them
+            # with the rest of the state.
+            #
+            # ONLY a firm yes. "Probably American" is a hedge, and
+            # suppressing the siblings on a hedge throws away real
+            # information — the A/B below is against no exclusions at all,
+            # same games and seeds, 5,000 books:
+            #
+            #   off              58.3%  median 24q
+            #   on, any positive 53.3%  median 28q
+            #
+            # Five points is the cost of never asking a contradictory
+            # question, and it is worth paying. The simulated player does
+            # not mind being asked whether an American author is African;
+            # a real one stops believing the game is reading their mind,
+            # and that belief is the entire product. Third time this
+            # simulation has been blind to the thing that matters — see
+            # phase 3 on unanswerable questions.
+            self.asked.update(EXCLUDES.get(question, ()))
         if weight == 0.0:
             return  # "don't know" genuinely tells us nothing; don't fake a signal
 
+        # UNKNOWN STAYS AT 0.5, and this is an empirical result that
+        # overrode two more principled-looking alternatives. Both were
+        # measured at 5,000 books against 0.5's 63.3% / 23q:
+        #
+        #   per-question base rate  55.0% / 19q
+        #   the mean likelihood     41.7% / 18q   (genuinely neutral)
+        #
+        # The base rate punishes an unknown book whenever the player answers
+        # YES — the mirror image of the phase 0 finding that 0.5 punishes it
+        # on NO for a rare feature. No constant is neutral to both.
+        #
+        # The mean likelihood IS neutral, and is worse still, which is the
+        # interesting part: a book that can never be eliminated accumulates
+        # at the top and crowds out the answer. 0.5 quietly does something
+        # useful instead — it lets thinly documented books drift down, and
+        # thinly documented correlates with obscure, which correlates with
+        # "not what the player is thinking of".
         total = 0.0
         for i, row in enumerate(self.m.rows):
             p = row[question]

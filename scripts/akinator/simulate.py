@@ -121,16 +121,21 @@ def load_books(corpus_size: int = 0, with_author_traits: bool = True) -> list[di
         if with_author_traits:
             present = set(book["present"])
             unknown = set(book["unknown"])
+            known_false = set(book.get("known_false") or ())
             for key, value in book_traits(doc.get("author_key") or [],
                                           wd, book_counts).items():
                 if value is None:
                     unknown.add(key)
                 elif value:
                     present.add(key)
-                # False stays out of both: a stated "no" is ordinary
-                # absence, scored by absence_confidence like any other.
+                else:
+                    # Wikidata says the author IS American, so they are
+                    # certainly not African. Scoring that like an unrecorded
+                    # subject is what let the game ask both.
+                    known_false.add(key)
             book["present"] = sorted(present)
             book["unknown"] = sorted(unknown)
+            book["known_false"] = sorted(known_false)
             merge_into(book, doc, works, protagonists)
 
         books.append(book)

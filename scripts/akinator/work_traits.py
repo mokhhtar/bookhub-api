@@ -110,16 +110,24 @@ def merge_into(book: dict, doc: dict, works: dict[str, dict],
                protagonists: dict[str, str | None]) -> None:
     """Fold the three features into a book's present/unknown sets in place.
 
-    `False` deliberately lands in neither set: a stated "no" is ordinary
-    absence, scored by `absence_confidence()` like every other absent
-    feature, while `None` goes to `unknown` so it scores at the base rate.
+    Three destinations, not two. `None` goes to `unknown` (we cannot say);
+    `False` goes to `known_false` (we positively determined it is not so).
+    Collapsing those two was the bug behind "is the author American? yes"
+    being followed by "is the author from Asia, Africa or Latin America?" —
+    see KNOWN_FALSE_CONFIDENCE in features.py.
     """
-    present, unknown = set(book["present"]), set(book["unknown"])
+    present = set(book["present"])
+    unknown = set(book["unknown"])
+    known_false = set(book.get("known_false") or ())
     for key, value in traits_for(doc, works, protagonists).items():
         if value is None:
             unknown.add(key)
         elif value:
             present.add(key)
+            known_false.discard(key)
         else:
+            known_false.add(key)
             unknown.discard(key)
-    book["present"], book["unknown"] = sorted(present), sorted(unknown)
+    book["present"] = sorted(present)
+    book["unknown"] = sorted(unknown)
+    book["known_false"] = sorted(known_false)
