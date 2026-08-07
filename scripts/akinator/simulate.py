@@ -48,6 +48,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from author_traits import AUTHOR_QUESTIONS, book_traits, load_wikidata  # noqa: E402
 from characters import extract_characters, usable_token          # noqa: E402
 from engine import Engine, Matrix                                # noqa: E402
 from features import QUESTION_TEXT, STRUCTURAL_QUESTIONS, extract  # noqa: E402
@@ -92,9 +93,18 @@ def load_docs(corpus_size: int = 0) -> list[dict]:
     return docs[:corpus_size] if corpus_size else docs
 
 
-def load_books(corpus_size: int = 0) -> list[dict]:
+def load_books(corpus_size: int = 0, with_author_traits: bool = True) -> list[dict]:
     docs = load_docs(corpus_size)
     n = len(docs)
+
+    # Phase 2: Wikidata author facts, if they have been harvested. Absent
+    # file = the game simply has fewer questions, never wrong ones.
+    wd = load_wikidata() if with_author_traits else {}
+    book_counts: dict[str, int] = {}
+    for doc in docs:
+        for key in doc.get("author_key") or []:
+            book_counts[key] = book_counts.get(key, 0) + 1
+
     books = []
     # Docs are sorted by readinglog_count, so index == popularity rank.
     for rank, doc in enumerate(docs):
@@ -102,6 +112,21 @@ def load_books(corpus_size: int = 0) -> list[dict]:
         names, tokens = extract_characters(book.pop("persons"))
         book["char_names"] = sorted(names)
         book["char_tokens"] = sorted(t for t in tokens if usable_token(t))
+
+        if with_author_traits:
+            present = set(book["present"])
+            unknown = set(book["unknown"])
+            for key, value in book_traits(doc.get("author_key") or [],
+                                          wd, book_counts).items():
+                if value is None:
+                    unknown.add(key)
+                elif value:
+                    present.add(key)
+                # False stays out of both: a stated "no" is ordinary
+                # absence, scored by absence_confidence like any other.
+            book["present"] = sorted(present)
+            book["unknown"] = sorted(unknown)
+
         books.append(book)
     return books
 
@@ -123,7 +148,8 @@ def select_questions(books: list[dict], verbose: bool = True) -> list[str]:
         print(f"Feature selection ({MIN_FREQ:.0%}-{MAX_FREQ:.0%} band): "
               f"kept {len(kept)}, dropped {len(dropped)}")
         for key, freq in sorted(kept, key=lambda x: -x[1])[:12]:
-            label = QUESTION_TEXT.get(key) or STRUCTURAL_QUESTIONS.get(key, key)
+            label = (QUESTION_TEXT.get(key) or STRUCTURAL_QUESTIONS.get(key)
+                     or AUTHOR_QUESTIONS.get(key, key))
             print(f"     {freq:5.1%}  {label}")
         print(f"     ... and {max(0, len(kept) - 12)} more")
     return [k for k, _ in kept]

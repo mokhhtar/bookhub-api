@@ -40,3 +40,12 @@ venv/
 # scripts/akinator/build_corpus.py. Same reasoning as the sample above —
 # OL names no licence for their catalogue data, so we do not redistribute it.
 /data/akinator_corpus.jsonl
+
+# Wikidata author harvest — regenerable by scripts/akinator/harvest_authors.py
+/data/akinator_authors_wd.json
+/data/akinator_authors_wd_asked.json
+/data/akinator_build/
+
+# Wikidata author harvest: regenerable by scripts/akinator/harvest_authors.py.
+/data/akinator_authors_wd.json
+/data/akinator_authors_wd_asked.json
