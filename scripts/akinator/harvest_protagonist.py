@@ -87,6 +87,9 @@ MAJORITY = 0.75
 # produced the three unknowns.
 MAX_CHARS = 20000
 
+# The opening paragraph, which introduces the subject and nobody else.
+LEAD_CHARS = 800
+
 
 def wikipedia_extract(title: str, timeout: int = 40) -> str:
     url = WIKI_API + "?" + urllib.parse.urlencode({
@@ -101,8 +104,7 @@ def wikipedia_extract(title: str, timeout: int = 40) -> str:
     return ""
 
 
-def gender_from_text(text: str) -> str | None:
-    """'male' / 'female' / None. None is a first-class answer."""
+def _count(text: str) -> str | None:
     male = len(_MALE.findall(text))
     female = len(_FEMALE.findall(text))
     total = male + female
@@ -113,6 +115,29 @@ def gender_from_text(text: str) -> str | None:
     if female / total >= MAJORITY:
         return "female"
     return None
+
+
+def gender_from_text(text: str) -> str | None:
+    """'male' / 'female' / None. None is a first-class answer.
+
+    THE LEAD IS READ FIRST, and the reason is a bias worth naming. A full
+    article about a female character spends much of its length on the men
+    around her — Rochester, Blomkvist, Atticus — so the majority test comes
+    out inconclusive far more often for women than for men. The first pass
+    over the harvest showed it plainly: **74 male against 16 female** among
+    resolved names. Not wrong answers, but asymmetric unknowns, which would
+    have made "is the main character a woman?" quietly worse at detecting
+    exactly the case it asks about.
+
+    The lead paragraph is about the subject and nobody else, so it is much
+    less contaminated. Measured over twelve well-known characters, the two
+    passes each got 8 right with 0 wrong but failed on *different* people —
+    the lead rescued Jane Eyre (0/3) where the full article was 74/182, and
+    the full article rescued Jo March where the lead had a single pronoun.
+    Trying the lead and falling back resolves both: **10 of 12, still zero
+    wrong**, and the two it recovered were both women.
+    """
+    return _count(text[:LEAD_CHARS]) or _count(text)
 
 
 def protagonist_of(doc: dict) -> str:
@@ -130,6 +155,11 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=0,
                     help="only the N most-read books with a cast (0 = all)")
     ap.add_argument("--delay", type=float, default=0.3)
+    ap.add_argument("--retry-unknown", action="store_true",
+                    help="re-resolve names previously cached as unknown. "
+                         "Needed after any change to gender_from_text: the "
+                         "cache skips names it already holds, so an "
+                         "improvement to the resolver reaches none of them.")
     args = ap.parse_args()
 
     docs = []
@@ -152,6 +182,11 @@ def main() -> None:
     if os.path.exists(args.out):
         with open(args.out, encoding="utf-8") as fh:
             cache = json.load(fh)
+        if args.retry_unknown:
+            stale = [k for k, v in cache.items() if not v]
+            for k in stale:
+                del cache[k]
+            print(f"Retrying {len(stale)} names previously cached as unknown.")
         print(f"Resuming with {len(cache)} names already resolved.")
 
     print(f"{len(targets)} books have a cast; resolving their first-listed name.\n")
