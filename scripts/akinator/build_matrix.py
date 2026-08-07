@@ -43,9 +43,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from author_traits import AUTHOR_QUESTIONS, book_traits, load_wikidata  # noqa: E402
 from authors import AuthorIndex                                     # noqa: E402
 from characters import extract_characters, usable_token             # noqa: E402
-from features import (PRESENCE_CONFIDENCE, QUESTION_TEXT,           # noqa: E402
-                      STRUCTURAL_QUESTIONS, UNKNOWN_CONFIDENCE,
-                      absence_confidence, extract)
+from features import (FORCE_KEEP, PRESENCE_CONFIDENCE,               # noqa: E402
+                      QUESTION_TEXT, STRUCTURAL_QUESTIONS,
+                      UNKNOWN_CONFIDENCE, absence_confidence, extract)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CORPUS_PATH = os.path.join(REPO_ROOT, "data", "akinator_corpus.jsonl")
@@ -134,8 +134,11 @@ def select_features(books: list[dict]) -> list[str]:
         for f in b["present"]:
             counts[f] = counts.get(f, 0) + 1
     keys = set(counts) | {k for b in books for k in b["unknown"]}
-    kept = [k for k in sorted(keys)
-            if MIN_FREQ <= counts.get(k, 0) / n <= MAX_FREQ]
+    kept = []
+    for k in sorted(keys):
+        freq = counts.get(k, 0) / n
+        if MIN_FREQ <= freq <= MAX_FREQ or (k in FORCE_KEEP and freq > 0):
+            kept.append(k)
     return kept
 
 

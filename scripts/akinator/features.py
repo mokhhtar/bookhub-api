@@ -224,7 +224,7 @@ SUBJECT_RULES: list[tuple[str, str, list[str]]] = [
      ["england", "london", "great britain", "britain", "scotland", "wales",
       "yorkshire", "cornwall", "oxford", "cambridge"]),
     ("place:france", "Does it take place in France?", ["france", "paris"]),
-    ("place:europe_other", "Does it take place elsewhere in Europe?",
+    ("place:europe_other", "Does it take place in Europe, outside Britain?",
      ["germany", "italy", "spain", "russia", "greece", "ireland", "norway",
       "sweden", "poland", "berlin", "rome", "moscow", "vienna"]),
     ("place:asia", "Does it take place in Asia?",
@@ -344,6 +344,21 @@ def map_subject(normalized: str) -> list[str]:
 # question automatically once its neighbour has been answered, so the cost
 # of offering both "before 1970" and "before 2000" is nothing, and the
 # benefit is a sharp split available at several different points.
+#
+# WORDING IS OWNER-REVIEWED (2026-08-07). Do not edit these strings to suit
+# the data — the review pass exists because a question can have excellent
+# coverage and still be unanswerable, and four questions were cut for
+# exactly that reason:
+#
+#   "Has it been printed in many different editions?"  (22% coverage)
+#   "Is it freely available to read online?"            (46%)
+#   "Do readers generally rate it well?"                (29%)
+#   "Did the author die more than a century ago?"       (6%)
+#
+# All four had good numbers. Nobody picturing a book knows its edition
+# count, and its copyright status is a fact about the publisher rather than
+# the story. Coverage made them good features; it never made them good
+# questions.
 STRUCTURAL_QUESTIONS = {
     "fact:veryold": "Was it written before 1900?",
     "fact:old": "Was it written before 1950?",
@@ -351,17 +366,17 @@ STRUCTURAL_QUESTIONS = {
     "fact:pre2000": "Was it written before 2000?",
     "fact:recent": "Was it published in the last 25 years?",
     "fact:verrecent": "Was it published in the last 10 years?",
-    "fact:short": "Is it a short book (under 200 pages)?",
+    "fact:short": "Is it a quick read (under 200 pages)?",
     "fact:midshort": "Is it under 300 pages?",
-    "fact:long": "Is it a long book (over 400 pages)?",
+    "fact:long": "Is it a thick or long book (over 400 pages)?",
     "fact:verylong": "Is it over 600 pages?",
     "fact:famous": "Is it very widely read?",
-    "fact:freeebook": "Is it freely available to read online?",
     "fact:namedchars": "Does it have well-known named characters?",
     "fact:highlyrated": "Is it very highly rated by readers?",
-    "fact:wellrated": "Do readers generally rate it well?",
-    "fact:translated": "Has it been translated into many languages?",
-    "fact:manyeditions": "Has it been printed in many different editions?",
+    # Was "Has it been translated into many languages?" — the underlying
+    # signal is language count, but what a reader can actually answer is
+    # whether the book is famous internationally.
+    "fact:translated": "Is it famous around the world?",
 }
 
 
@@ -376,7 +391,6 @@ def structural_features(doc: dict, popularity_rank: int, corpus_size: int) -> di
     ratings_n = doc.get("ratings_count") or 0
     ratings_avg = doc.get("ratings_average")
     languages = doc.get("language") or []
-    editions = doc.get("edition_count") or 0
 
     feats: dict[str, bool | None] = {}
     feats["fact:veryold"] = (year < 1900) if year else None
@@ -393,17 +407,16 @@ def structural_features(doc: dict, popularity_rank: int, corpus_size: int) -> di
 
     # Top decile of a popularity-sorted corpus.
     feats["fact:famous"] = popularity_rank < max(1, corpus_size // 10)
-    feats["fact:freeebook"] = (doc.get("ebook_access") in ("public", "borrowable"))
     feats["fact:namedchars"] = bool(doc.get("person"))
 
     feats["fact:highlyrated"] = (ratings_avg >= 4.2) if (ratings_avg and ratings_n >= 20) else None
-    feats["fact:wellrated"] = (ratings_avg >= 3.9) if (ratings_avg and ratings_n >= 20) else None
 
-    # "English?" is useless — 96% of the corpus is in English. How WIDELY
-    # translated it is, though, splits near the middle and is a question a
-    # player can actually answer about a book they know.
+    # "English?" is useless — 96% of the corpus is in English. The number of
+    # languages a book exists in is a decent proxy for international fame,
+    # and fame is the half of it a reader can actually answer. Edition count
+    # crosses the same threshold in the data but not in a reader's head, so
+    # `ebook_access` and `edition_count` are both read here no longer.
     feats["fact:translated"] = len(languages) >= 5 if languages else None
-    feats["fact:manyeditions"] = editions >= 50 if editions else None
     return feats
 
 
@@ -451,6 +464,26 @@ def extract(doc: dict, popularity_rank: int, corpus_size: int) -> dict:
         "unknown": sorted(unknown),
         "richness": len(content_subjects),
     }
+
+
+# Questions kept regardless of the 5% frequency floor (owner, 2026-08-07).
+#
+# The floor measures how many books a question applies to. It cannot see how
+# CLEANLY a reader can answer it, and these three are unusually clean — a
+# reader always knows whether the story happens at a school, whether they
+# are holding a play, and whether the book is part of a series.
+#
+# `form:series` is the important one, and it is a data failure rather than a
+# real one: a large share of the corpus genuinely is in a series and Open
+# Library simply does not record it. It reads as 4.2% because the metadata
+# is missing, not because series books are rare. Fixing the source is
+# tracked separately; keeping the question meanwhile costs nothing, because
+# a book with no series data answers `unknown` rather than "no".
+FORCE_KEEP = {
+    "form:series",
+    "setting:school",
+    "genre:drama",
+}
 
 
 def absence_confidence(richness: int) -> float:

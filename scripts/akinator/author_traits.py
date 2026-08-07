@@ -39,16 +39,26 @@ import os
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 AUTHORS_WD_PATH = os.path.join(REPO_ROOT, "data", "akinator_authors_wd.json")
 
+# WORDING IS OWNER-REVIEWED (2026-08-07). Three changes came out of that
+# pass, and all three are about what a reader can answer rather than what
+# Wikidata can state:
+#
+#   "Was the author born in the 20th century?" -> "Is the author a modern
+#     writer?" — readers hold an era, not a birth century.
+#   "Did the author die more than a century ago?" — CUT and folded into
+#     "Is the author still alive?", which asks the same thing in the form
+#     people actually think in.
+#   "Is the author from outside Europe and North America?" -> named
+#     regions, because negated geography is hard to answer under pressure.
 AUTHOR_QUESTIONS = {
     "author:female": "Was it written by a woman?",
     "author:alive": "Is the author still alive?",
     "author:american": "Is the author American?",
     "author:british": "Is the author British?",
     "author:european": "Is the author from continental Europe?",
-    "author:nonwestern": "Is the author from outside Europe and North America?",
+    "author:nonwestern": "Is the author from Asia, Africa, or Latin America?",
     "author:prolific": "Has the author written many books?",
-    "author:c20": "Was the author born in the 20th century?",
-    "author:historic": "Did the author die more than a century ago?",
+    "author:c20": "Is the author a modern writer?",
 }
 
 _AMERICAN = {"United States", "United States of America"}
@@ -123,11 +133,13 @@ def traits_for(record: dict | None, book_count: int, this_year: int = 2026
     death = _year(record.get("death"))
 
     if birth is not None:
-        out["author:c20"] = 1900 <= birth < 2000
+        # "A modern writer" — born in the 20th century or later. The
+        # underlying test is unchanged; only the question it answers was
+        # reworded, because a reader holds an era and not a birth year.
+        out["author:c20"] = birth >= 1900
 
     if death is not None:
         out["author:alive"] = False
-        out["author:historic"] = (this_year - death) > 100
     elif birth is not None:
         # No death date is ambiguous on its own: it means "alive" for a
         # contemporary writer and "undocumented" for an old one. Only
@@ -135,10 +147,8 @@ def traits_for(record: dict | None, book_count: int, this_year: int = 2026
         age = this_year - birth
         if age < 95:
             out["author:alive"] = True
-            out["author:historic"] = False
         elif age > 150:
             out["author:alive"] = False
-            out["author:historic"] = True
         # Between 95 and 150 it stays unknown, which is the honest answer.
 
     return out

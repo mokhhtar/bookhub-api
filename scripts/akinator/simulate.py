@@ -51,7 +51,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from author_traits import AUTHOR_QUESTIONS, book_traits, load_wikidata  # noqa: E402
 from characters import extract_characters, usable_token          # noqa: E402
 from engine import Engine, Matrix                                # noqa: E402
-from features import QUESTION_TEXT, STRUCTURAL_QUESTIONS, extract  # noqa: E402
+from features import (FORCE_KEEP, QUESTION_TEXT,                    # noqa: E402
+                      STRUCTURAL_QUESTIONS, extract)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SAMPLE_PATH = os.path.join(REPO_ROOT, "data", "akinator_sample.json")
@@ -142,7 +143,8 @@ def select_questions(books: list[dict], verbose: bool = True) -> list[str]:
     all_keys = set(counts) | {k for b in books for k in b["unknown"]}
     for key in sorted(all_keys):
         freq = counts.get(key, 0) / n
-        (kept if MIN_FREQ <= freq <= MAX_FREQ else dropped).append((key, freq))
+        ok = (MIN_FREQ <= freq <= MAX_FREQ) or (key in FORCE_KEEP and freq > 0)
+        (kept if ok else dropped).append((key, freq))
 
     if verbose:
         print(f"Feature selection ({MIN_FREQ:.0%}-{MAX_FREQ:.0%} band): "
