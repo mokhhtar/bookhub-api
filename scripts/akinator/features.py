@@ -78,6 +78,13 @@ def normalize(raw: str) -> str:
         new = _TRAILING_QUALIFIERS.sub("", s).strip(" ,-")
         if new == s:
             break
+        if not new:
+            # The qualifier WAS the whole subject. Stripping it here erased
+            # the most common subject in the entire dataset — "Fiction" was
+            # the #1 raw string in the phase 0 sample (298 of 500 books) and
+            # normalized to the empty string, so the most fundamental
+            # question a player could be asked never existed. Keep it.
+            break
         s = new
     return _WS.sub(" ", s).strip()
 
@@ -110,6 +117,21 @@ def is_stop_subject(normalized: str) -> bool:
 # the broad "fiction"/"literature" catch-alls.
 
 SUBJECT_RULES: list[tuple[str, str, list[str]]] = [
+    # --- the most basic split of all ---
+    # Added 2026-08-07 after the owner asked whether the matrix could answer
+    # "is the book fiction?" and the honest answer was no. It had been
+    # invisible rather than considered: `normalize()` treated a trailing
+    # "fiction" as a qualifier to strip, so the single most common subject
+    # in the corpus collapsed to an empty string before any rule saw it.
+    #
+    # `, fiction` as a SUFFIX ("Friendship, fiction") is still stripped —
+    # that is a real qualifier — but it now also registers the fiction
+    # signal here rather than discarding it.
+    ("form:fiction", "Is it fiction (a made-up story)?",
+     ["fiction", "novel*", "stories", "tales", "roman*", "ficcion", "novela"]),
+    ("form:nonfiction", "Is it a factual, non-fiction book?",
+     ["nonfiction", "non fiction", "true stor*", "essays"]),
+
     # --- genre: fiction ---
     ("genre:fantasy", "Is it a fantasy story?",
      ["fantasy", "wizard*", "dragon*", "elves", "sword and sorcery", "mythical"]),
