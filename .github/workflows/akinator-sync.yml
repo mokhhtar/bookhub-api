@@ -1,0 +1,48 @@
+name: Sync newly published books into the mind reader
+
+# Summarising a book already writes _books/{slug}.md, and the game's corpus
+# already pins every published page in — but nothing regenerated the game
+# artifacts, so a new book did not reach the game until someone ran
+# build_matrix.py by hand. This closes that loop.
+#
+# The work happens on Render, not here, for the same reason as
+# promote-indexing.yml: the full build needs akinator_corpus.jsonl and the
+# Wikidata harvests, all gitignored, and CI has none of them. An INCREMENTAL
+# update needs none of that — questions.json is already committed, and
+# encoding one book against a fixed question list needs only that book.
+#
+# What this does NOT do is re-select features. Frequencies shift as books
+# arrive, so a question that should now clear the 5% floor will not appear
+# until the next full rebuild. Re-selecting would renumber every column and
+# invalidate every stored row. Monthly full rebuild keeps the question set
+# right; this keeps the book list current.
+#
+# Requires the AKINATOR_SYNC_SECRET repo secret to equal the
+# AKINATOR_SYNC_SECRET env var on Render. Without it the endpoint is closed,
+# and this workflow will fail loudly rather than silently doing nothing.
+
+on:
+  schedule:
+    - cron: "40 2 * * *"  # 02:40 UTC daily — after promote-indexing (01:25)
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Report what would be added, write nothing"
+        type: boolean
+        default: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake the instance (free tier sleeps after ~15 min idle)
+        run: curl -sS -m 100 --retry 3 --retry-delay 10 "https://bookhub-api-hnv7.onrender.com/health" || true
+
+      - name: Append newly published books to the game artifacts
+        run: |
+          # 409 is the guards refusing (question_hash mismatch, size check
+          # failed) and it means "run a full build", not "a bug" — but it
+          # should still fail the run so it is visible rather than buried.
+          curl -sS -f -m 300 -X POST \
+            -H "X-Sync-Secret: ${{ secrets.AKINATOR_SYNC_SECRET }}" \
+            "https://bookhub-api-hnv7.onrender.com/akinator/sync?dry_run=${{ inputs.dry_run || false }}"

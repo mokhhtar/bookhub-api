@@ -325,8 +325,16 @@ def main() -> None:
         "volume_dominance": VOLUME_DOMINANCE,
     })
 
+    # Fingerprint of the question list, in order. tools/akinator_sync.py
+    # refuses to append a row unless this still matches — the matrix is
+    # column-positional, so a row packed against a different question list
+    # is silent corruption that leaves the file size correct.
+    import hashlib as _hashlib
+    q_hash = _hashlib.sha256("|".join(questions).encode("utf-8")).hexdigest()[:16]
+
     sizes["meta.json"] = write("meta.json", {
         "version": 1,
+        "question_hash": q_hash,
         "books": len(books),
         "questions": len(questions),
         "bytes_per_row": (len(questions) + 3) // 4,

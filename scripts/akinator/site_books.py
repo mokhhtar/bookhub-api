@@ -76,12 +76,46 @@ def _json_field(head: str, key: str):
         return None
 
 
-def load_site_books(path: str = SITE_BOOKS) -> list[dict]:
-    """Every published book page, parsed.
+def parse_page(raw: str) -> dict | None:
+    """One published page's markdown -> the fields the game can use.
 
-    Returns the fields the game can use plus the summary body, which is
-    the raw text an extraction pass would read.
+    Split out from the directory walk so the same parser serves the
+    incremental sync, which reads pages over the GitHub API on Render where
+    no sibling checkout exists. One parser, so a page cannot mean two
+    different things depending on who read it.
     """
+    m = _FRONT.match(raw or "")
+    if not m:
+        return None
+    head = m.group(1)
+    title = _scalar(head, "title")
+    if not title:
+        return None
+
+    body = raw[m.end():]
+    prose = re.sub(r"<[^>]+>", " ", body)
+    prose = re.sub(r"\s+", " ", prose).strip()
+
+    return {
+        "title": title,
+        "author": _scalar(head, "author"),
+        "slug": _scalar(head, "slug"),
+        "year": _scalar(head, "published_year"),
+        "cover_url": _scalar(head, "cover_url"),
+        "google_id": _scalar(head, "google_id"),
+        "openlibrary_id": _scalar(head, "openlibrary_id"),
+        "categories": _json_field(head, "categories") or [],
+        "themes": _json_field(head, "themes") or [],
+        "characters": _json_field(head, "characters") or [],
+        "free_ebook": bool(_json_field(head, "free_ebook")),
+        "ratings": _json_field(head, "ratings"),
+        "page_count": _scalar(head, "page_count"),
+        "prose": prose,
+    }
+
+
+def load_site_books(path: str = SITE_BOOKS) -> list[dict]:
+    """Every published book page on disk, parsed."""
     if not os.path.isdir(path):
         return []
 
@@ -89,40 +123,12 @@ def load_site_books(path: str = SITE_BOOKS) -> list[dict]:
     for name in sorted(os.listdir(path)):
         if not name.endswith(".md"):
             continue
-        raw = open(os.path.join(path, name), encoding="utf-8").read()
-        m = _FRONT.match(raw)
-        if not m:
-            continue
-        head = m.group(1)
-        title = _scalar(head, "title")
-        if not title:
-            continue
-
-        body = raw[m.end():]
-        # Tags out: the body is published HTML, and an extraction prompt
-        # wants prose, not markup.
-        prose = re.sub(r"<[^>]+>", " ", body)
-        prose = re.sub(r"\s+", " ", prose).strip()
-
-        out.append({
-            "title": title,
-            "author": _scalar(head, "author"),
-            "slug": _scalar(head, "slug"),
-            "year": _scalar(head, "published_year"),
-            "cover_url": _scalar(head, "cover_url"),
-            "google_id": _scalar(head, "google_id"),
-            "openlibrary_id": _scalar(head, "openlibrary_id"),
-            "categories": _json_field(head, "categories") or [],
-            "themes": _json_field(head, "themes") or [],
-            "characters": _json_field(head, "characters") or [],
-            "free_ebook": bool(_json_field(head, "free_ebook")),
-            # Goodreads count — used only to ORDER the additions, never
-            # converted onto the readinglog scale. See supplement().
-            "ratings": _json_field(head, "ratings"),
-            "page_count": _scalar(head, "page_count"),
-            "prose": prose,
-        })
+        page = parse_page(open(os.path.join(path, name), encoding="utf-8").read())
+        if page:
+            out.append(page)
     return out
+
+
 
 
 def index_by_identity(pages: list[dict]) -> dict[tuple[str, str], dict]:
