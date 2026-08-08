@@ -69,3 +69,7 @@ venv/
 # OL work descriptions for trait extraction, regenerable.
 /data/akinator_descriptions.json
 /data/akinator_descriptions_asked.json
+
+# Hand-labelled trait batches (input to manual_traits.py ingest).
+/data/_labels_batch*.json
+/data/akinator_traits.json
