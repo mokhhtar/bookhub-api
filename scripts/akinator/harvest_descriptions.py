@@ -145,6 +145,22 @@ def main() -> None:
         json.dump(sorted(asked), fh)
     print(f"\n{len(out)} descriptions -> {args.out}")
 
+    # A book skipped by a transient failure is left out of `asked` on purpose,
+    # so the next run retries it. That is only true if somebody knows to re-run
+    # it: the first pass reported "3,590 descriptions" and said nothing about
+    # the 85 books it never managed to ask about, among them Nineteen
+    # Eighty-Four. Silence read as completion for a week.
+    unasked = [d for d in docs if d.get("key") and d["key"] not in asked]
+    if unasked:
+        print(f"! {len(unasked)} book(s) were never successfully asked — "
+              f"transient failures, NOT 'no description exists'.")
+        print("  Re-run this script to retry exactly those.")
+        for d in unasked[:5]:
+            print(f"    {(d.get('title') or '')[:60]}")
+    else:
+        print(f"all {len(docs)} books asked; "
+              f"{len(docs) - len(out)} genuinely have no description text")
+
 
 if __name__ == "__main__":
     main()
