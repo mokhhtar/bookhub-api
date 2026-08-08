@@ -175,6 +175,41 @@ def load_traits(path: str = OUT_PATH) -> dict[str, list[str]]:
     return saved.get("traits", saved)
 
 
+def apply_labels(book: dict, work_key: str,
+                 extracted: dict[str, list[str]]) -> None:
+    """Merge extracted labels into one book's `present` / `unknown` sets.
+
+    ONE implementation, imported by both `build_matrix.py`, which packs the
+    artifact the game ships, and `simulate.py`, which measures it. They had
+    a copy each, both of which omitted the unlabelled case below, and fixing
+    only one would have been worse than fixing neither: the simulator would
+    have been measuring a different game from the one being shipped, and
+    "the offline measurements describe the live game" is the whole reason
+    the simulator is trusted.
+
+    Three states, and all three are load-bearing:
+
+      asserted     -> present, P(yes) 0.90
+      not asserted -> unknown, because the model is told to omit whatever
+                      the description does not support. Silence is "the text
+                      did not say", never "no".
+      no entry     -> unknown as well. A book whose description was never
+                      harvested (1,352 of 5,000) has not been examined at
+                      all, which is the same absence of evidence, arrived at
+                      one step earlier.
+
+    The last case must be written out. Both callers pack "in neither set" as
+    ABSENT, so leaving it implicit asserts *no magic, not at sea, no
+    romance* about every unexamined book, on all sixteen trait columns.
+    """
+    labels = extracted.get(work_key or "")
+    if labels is None:
+        book["unknown"] = sorted(set(book["unknown"]) | set(TRAITS))
+        return
+    book["present"] = sorted(set(book["present"]) | set(labels))
+    book["unknown"] = sorted(set(book["unknown"]) | (set(TRAITS) - set(labels)))
+
+
 # ---------------------------------------------------------------------------
 # Batched prompting
 # ---------------------------------------------------------------------------

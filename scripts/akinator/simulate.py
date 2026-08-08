@@ -52,7 +52,7 @@ from author_traits import AUTHOR_QUESTIONS, book_traits, load_wikidata  # noqa: 
 from characters import extract_characters, usable_token          # noqa: E402
 from corpus_filter import filter_corpus                          # noqa: E402
 from site_books import supplement as site_supplement              # noqa: E402
-from traits import TRAIT_QUESTIONS, load_traits                   # noqa: E402
+from traits import TRAIT_QUESTIONS, apply_labels, load_traits     # noqa: E402
 from engine import Engine, Matrix                                # noqa: E402
 from work_traits import (WORK_QUESTIONS, load_protagonists,        # noqa: E402
                          load_works, merge_into)
@@ -149,16 +149,12 @@ def load_books(corpus_size: int = 0, with_author_traits: bool = True) -> list[di
             book["known_false"] = sorted(known_false)
             merge_into(book, doc, works, protagonists)
 
-            # A trait the model asserted is `present`; one it did not is
-            # `unknown`, NOT absent. The model was told to omit anything the
-            # description does not support, so silence means "the text did
-            # not say", which is exactly what unknown means. Reading it as a
-            # denial would turn a thin blurb into a claim about the book.
-            labels = extracted.get(doc.get("key") or "")
-            if labels is not None:
-                present = set(book["present"]) | set(labels)
-                unknown = set(book["unknown"]) | (set(TRAIT_QUESTIONS) - set(labels))
-                book["present"], book["unknown"] = sorted(present), sorted(unknown)
+            # A trait the model asserted is `present`; everything else is
+            # `unknown`, NOT absent — including books it never saw. Shared
+            # with build_matrix.py on purpose: this file measures the game
+            # that file ships, so a private copy of this rule is a way for
+            # the measurement to stop describing the artifact.
+            apply_labels(book, doc.get("key") or "", extracted)
 
         books.append(book)
     return books

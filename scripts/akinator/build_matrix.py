@@ -48,7 +48,7 @@ from work_traits import (WORK_QUESTIONS, load_protagonists,         # noqa: E402
 from characters import extract_characters, usable_token             # noqa: E402
 from corpus_filter import filter_corpus                             # noqa: E402
 from site_books import supplement as site_supplement                # noqa: E402
-from traits import TRAIT_QUESTIONS, load_traits                     # noqa: E402
+from traits import TRAIT_QUESTIONS, apply_labels, load_traits       # noqa: E402
 from series import VOLUME_DOMINANCE                                  # noqa: E402
 from features import (EXCLUSIVE_GROUPS, FORCE_KEEP,                  # noqa: E402
                       PRESENCE_CONFIDENCE,
@@ -154,23 +154,10 @@ def build_books(docs: list[dict]) -> tuple[list[dict], AuthorIndex]:
         book["known_false"] = sorted(known_false)
         merge_into(book, doc, works, protagonists)
 
-        # Asserted -> present; not asserted -> unknown, never absent. The
-        # model omits what the description does not support, so silence is
-        # "the text did not say", not "no".
-        #
-        # A book we never labelled at all takes the SAME third state, and the
-        # else branch is not optional: `pack_matrix` encodes "in neither set"
-        # as ABSENT, so leaving it out would assert "no magic, not at sea, no
-        # romance" about every book whose description was never harvested —
-        # 1,410 of 5,000, on all 16 trait columns at once. Unlabelled is
-        # "we did not look", which is what `unknown` is for.
-        labels = extracted.get(doc.get("key") or "")
-        if labels is not None:
-            book["present"] = sorted(set(book["present"]) | set(labels))
-            book["unknown"] = sorted(set(book["unknown"])
-                                     | (set(TRAIT_QUESTIONS) - set(labels)))
-        else:
-            book["unknown"] = sorted(set(book["unknown"]) | set(TRAIT_QUESTIONS))
+        # Asserted -> present, everything else -> unknown, never absent.
+        # Shared with simulate.py so the artifact and the measurement of it
+        # cannot drift apart; see traits.apply_labels.
+        apply_labels(book, doc.get("key") or "", extracted)
 
         keys = doc.get("author_key") or []
         ids = []
@@ -299,9 +286,16 @@ def main() -> None:
         for f in b["present"]:
             present_counts[f] = present_counts.get(f, 0) + 1
     sizes["questions.json"] = write("questions.json", [
+        # TRAIT_QUESTIONS belongs in this chain: without it a trait that
+        # clears the frequency floor ships with `q` as its own wording, and
+        # the player is asked "t:sea". simulate.py's lookup already had it,
+        # so the simulation printed the real question while the artifact
+        # would have carried the key — a divergence no offline run could
+        # show, because only the builder writes questions.json.
         {"id": q,
          "text": (QUESTION_TEXT.get(q) or STRUCTURAL_QUESTIONS.get(q)
-                  or AUTHOR_QUESTIONS.get(q) or WORK_QUESTIONS.get(q, q)),
+                  or AUTHOR_QUESTIONS.get(q) or WORK_QUESTIONS.get(q)
+                  or TRAIT_QUESTIONS.get(q, q)),
          "base": round(present_counts.get(q, 0) / max(1, len(books)), 4)}
         for q in questions
     ])
