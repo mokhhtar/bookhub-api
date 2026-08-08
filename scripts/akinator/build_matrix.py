@@ -157,11 +157,20 @@ def build_books(docs: list[dict]) -> tuple[list[dict], AuthorIndex]:
         # Asserted -> present; not asserted -> unknown, never absent. The
         # model omits what the description does not support, so silence is
         # "the text did not say", not "no".
+        #
+        # A book we never labelled at all takes the SAME third state, and the
+        # else branch is not optional: `pack_matrix` encodes "in neither set"
+        # as ABSENT, so leaving it out would assert "no magic, not at sea, no
+        # romance" about every book whose description was never harvested —
+        # 1,410 of 5,000, on all 16 trait columns at once. Unlabelled is
+        # "we did not look", which is what `unknown` is for.
         labels = extracted.get(doc.get("key") or "")
         if labels is not None:
             book["present"] = sorted(set(book["present"]) | set(labels))
             book["unknown"] = sorted(set(book["unknown"])
                                      | (set(TRAIT_QUESTIONS) - set(labels)))
+        else:
+            book["unknown"] = sorted(set(book["unknown"]) | set(TRAIT_QUESTIONS))
 
         keys = doc.get("author_key") or []
         ids = []
