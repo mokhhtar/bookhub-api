@@ -286,14 +286,20 @@ def supplement(docs: list[dict], pages: list[dict] | None = None,
         main = re.split(r"[:;]| - ", title, 1)[0]
         return normalize(main), surname_token(canonical_author(author))
 
-    have = {ident(d.get("title") or "", (d.get("author_name") or [""])[0])
-            for d in docs}
-    have_titles = {normalize(d.get("title") or "") for d in docs}
-    missing = [p for p in pages
-               if ident(p["title"], p["author"]) not in have
-               and normalize(p["title"]) not in have_titles]
-    if not missing:
-        return docs
+    by_ident: dict[tuple[str, str], dict] = {}
+    by_title: dict[str, dict] = {}
+    for d in docs:
+        by_ident.setdefault(ident(d.get("title") or "",
+                                  (d.get("author_name") or [""])[0]), d)
+        by_title.setdefault(normalize(d.get("title") or ""), d)
+
+    missing, matched = [], []
+    for p in pages:
+        hit = by_ident.get(ident(p["title"], p["author"]))             or by_title.get(normalize(p["title"]))
+        if hit is None:
+            missing.append(p)
+        else:
+            matched.append(hit)
 
     # Our own pages duplicate too — two published pages for Crime and
     # Punishment, three spellings of Fitzgerald across two Gatsby pages.
@@ -319,6 +325,24 @@ def supplement(docs: list[dict], pages: list[dict] | None = None,
     # pop_scale is ascending, corpus rank is descending — flip the band.
     top_val = pop_scale[max(0, len(pop_scale) - 1 - lo)]
     bot_val = pop_scale[max(0, len(pop_scale) - 1 - hi)]
+
+    # PROMOTE the matched ones too, not just add the absent ones.
+    #
+    # The first version skipped any published book that matched an existing
+    # corpus row, which is correct only if that row survives truncation. It
+    # often does not: a book we publish can sit at Open Library rank 8,000,
+    # so the supplement skipped it as "present" and the cut to 5,000 then
+    # dropped it. Thirteen published classics — Silas Marner, Vanity Fair,
+    # The Sea-Wolf, Moll Flanders — ended up in neither list, which is the
+    # exact outcome the supplement exists to prevent. Found by checking what
+    # the incremental sync would add: it should have been nothing.
+    #
+    # Promotion only ever raises a book INTO the band, never lowers one.
+    promoted = 0
+    for d in matched:
+        if (d.get("readinglog_count") or 0) < bot_val:
+            d["readinglog_count"] = bot_val
+            promoted += 1
 
     added = []
     n = max(1, len(ordered) - 1)
@@ -353,5 +377,6 @@ def supplement(docs: list[dict], pages: list[dict] | None = None,
     out = docs + added
     out.sort(key=lambda d: -(d.get("readinglog_count") or 0))
     if verbose:
-        print(f"Site pages: +{len(added)} books we publish that the corpus lacked")
+        print(f"Site pages: +{len(added)} added, {promoted} promoted into the "
+              f"shipped band (books we publish that ranked below it)")
     return out
