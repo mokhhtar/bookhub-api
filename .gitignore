@@ -65,3 +65,7 @@ venv/
 
 # Open Library cover ids, regenerable by fetch_covers.py.
 /data/akinator_covers.json
+
+# OL work descriptions for trait extraction, regenerable.
+/data/akinator_descriptions.json
+/data/akinator_descriptions_asked.json
