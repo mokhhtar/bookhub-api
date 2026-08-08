@@ -570,22 +570,23 @@ def absence_confidence(richness: int) -> float:
 PRESENCE_CONFIDENCE = 0.90   # a subject IS stated: strong but never certain
 UNKNOWN_CONFIDENCE = 0.50    # we genuinely cannot say
 
-# A fact we positively computed as FALSE, which is not the same thing as a
-# subject the record happens not to mention.
+# `known_false` — a fact we positively computed as FALSE, which is not the
+# same thing as a subject the record happens not to mention. The set is
+# still built (it is real information and `extract()` records it), but
+# **the engine deliberately scores it as ordinary absence**, so there is no
+# separate confidence constant here.
 #
-# THE BUG THIS FIXES, found by the owner playing the game (2026-08-07):
-# answering "yes" to "Is the author American?" was followed by "Is the
-# author from Asia, Africa, or Latin America?".
+# That is a measured decision, not an oversight. It was introduced to fix
+# the owner's report of "Is the author American? yes" being followed by "Is
+# the author from Asia, Africa, or Latin America?" — the reasoning being
+# that Wikidata saying American means certainly-not-African, while
+# `absence_confidence()` is calibrated for subjects, where a gap is weak
+# evidence. Sound reasoning; scoring it at 0.03 measured **41.7% against a
+# 63.3% baseline** at 5,000 books, because at that value a single
+# disagreeing answer very nearly eliminates the correct book, and players
+# disagree with library metadata about a quarter of the time.
 #
-# `absence_confidence()` is calibrated for SUBJECTS, where a gap is weak
-# evidence — Open Library may simply not have tagged a sea story. It was
-# also being applied to derived booleans, where a `False` means Wikidata
-# told us the author is American and therefore certainly not African. At
-# 0.15-0.45 the contradiction stayed well clear of the engine's
-# "everyone would answer the same way" filter at 0.02, so the question got
-# asked. Not a wording problem and not one question: every mutually
-# exclusive pair in the set could do it.
-#
-# Low but not zero, because our own derivation can be wrong — an author
-# with two nationalities, a mis-linked Wikidata item.
-KNOWN_FALSE_CONFIDENCE = 0.03
+# What actually fixed the contradiction was EXCLUSIVE_GROUPS above. Left
+# computed rather than deleted because a future use may want it — but if
+# you reintroduce a probability for it, measure first. Full account in
+# [[2026-08-07 — Akinator phase 4, and four measurement traps]].

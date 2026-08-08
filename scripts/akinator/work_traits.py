@@ -112,9 +112,11 @@ def merge_into(book: dict, doc: dict, works: dict[str, dict],
 
     Three destinations, not two. `None` goes to `unknown` (we cannot say);
     `False` goes to `known_false` (we positively determined it is not so).
-    Collapsing those two was the bug behind "is the author American? yes"
-    being followed by "is the author from Asia, Africa or Latin America?" —
-    see KNOWN_FALSE_CONFIDENCE in features.py.
+
+    The distinction is recorded but the engine currently scores
+    `known_false` exactly like ordinary absence — giving it its own low
+    probability measured much worse. See the note above
+    `EXCLUSIVE_GROUPS` in features.py before changing that.
     """
     present = set(book["present"])
     unknown = set(book["unknown"])

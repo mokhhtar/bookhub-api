@@ -32,6 +32,7 @@ import math
 
 from features import (EXCLUDES, PRESENCE_CONFIDENCE, UNKNOWN_CONFIDENCE,
                       absence_confidence)
+from series import VOLUME_DOMINANCE
 
 # The five answers a player can give, and how strongly each is trusted.
 # "probably" answers move belief in the same direction as a firm answer but
@@ -97,8 +98,18 @@ class Matrix:
     """
 
     def __init__(self, books: list[dict], questions: list[str],
-                 char_questions: list[str] | None = None):
+                 char_questions: list[str] | None = None,
+                 series_of: list[str | None] | None = None,
+                 series_names: dict[str, str] | None = None):
         self.books = books
+        # Series membership per book index, for guess-time pooling. Absent
+        # is fine — the engine simply never guesses a series.
+        self.series_of = series_of or [None] * len(books)
+        self.series_names = series_names or {}
+        self.series_members: dict[str, list[int]] = {}
+        for _i, _sid in enumerate(self.series_of):
+            if _sid:
+                self.series_members.setdefault(_sid, []).append(_i)
         self.questions = questions
         self.question_set = set(questions)
         self.char_questions = char_questions or []
@@ -368,6 +379,53 @@ class Engine:
         pairs = sorted(enumerate(self.belief), key=lambda x: -x[1])
         return pairs[:n]
 
+    # -- guessing, pooled by series ----------------------------------------
+
+    def series_belief(self) -> dict[str, float]:
+        """Total belief held by each series."""
+        out: dict[str, float] = {}
+        for sid, members in self.m.series_members.items():
+            out[sid] = sum(self.belief[i] for i in members)
+        return out
+
+    def guess_target(self, rejected: set | None = None) -> dict | None:
+        """What to name: a single book, or a whole series.
+
+        A series is named when the group has the belief but no volume in it
+        does. That is the case the owner hit — twelve Harry Potter rows each
+        holding a twelfth of the mass, so the game either kept asking or
+        eventually named a volume nobody was thinking of. "Harry Potter" is
+        never a wrong answer to someone thinking of Harry Potter.
+
+        A volume is still named when it genuinely dominates its group, so a
+        player who really did mean *Prisoner of Azkaban* can still get it.
+        """
+        rejected = rejected or set()
+
+        ranked = [(i, p) for i, p in self.ranking(20) if i not in rejected]
+        if not ranked:
+            return None
+        top_idx, top_p = ranked[0]
+
+        if top_p >= 0.85:
+            return {"kind": "book", "index": top_idx, "p": top_p}
+
+        totals = self.series_belief()
+        for sid, total in sorted(totals.items(), key=lambda x: -x[1]):
+            if sid in rejected or total < 0.85:
+                continue
+            members = [i for i in self.m.series_members[sid] if i not in rejected]
+            if not members:
+                continue
+            best = max(members, key=lambda i: self.belief[i])
+            if self.belief[best] / total >= VOLUME_DOMINANCE:
+                return {"kind": "book", "index": best, "p": self.belief[best]}
+            return {"kind": "series", "sid": sid,
+                    "name": self.m.series_names.get(sid, ""),
+                    "index": best, "p": total}
+
+        return {"kind": "book", "index": top_idx, "p": top_p}
+
     def should_guess(self, threshold: float = 0.85) -> bool:
         """Guess on absolute confidence, or on a decisive lead.
 
@@ -379,6 +437,11 @@ class Engine:
         top = self.ranking(2)
         if top[0][1] >= threshold:
             return True
+        # A series holding the mass counts as being ready to guess, even
+        # when no single volume does — which is the whole point of pooling.
+        if self.m.series_members:
+            if max(self.series_belief().values(), default=0.0) >= threshold:
+                return True
         if len(top) > 1 and top[1][1] > 0:
             return top[0][1] / top[1][1] >= 12 and top[0][1] >= 0.35
         return False
