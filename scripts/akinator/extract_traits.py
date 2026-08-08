@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 import time
@@ -102,6 +103,62 @@ def expected_traits(themes: list[str]) -> set[str]:
             if any(p.search(t) for p in pats for t in normed)}
 
 
+# How many whole batches may fail back-to-back before the run gives up.
+# On a healthy run failures are isolated; a run of them means the provider
+# is gone, not that these particular books are hard. Same idea, and the same
+# number, as harvest_descriptions.py.
+MAX_CONSECUTIVE_FAILURES = 6
+
+
+class _LastProviderError(logging.Handler):
+    """Remembers the last thing gemini_client complained about.
+
+    generate() logs each provider's real error and then raises a generic
+    "all providers exhausted", so by the time this script sees a failure the
+    reason is gone. Reading it back off the log is worth the small ugliness:
+    it is the difference between "stopped after 6 failures" and "the free
+    tier's 500 requests a day are spent", which decides whether the next run
+    is in one minute or tomorrow.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.WARNING)
+        # Three buckets, kept apart on purpose. One call logs THREE lines —
+        # the Gemini key's real error, then Groq's, then a generic "all
+        # providers failed" — so "most recent" is the least informative of
+        # the three. Keeping one field reported "all providers failed or
+        # returned empty" while the line two above it named the 500-a-day
+        # cap; keeping two still lost it, because Groq's own 429 carries no
+        # daily-quota marker and overwrote Gemini's. What is wanted is the
+        # most SPECIFIC line, not the last one.
+        self.last = ""
+        self.quota = ""      # any 429 / RESOURCE_EXHAUSTED
+        self.daily = ""      # a 429 that names a per-day quota
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            text = record.getMessage()
+        except Exception:  # noqa: BLE001
+            return
+        self.last = text
+        if "RESOURCE_EXHAUSTED" in text or "429" in text:
+            self.quota = text
+            if "PerDay" in text or "RequestsPerDay" in text:
+                self.daily = text
+
+    def diagnose(self) -> str:
+        if self.daily:
+            also = (" Groq is rate limited too, so there is no fallback left "
+                    "today." if "groq" in self.quota.lower() else "")
+            return ("the free tier's DAILY request cap is spent. It resets at "
+                    "midnight Pacific — resume then, or add keys to "
+                    "GEMINI_API_KEYS (each key has its own daily cap)." + also)
+        if self.quota:
+            return ("rate limited, with no per-day marker in the error. If it "
+                    "is the per-minute cap, raise --delay and resume now.")
+        return self.last[:200] if self.last else "no provider error was logged."
+
+
 def _generate(prompt: str, provider: str = "auto") -> str:
     """One completion. `provider` picks who answers.
 
@@ -147,17 +204,25 @@ def extract_batch(rows: list[tuple[str, str, str]],
     out-of-range index, malformed labels — is discarded WHOLE rather than
     salvaged. Partially-aligned labels would be attached to the wrong
     books, silently, which is worse than any number of failed calls.
+
+    THE FALLBACK IS FOR MISALIGNMENT, NOT FOR FAILURE. A model that replied
+    with seven entries for eight books may well answer correctly one book at
+    a time. A provider that raised — quota, timeout, outage — will raise
+    eight more times, and the run that hit the daily cap spent nine calls
+    per batch discovering that, over and over. So a raised call returns
+    None for the whole batch and lets the caller decide whether to go on.
     """
     try:
         raw = _generate(build_batch_prompt(rows), provider)
-        parsed = parse_batch_response(raw, len(rows))
-        if parsed is not None:
-            return parsed
-        print(f"    . batch of {len(rows)} did not align; retrying singly",
-              file=sys.stderr)
     except Exception as exc:  # noqa: BLE001
-        print(f"    ! batch failed ({str(exc)[:60]}); retrying singly",
-              file=sys.stderr)
+        print(f"    ! batch failed ({str(exc)[:70]})", file=sys.stderr)
+        return [None] * len(rows)
+
+    parsed = parse_batch_response(raw, len(rows))
+    if parsed is not None:
+        return parsed
+    print(f"    . batch of {len(rows)} did not align; retrying singly",
+          file=sys.stderr)
     return [extract_one(t, a, x, provider) for t, a, x in rows]
 
 
@@ -315,6 +380,13 @@ def main() -> None:
             if d.get("key") in descriptions and d["key"] not in out]
     print(f"{len(todo)} books with a description and no labels yet.\n")
 
+    # Watch the shared client's own log for the reason behind a failure.
+    watcher = _LastProviderError()
+    logging.getLogger("gemini_client").addHandler(watcher)
+    logging.getLogger().addHandler(watcher)
+
+    consecutive = 0
+    stopped_early = False
     for start in range(0, len(todo), args.batch):
         chunk = todo[start:start + args.batch]
         rows = [(d.get("title") or "", (d.get("author_name") or [""])[0],
@@ -326,13 +398,30 @@ def main() -> None:
                 continue      # failed: leave it for the next run
             out[doc["key"]] = labels
 
+        # A batch where nothing came back is a provider problem, not a
+        # property of these eight books. The first run to hit the daily cap
+        # kept going for 1,500 more books, ~190 batches, every one of them
+        # doomed, and reported a clean finish at the end.
+        if all(r is None for r in results):
+            consecutive += 1
+        else:
+            consecutive = 0
+
         i = start + len(chunk)
-        if True:
-            with open(args.out, "w", encoding="utf-8") as fh:
-                json.dump({"traits": out}, fh, ensure_ascii=False)
-            labelled = sum(1 for v in out.values() if v)
-            print(f"  {i:>5}/{len(todo)}   {len(out)} done, "
-                  f"{labelled} with at least one label")
+        with open(args.out, "w", encoding="utf-8") as fh:
+            json.dump({"traits": out}, fh, ensure_ascii=False)
+        labelled = sum(1 for v in out.values() if v)
+        print(f"  {i:>5}/{len(todo)}   {len(out)} done, "
+              f"{labelled} with at least one label")
+
+        if consecutive >= MAX_CONSECUTIVE_FAILURES:
+            print(f"\n! {consecutive} batches in a row returned nothing — "
+                  f"stopping at {i}/{len(todo)}.", file=sys.stderr)
+            print(f"  Why: {watcher.diagnose()}", file=sys.stderr)
+            print(f"  {len(out)} books are saved. Re-run to resume from here; "
+                  f"nothing is lost.", file=sys.stderr)
+            stopped_early = True
+            break
         time.sleep(args.delay)
 
     with open(args.out, "w", encoding="utf-8") as fh:
@@ -343,7 +432,27 @@ def main() -> None:
         for l in labels:
             counts[l] = counts.get(l, 0) + 1
     print(f"\n{len(out)} books labelled -> {args.out}")
+
+    # Say what is still missing, in the same breath as what was done. The
+    # count above is the number that looks like success; the one below is
+    # the one that decides whether a trait can clear the 5% floor.
+    remaining = [d for d in docs
+                 if d.get("key") in descriptions and d["key"] not in out]
+    if remaining:
+        state = "STOPPED EARLY" if stopped_early else "not reached"
+        print(f"  {len(remaining)} book(s) with a description are still "
+              f"unlabelled ({state}). Re-run to continue.")
+    else:
+        print("  every book with a description is labelled.")
+    no_text = sum(1 for d in docs if d.get("key") not in descriptions)
+    print(f"  {no_text} book(s) have no description at all and cannot be "
+          f"labelled from prose — they stay `unknown`, never absent.")
+
+    # Percentages are of labelled books, not of the corpus. The floor is a
+    # share of all 5,000, so a trait at 8% here is nearer 4% there while
+    # coverage is partial — see the frequency column after a rebuild.
     n = max(1, len(out))
+    print(f"\n  share of the {n} LABELLED books (not of the corpus):")
     for key, (question, _defn) in TRAITS.items():
         c = counts.get(key, 0)
         print(f"  {c * 100 // n:>3}%  {key:<14} {question}")

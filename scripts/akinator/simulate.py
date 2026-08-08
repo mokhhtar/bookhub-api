@@ -104,7 +104,8 @@ def load_docs(corpus_size: int = 0) -> list[dict]:
     return docs[:corpus_size] if corpus_size else docs
 
 
-def load_books(corpus_size: int = 0, with_author_traits: bool = True) -> list[dict]:
+def load_books(corpus_size: int = 0, with_author_traits: bool = True,
+               with_traits: bool = True) -> list[dict]:
     docs = load_docs(corpus_size)
     n = len(docs)
 
@@ -115,7 +116,13 @@ def load_books(corpus_size: int = 0, with_author_traits: bool = True) -> list[di
     protagonists = load_protagonists() if with_author_traits else {}
     # Model-extracted traits, if the extraction has been run. Absent file =
     # the game simply has fewer questions, never wrong ones.
-    extracted = load_traits() if with_author_traits else {}
+    #
+    # `with_traits` exists to answer one question honestly: does the trait
+    # extraction actually shorten a game? That needs the same seed, the same
+    # corpus and the same books, with only the traits removed. Deleting the
+    # file to find out would also destroy hours of quota, and comparing two
+    # runs from different days compares the weather.
+    extracted = load_traits() if (with_author_traits and with_traits) else {}
     book_counts: dict[str, int] = {}
     for doc in docs:
         for key in doc.get("author_key") or []:
@@ -278,6 +285,9 @@ def main() -> None:
                     help="chance the player hedges on a question")
     ap.add_argument("--miss-rate", type=float, default=0.25,
                     help="chance the player asserts a feature OL never recorded")
+    ap.add_argument("--no-traits", action="store_true",
+                    help="ignore the model-extracted traits. Run it with and "
+                         "without, same --seed, to measure what they buy.")
     ap.add_argument("--no-characters", action="store_true",
                     help="disable endgame character questions (for A/B)")
     ap.add_argument("--seed", type=int, default=7)
@@ -288,7 +298,7 @@ def main() -> None:
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
-    books = load_books(args.corpus_size)
+    books = load_books(args.corpus_size, with_traits=not args.no_traits)
     verbose = not args.quiet
     if verbose:
         print(f"Corpus: {len(books)} books\n")
