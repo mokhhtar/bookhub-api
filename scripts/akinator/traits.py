@@ -173,3 +173,93 @@ def load_traits(path: str = OUT_PATH) -> dict[str, list[str]]:
     with open(path, encoding="utf-8") as fh:
         saved = json.load(fh)
     return saved.get("traits", saved)
+
+
+# ---------------------------------------------------------------------------
+# Batched prompting
+# ---------------------------------------------------------------------------
+# The vocabulary is 575 tokens and the book is 201. Sending one book per call
+# pays the vocabulary 3,590 times over — 2.79M tokens for the corpus, which
+# on a free tier is measured in days rather than hours. Stating it once and
+# labelling several books against it costs ~316 tokens a book at five, ~258
+# at ten: a 2.5-3x reduction for no loss of information.
+#
+# Eight is the size used. The marginal saving past that is small while the
+# blast radius of a malformed reply keeps growing, and a model asked to hold
+# more than a handful of books in one answer starts blurring them together.
+BATCH_SIZE = 8
+
+
+def build_batch_prompt(books: list[tuple[str, str, str]]) -> str:
+    """One prompt, several books. `books` is [(title, author, text), ...]."""
+    lines = [f'- "{k}": {defn}' for k, (_q, defn) in TRAITS.items()]
+    blocks = []
+    for i, (title, author, text) in enumerate(books, 1):
+        blocks.append(f"### BOOK {i}\nTITLE: {title}\nAUTHOR: {author}\n"
+                      f"DESCRIPTION: {text}")
+    return (
+        "You are labelling books for a guessing game, using ONLY each book's "
+        "own description below.\n\n"
+        "LABELS:\n" + "\n".join(lines) + "\n\n"
+        + "\n\n".join(blocks) + "\n\n"
+        "Rules, in order of importance:\n"
+        "1. Judge each book ONLY from its own description. Never let one "
+        "book's description influence another's labels.\n"
+        "2. Answer only from the descriptions. Do not use anything you know "
+        "about these books from elsewhere.\n"
+        "3. If a description does not make a label clear, LEAVE IT OUT. "
+        "Omitting is always better than guessing — a wrong label removes the "
+        "correct book from the game.\n"
+        "4. A book whose description is too short or vague gets an empty "
+        "list. That is a valid answer.\n"
+        f"5. Return exactly {len(books)} entries, numbered 1 to {len(books)}, "
+        "in the same order as the books above.\n\n"
+        'Reply with JSON only, in this exact shape:\n'
+        '{"books": [{"n": 1, "labels": ["t:sea"]}, {"n": 2, "labels": []}]}\n'
+    )
+
+
+def parse_batch_response(raw: str, expected: int) -> list[list[str]] | None:
+    """Batch reply -> one validated label list per book, or None.
+
+    None means "do not trust any of this" and the caller should retry the
+    batch one book at a time. Returning a partially-aligned list would be
+    the worst outcome available: labels silently attached to the wrong
+    books, which is exactly the failure the whole grounding discipline
+    exists to avoid.
+    """
+    if not raw:
+        return None
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.split("```")[1] if "```" in text[3:] else text[3:]
+        text = text.split("\n", 1)[-1] if text.lower().startswith("json") else text
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        data = json.loads(text[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+
+    rows = data.get("books")
+    if not isinstance(rows, list) or len(rows) != expected:
+        return None
+
+    out: list[list[str] | None] = [None] * expected
+    for row in rows:
+        if not isinstance(row, dict):
+            return None
+        n = row.get("n")
+        if not isinstance(n, int) or not (1 <= n <= expected):
+            return None
+        if out[n - 1] is not None:
+            return None          # duplicate index: alignment is not provable
+        labels = row.get("labels")
+        if not isinstance(labels, list):
+            return None
+        out[n - 1] = sorted({l for l in labels
+                             if isinstance(l, str) and l in TRAITS})
+    if any(v is None for v in out):
+        return None
+    return out  # type: ignore[return-value]

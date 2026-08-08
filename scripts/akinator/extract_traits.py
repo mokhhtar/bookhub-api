@@ -42,8 +42,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(
 
 from features import normalize                      # noqa: E402
 from site_books import load_site_books              # noqa: E402
-from traits import (OUT_PATH, TRAITS, build_prompt,  # noqa: E402
-                    parse_response)
+from traits import (BATCH_SIZE, OUT_PATH, TRAITS,      # noqa: E402
+                    build_batch_prompt, build_prompt,
+                    parse_batch_response, parse_response)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CORPUS_PATH = os.path.join(REPO_ROOT, "data", "akinator_corpus.jsonl")
@@ -67,32 +68,73 @@ CALIBRATION_HINTS = {
 }
 
 
-def _generate(prompt: str) -> str:
+def _generate(prompt: str, provider: str = "auto") -> str:
+    """One completion. `provider` picks who answers.
+
+    "auto" is the shared client's normal chain: every Gemini key, then Groq.
+    Correct in production, wasteful here — once Gemini's daily quota is
+    spent, every single call burns a doomed Gemini attempt (and its
+    backoff) before reaching the provider that can actually answer. Over
+    5,000 books that is hours of failing on purpose.
+
+    "groq" goes straight there. Gemini's free tier allows 15 requests a
+    minute per key, which is 5.6 hours for the corpus on one key and is
+    what pushed this to a switch rather than a preference.
+    """
+    if provider == "groq":
+        from gemini_client import DEFAULT_CONFIG, _groq_generate
+        text = _groq_generate(prompt, DEFAULT_CONFIG)
+        if not text:
+            raise RuntimeError("Groq returned nothing (key set? quota left?)")
+        return text
     from gemini_client import generate
     return generate(prompt)
 
 
-def extract_one(title: str, author: str, text: str) -> list[str] | None:
+def extract_one(title: str, author: str, text: str,
+                provider: str = "auto") -> list[str] | None:
     """Labels for one book, or None when the call failed.
 
     None and [] are different and both are kept: a failed call should be
     retried on the next run, while a genuine empty answer should not.
     """
     try:
-        return parse_response(_generate(build_prompt(title, author, text)))
+        return parse_response(_generate(build_prompt(title, author, text), provider))
     except Exception as exc:  # noqa: BLE001
         print(f"    ! {title[:40]}: {str(exc)[:70]}", file=sys.stderr)
         return None
 
 
-def calibrate(delay: float) -> None:
+def extract_batch(rows: list[tuple[str, str, str]],
+                  provider: str) -> list[list[str] | None]:
+    """Label several books in one call, falling back to one at a time.
+
+    A batch reply that does not align exactly — wrong count, duplicate or
+    out-of-range index, malformed labels — is discarded WHOLE rather than
+    salvaged. Partially-aligned labels would be attached to the wrong
+    books, silently, which is worse than any number of failed calls.
+    """
+    try:
+        raw = _generate(build_batch_prompt(rows), provider)
+        parsed = parse_batch_response(raw, len(rows))
+        if parsed is not None:
+            return parsed
+        print(f"    . batch of {len(rows)} did not align; retrying singly",
+              file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001
+        print(f"    ! batch failed ({str(exc)[:60]}); retrying singly",
+              file=sys.stderr)
+    return [extract_one(t, a, x, provider) for t, a, x in rows]
+
+
+def calibrate(delay: float, provider: str = "auto") -> None:
     """Measure the model against themes a human already reviewed."""
     pages = [p for p in load_site_books() if p.get("themes") and p.get("prose")]
     print(f"Calibrating on {len(pages)} published pages with themes.\n")
 
     hit = miss = extra = 0
     for i, p in enumerate(pages, 1):
-        labels = extract_one(p["title"], p["author"], p["prose"][:4000])
+        labels = extract_one(p["title"], p["author"], p["prose"][:4000], provider)
         if labels is None:
             continue
         got = set(labels)
@@ -133,12 +175,35 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--calibrate", action="store_true")
     ap.add_argument("--limit", type=int, default=5000)
-    ap.add_argument("--delay", type=float, default=0.5)
+    # 4.2s, not 0.5. The free tier allows FIFTEEN requests per minute per
+    # key for gemini-3.1-flash-lite, and the first calibration run at 0.25s
+    # (240/min) had most of its calls rejected with 429 — it produced a
+    # number that looked like a measurement and was mostly failures. A
+    # default that silently exceeds the quota is worse than a slow one.
+    #
+    # Cost at this rate, single key: 9 minutes for the 129-page calibration,
+    # about 5.6 hours for the full 5,000. Resumable, so it can be run in
+    # pieces, and it is popularity-ordered so a partial run covers the books
+    # players actually think of.
+    ap.add_argument("--delay", type=float, default=4.2,
+                    help="seconds between calls; 4.2 keeps one key inside "
+                         "the 15/min free-tier quota. Lower it only if "
+                         "GEMINI_API_KEYS holds several keys.")
+    ap.add_argument("--batch", type=int, default=BATCH_SIZE,
+                    help="books per call. The trait vocabulary is 575 tokens "
+                         "against 201 for a book, so sending one at a time "
+                         "pays the vocabulary 3,590 times over — 2.79M "
+                         "tokens for the corpus against 1.13M at five. Set 1 "
+                         "to disable.")
+    ap.add_argument("--provider", choices=["auto", "groq"], default="auto",
+                    help="'groq' skips the Gemini attempts entirely. Use it "
+                         "once Gemini's daily quota is spent — otherwise "
+                         "every call pays for a doomed Gemini try first.")
     ap.add_argument("--out", default=OUT_PATH)
     args = ap.parse_args()
 
     if args.calibrate:
-        calibrate(args.delay)
+        calibrate(args.delay, args.provider)
         return
 
     if not os.path.exists(DESC_PATH):
@@ -170,16 +235,19 @@ def main() -> None:
             if d.get("key") in descriptions and d["key"] not in out]
     print(f"{len(todo)} books with a description and no labels yet.\n")
 
-    for i, doc in enumerate(todo, 1):
-        key = doc["key"]
-        labels = extract_one(doc.get("title") or "",
-                             (doc.get("author_name") or [""])[0],
-                             descriptions[key])
-        if labels is None:
-            continue          # failed call: leave it for the next run
-        out[key] = labels
+    for start in range(0, len(todo), args.batch):
+        chunk = todo[start:start + args.batch]
+        rows = [(d.get("title") or "", (d.get("author_name") or [""])[0],
+                 descriptions[d["key"]]) for d in chunk]
+        results = extract_batch(rows, args.provider) if args.batch > 1 else             [extract_one(*r, args.provider) for r in rows]
 
-        if i % 25 == 0 or i == len(todo):
+        for doc, labels in zip(chunk, results):
+            if labels is None:
+                continue      # failed: leave it for the next run
+            out[doc["key"]] = labels
+
+        i = start + len(chunk)
+        if True:
             with open(args.out, "w", encoding="utf-8") as fh:
                 json.dump({"traits": out}, fh, ensure_ascii=False)
             labelled = sum(1 for v in out.values() if v)
