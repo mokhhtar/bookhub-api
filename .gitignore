@@ -73,3 +73,9 @@ venv/
 # Hand-labelled trait batches (input to manual_traits.py ingest).
 /data/_labels_batch*.json
 /data/akinator_traits.json
+
+# Saved calibration run — the model's own answers on our published pages,
+# kept so re-scoring them against changed CALIBRATION_HINTS costs nothing.
+# Regenerable by scripts/akinator/extract_traits.py --calibrate, but that
+# is 129 calls of a 15-a-minute quota, so it is worth not deleting.
+/data/akinator_calibration.json

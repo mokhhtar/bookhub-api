@@ -40,7 +40,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))))
 
-from features import normalize                      # noqa: E402
+from features import _compile, normalize            # noqa: E402
 from site_books import load_site_books              # noqa: E402
 from traits import (BATCH_SIZE, OUT_PATH, TRAITS,      # noqa: E402
                     build_batch_prompt, build_prompt,
@@ -49,23 +49,57 @@ from traits import (BATCH_SIZE, OUT_PATH, TRAITS,      # noqa: E402
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CORPUS_PATH = os.path.join(REPO_ROOT, "data", "akinator_corpus.jsonl")
 DESC_PATH = os.path.join(REPO_ROOT, "data", "akinator_descriptions.json")
+CALIBRATION_PATH = os.path.join(REPO_ROOT, "data", "akinator_calibration.json")
 
 # Which of our editorial theme phrases assert which trait. Used ONLY by
 # --calibrate, to check the model against a human judgment — never to
 # produce labels, because it would inherit the sparsity that makes our
 # themes unusable as features in the first place.
+#
+# MATCHED WHOLE-WORD, via features._compile — the same matcher, and the same
+# reason, as the subject rules. The first version of this table substring-
+# matched and the resulting "40% missed" was not a measurement of the model:
+# "sea" matched *Search for meaning* and *Nature and the seasons*, "war"
+# matched *Cowardice* (co-war-dice). The model declining those is correct,
+# and it was scored as a failure to read. A trailing '*' means stem.
+#
+# NEEDLES REMOVED, each because the theme does not assert the trait AS
+# DEFINED in traits.py — not because the model disagreed with them:
+#   t:war       "conflict"  — *Father-son conflict*, *Moral conflict* are
+#                             not wars; the definition says armed conflict.
+#   t:child     "innocence" — *American innocence*, *Corruption of
+#                             innocence* say nothing about the protagonist's
+#                             age, which is what the trait claims.
+#   t:survival  "isolation" — *Social isolation*, *Isolation and madness*
+#                             are not a hostile environment to survive.
+#   t:detective "crime"     — *Crime and punishment*, *Poverty and crime*
+#                             assert no investigation.
+#   t:funny     "absurd"    — *The absurdity of existence* is Camus, not a
+#                             book written to be humorous.
+# "warfare" is now listed explicitly: whole-word "war" no longer reaches it.
 CALIBRATION_HINTS = {
-    "t:sea": ["sea", "ocean", "voyage", "sailing", "maritime", "shipwreck"],
-    "t:magic": ["magic", "sorcery", "witch", "supernatural", "enchant"],
-    "t:war": ["war", "battle", "conflict", "military"],
-    "t:romance": ["love", "romance", "courtship"],
-    "t:survival": ["survival", "endurance", "isolation"],
-    "t:family": ["family", "parent", "sibling", "marriage"],
-    "t:child": ["childhood", "coming of age", "growing up", "innocence"],
-    "t:funny": ["satire", "humor", "humour", "comic", "absurd"],
-    "t:detective": ["mystery", "detective", "investigation", "crime"],
+    "t:sea": ["sea", "ocean", "voyage", "sail*", "maritime", "shipwreck"],
+    "t:magic": ["magic*", "sorcer*", "witch*", "supernatural", "enchant*"],
+    "t:war": ["war", "warfare", "battle", "military"],
+    "t:romance": ["love", "romance", "romantic", "courtship"],
+    "t:survival": ["survival", "surviv*", "endurance"],
+    "t:family": ["family", "parent*", "sibling*", "marriage"],
+    "t:child": ["childhood", "coming of age", "growing up"],
+    "t:funny": ["satire", "satirical", "humor", "humour", "comic", "comedy"],
+    "t:detective": ["mystery", "detective", "investigation"],
     "t:realevents": ["historical", "biography", "memoir", "true story"],
 }
+
+# Compiled once, same idiom as features._RULE_INDEX.
+_HINT_INDEX = {key: [_compile(n) for n in needles]
+               for key, needles in CALIBRATION_HINTS.items()}
+
+
+def expected_traits(themes: list[str]) -> set[str]:
+    """Which traits our human-reviewed themes assert."""
+    normed = [normalize(t) for t in themes]
+    return {key for key, pats in _HINT_INDEX.items()
+            if any(p.search(t) for p in pats for t in normed)}
 
 
 def _generate(prompt: str, provider: str = "auto") -> str:
@@ -127,35 +161,18 @@ def extract_batch(rows: list[tuple[str, str, str]],
     return [extract_one(t, a, x, provider) for t, a, x in rows]
 
 
-def calibrate(delay: float, provider: str = "auto") -> None:
-    """Measure the model against themes a human already reviewed."""
-    pages = [p for p in load_site_books() if p.get("themes") and p.get("prose")]
-    print(f"Calibrating on {len(pages)} published pages with themes.\n")
-
+def _score(rows: list[dict]) -> None:
+    """Print the comparison. `rows` is [{title, themes, labels}, ...]."""
     hit = miss = extra = 0
-    for i, p in enumerate(pages, 1):
-        labels = extract_one(p["title"], p["author"], p["prose"][:4000], provider)
-        if labels is None:
-            continue
-        got = set(labels)
-
-        # What our human-reviewed themes assert.
-        normed = [normalize(t) for t in p["themes"]]
-        expected = {
-            key for key, needles in CALIBRATION_HINTS.items()
-            if any(any(n in t for n in needles) for t in normed)
-        }
-
+    misses: list[tuple[str, str]] = []
+    for r in rows:
+        got = set(r["labels"])
+        expected = expected_traits(r["themes"])
         hit += len(expected & got)
         miss += len(expected - got)
         extra += len(got - expected)
-
-        if i % 10 == 0 or i == len(pages):
-            total = hit + miss
-            print(f"  {i:>4}/{len(pages)}   agreed {hit}, "
-                  f"MISSED {miss} ({miss * 100 // max(1, total)}% of asserted), "
-                  f"model-only {extra}")
-        time.sleep(delay)
+        for key in sorted(expected - got):
+            misses.append((key, r["title"]))
 
     total = hit + miss
     print()
@@ -169,11 +186,70 @@ def calibrate(delay: float, provider: str = "auto") -> None:
     print("  judgments the model failed to read. Model-only labels are")
     print("  often correct: our themes list four per book and are sparse")
     print("  by design, so 'the sea' can be true and simply unlisted.")
+    if misses:
+        by_trait: dict[str, list[str]] = {}
+        for key, title in misses:
+            by_trait.setdefault(key, []).append(title)
+        print("\n  What was missed, so the number can be argued with:")
+        for key, titles in sorted(by_trait.items(), key=lambda x: -len(x[1])):
+            shown = ", ".join(t[:34] for t in titles[:4])
+            more = f" +{len(titles) - 4}" if len(titles) > 4 else ""
+            print(f"    {key:<14} {len(titles):>3}  {shown}{more}")
+
+
+def calibrate(delay: float, provider: str = "auto",
+              save_path: str = CALIBRATION_PATH) -> None:
+    """Measure the model against themes a human already reviewed.
+
+    The model's answers are SAVED. Scoring them is pure judgment — which
+    theme phrase asserts which trait — and that judgment was wrong the first
+    time round (see CALIBRATION_HINTS). Re-scoring a saved run costs
+    nothing; re-running the model to change one's mind about a keyword costs
+    129 calls of a 15-a-minute quota, which is how a measurement ends up
+    unchallenged.
+    """
+    pages = [p for p in load_site_books() if p.get("themes") and p.get("prose")]
+    print(f"Calibrating on {len(pages)} published pages with themes.\n")
+
+    rows: list[dict] = []
+    failed = 0
+    for i, p in enumerate(pages, 1):
+        labels = extract_one(p["title"], p["author"], p["prose"][:4000], provider)
+        if labels is None:
+            failed += 1          # a failed call is not an empty answer
+            continue
+        rows.append({"title": p["title"], "themes": p["themes"],
+                     "labels": labels})
+        if i % 10 == 0 or i == len(pages):
+            print(f"  {i:>4}/{len(pages)}   {len(rows)} scored, {failed} failed")
+        time.sleep(delay)
+
+    with open(save_path, "w", encoding="utf-8") as fh:
+        json.dump({"pages": rows}, fh, ensure_ascii=False, indent=1)
+    print(f"\nsaved {len(rows)} model answers -> {save_path}")
+    if failed:
+        print(f"  {failed} call(s) failed and are excluded, not counted as "
+              f"empty answers")
+    _score(rows)
+
+
+def rescore(path: str = CALIBRATION_PATH) -> None:
+    """Re-score a saved calibration run against the current hints. No calls."""
+    if not os.path.exists(path):
+        print(f"No saved calibration at {path} — run --calibrate first.")
+        return
+    with open(path, encoding="utf-8") as fh:
+        rows = json.load(fh)["pages"]
+    print(f"Re-scoring {len(rows)} saved model answers. No API calls.")
+    _score(rows)
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--calibrate", action="store_true")
+    ap.add_argument("--rescore", action="store_true",
+                    help="re-score the last --calibrate run against the "
+                         "current CALIBRATION_HINTS, without any API calls.")
     ap.add_argument("--limit", type=int, default=5000)
     # 4.2s, not 0.5. The free tier allows FIFTEEN requests per minute per
     # key for gemini-3.1-flash-lite, and the first calibration run at 0.25s
@@ -201,6 +277,10 @@ def main() -> None:
                          "every call pays for a doomed Gemini try first.")
     ap.add_argument("--out", default=OUT_PATH)
     args = ap.parse_args()
+
+    if args.rescore:
+        rescore()
+        return
 
     if args.calibrate:
         calibrate(args.delay, args.provider)
