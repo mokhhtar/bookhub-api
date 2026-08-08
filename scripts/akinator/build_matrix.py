@@ -48,6 +48,7 @@ from work_traits import (WORK_QUESTIONS, load_protagonists,         # noqa: E402
 from characters import extract_characters, usable_token             # noqa: E402
 from corpus_filter import filter_corpus                             # noqa: E402
 from site_books import supplement as site_supplement                # noqa: E402
+from traits import TRAIT_QUESTIONS, load_traits                     # noqa: E402
 from series import VOLUME_DOMINANCE                                  # noqa: E402
 from features import (EXCLUSIVE_GROUPS, FORCE_KEEP,                  # noqa: E402
                       PRESENCE_CONFIDENCE,
@@ -121,6 +122,9 @@ def build_books(docs: list[dict]) -> tuple[list[dict], AuthorIndex]:
     wd = load_wikidata()
     works = load_works()
     protagonists = load_protagonists()
+    extracted = load_traits()
+    if extracted:
+        print(f"Extracted traits: {len(extracted)} books labelled by the model")
     book_counts: dict[str, int] = {}
     for doc in docs:
         for key in doc.get("author_key") or []:
@@ -149,6 +153,15 @@ def build_books(docs: list[dict]) -> tuple[list[dict], AuthorIndex]:
         book["unknown"] = sorted(unknown)
         book["known_false"] = sorted(known_false)
         merge_into(book, doc, works, protagonists)
+
+        # Asserted -> present; not asserted -> unknown, never absent. The
+        # model omits what the description does not support, so silence is
+        # "the text did not say", not "no".
+        labels = extracted.get(doc.get("key") or "")
+        if labels is not None:
+            book["present"] = sorted(set(book["present"]) | set(labels))
+            book["unknown"] = sorted(set(book["unknown"])
+                                     | (set(TRAIT_QUESTIONS) - set(labels)))
 
         keys = doc.get("author_key") or []
         ids = []

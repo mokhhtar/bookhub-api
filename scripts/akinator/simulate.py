@@ -52,6 +52,7 @@ from author_traits import AUTHOR_QUESTIONS, book_traits, load_wikidata  # noqa: 
 from characters import extract_characters, usable_token          # noqa: E402
 from corpus_filter import filter_corpus                          # noqa: E402
 from site_books import supplement as site_supplement              # noqa: E402
+from traits import TRAIT_QUESTIONS, load_traits                   # noqa: E402
 from engine import Engine, Matrix                                # noqa: E402
 from work_traits import (WORK_QUESTIONS, load_protagonists,        # noqa: E402
                          load_works, merge_into)
@@ -112,6 +113,9 @@ def load_books(corpus_size: int = 0, with_author_traits: bool = True) -> list[di
     wd = load_wikidata() if with_author_traits else {}
     works = load_works() if with_author_traits else {}
     protagonists = load_protagonists() if with_author_traits else {}
+    # Model-extracted traits, if the extraction has been run. Absent file =
+    # the game simply has fewer questions, never wrong ones.
+    extracted = load_traits() if with_author_traits else {}
     book_counts: dict[str, int] = {}
     for doc in docs:
         for key in doc.get("author_key") or []:
@@ -145,6 +149,17 @@ def load_books(corpus_size: int = 0, with_author_traits: bool = True) -> list[di
             book["known_false"] = sorted(known_false)
             merge_into(book, doc, works, protagonists)
 
+            # A trait the model asserted is `present`; one it did not is
+            # `unknown`, NOT absent. The model was told to omit anything the
+            # description does not support, so silence means "the text did
+            # not say", which is exactly what unknown means. Reading it as a
+            # denial would turn a thin blurb into a claim about the book.
+            labels = extracted.get(doc.get("key") or "")
+            if labels is not None:
+                present = set(book["present"]) | set(labels)
+                unknown = set(book["unknown"]) | (set(TRAIT_QUESTIONS) - set(labels))
+                book["present"], book["unknown"] = sorted(present), sorted(unknown)
+
         books.append(book)
     return books
 
@@ -168,7 +183,8 @@ def select_questions(books: list[dict], verbose: bool = True) -> list[str]:
               f"kept {len(kept)}, dropped {len(dropped)}")
         for key, freq in sorted(kept, key=lambda x: -x[1])[:12]:
             label = (QUESTION_TEXT.get(key) or STRUCTURAL_QUESTIONS.get(key)
-                     or AUTHOR_QUESTIONS.get(key) or WORK_QUESTIONS.get(key, key))
+                     or AUTHOR_QUESTIONS.get(key) or WORK_QUESTIONS.get(key)
+                     or TRAIT_QUESTIONS.get(key, key))
             print(f"     {freq:5.1%}  {label}")
         print(f"     ... and {max(0, len(kept) - 12)} more")
     return [k for k, _ in kept]
