@@ -42,10 +42,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from author_traits import AUTHOR_QUESTIONS, book_traits, load_wikidata  # noqa: E402
 from authors import AuthorIndex                                     # noqa: E402
+from series import series_for_docs                                  # noqa: E402
 from work_traits import (WORK_QUESTIONS, load_protagonists,         # noqa: E402
                          load_works, merge_into)
 from characters import extract_characters, usable_token             # noqa: E402
 from corpus_filter import filter_corpus                             # noqa: E402
+from series import VOLUME_DOMINANCE                                  # noqa: E402
 from features import (EXCLUSIVE_GROUPS, FORCE_KEEP,                  # noqa: E402
                       PRESENCE_CONFIDENCE,
                       QUESTION_TEXT, STRUCTURAL_QUESTIONS,
@@ -53,6 +55,7 @@ from features import (EXCLUSIVE_GROUPS, FORCE_KEEP,                  # noqa: E40
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CORPUS_PATH = os.path.join(REPO_ROOT, "data", "akinator_corpus.jsonl")
+COVERS_PATH = os.path.join(REPO_ROOT, "data", "akinator_covers.json")
 DEFAULT_OUT = os.path.join(REPO_ROOT, "data", "akinator_build")
 
 # Same band as the Phase 0 gate: rarer than this splits nothing, commoner
@@ -88,6 +91,20 @@ def load_corpus(path: str) -> list[dict]:
     # Filter before the caller truncates, so dropping a workbook promotes a
     # real book into the shipped corpus instead of leaving a hole.
     return filter_corpus(docs)
+
+
+def load_covers(path: str = COVERS_PATH) -> dict[str, int]:
+    """work key -> Open Library cover id, from fetch_covers.py.
+
+    A separate file rather than a corpus field: `cover_i` was not in the
+    original fetch, and a partial cover run must never be able to damage
+    the corpus itself.
+    """
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as fh:
+        saved = json.load(fh)
+    return saved.get("covers", saved)
 
 
 def build_books(docs: list[dict]) -> tuple[list[dict], AuthorIndex]:
@@ -196,7 +213,12 @@ def main() -> None:
         docs = docs[:args.limit]
     print(f"Corpus: {len(docs)} books")
 
+    covers = load_covers()
     books, authors = build_books(docs)
+    if covers:
+        have = sum(1 for b in books if covers.get(b["key"]))
+        print(f"Covers: {have}/{len(books)} books have one "
+              f"({have * 100 // max(1, len(books))}%)")
     questions = select_features(books)
     print(f"Questions kept: {len(questions)}")
 
@@ -266,6 +288,10 @@ def main() -> None:
             "p": b["popularity"],
             "r": b["richness"],
             "w": b["wikidata"],
+            # Open Library cover id. The page builds the image URL from it;
+            # storing the id rather than the URL keeps books.json small and
+            # lets the size suffix be chosen at display time.
+            "c": covers.get(b["key"]),
         }
         for b in books
     ])
@@ -284,6 +310,17 @@ def main() -> None:
                      "c": a["book_count"]} for a in author_rows],
         "books": [b["author_ids"] for b in books],
     })
+    # Series grouping, so the page can name "Harry Potter" instead of
+    # picking one of its twelve volumes. Index-aligned with books.json.
+    series_of, series_names = series_for_docs(docs)
+    grouped = sum(1 for s in series_of if s)
+    print(f"Series: {grouped} books in {len(series_names)} named groups")
+    sizes["series.json"] = write("series.json", {
+        "names": series_names,
+        "books": series_of,
+        "volume_dominance": VOLUME_DOMINANCE,
+    })
+
     sizes["meta.json"] = write("meta.json", {
         "version": 1,
         "books": len(books),
@@ -312,6 +349,7 @@ def main() -> None:
     # run inference; titles, cast and authors are only wanted once there is
     # something to guess or reveal.
     CORE = {"questions.json", "matrix.bin", "meta.json"}
+    # series.json is deferred: needed only once there is something to guess.
 
     print("\nArtifacts:")
     total = core_total = 0

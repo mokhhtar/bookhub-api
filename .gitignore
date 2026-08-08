@@ -62,3 +62,6 @@ venv/
 
 # Wikidata series names, regenerable by harvest_series_labels.py.
 /data/akinator_series_labels.json
+
+# Open Library cover ids, regenerable by fetch_covers.py.
+/data/akinator_covers.json
