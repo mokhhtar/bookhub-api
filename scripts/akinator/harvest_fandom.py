@@ -132,6 +132,34 @@ def verify(title: str, subdomain: str) -> tuple[bool, str]:
     return False, f"unrelated: {info['sitename'][:40]}"
 
 
+def candidate_subdomains(title: str) -> list[str]:
+    """Subdomains a wiki for this title plausibly lives at.
+
+    Tried BEFORE the resolver, because the resolver leans on Wikidata,
+    DuckDuckGo and a Google CSE key, and web novels are exactly the
+    category those miss — the first full pass rejected "He Who Fights with
+    Monsters" and "Trash of the Count's Family" as having no wiki when both
+    have large ones. Fandom subdomains are usually just the title with the
+    spaces taken out, so guessing and CHECKING is cheaper and more reliable
+    than searching. Every candidate still goes through verify().
+    """
+    n = normalize(title)
+    words = [w for w in n.split() if w]
+    squashed = "".join(words)
+    hyphen = "-".join(words)
+    no_stop = [w for w in words if w not in _STOP]
+    out = [squashed, hyphen, "".join(no_stop), "-".join(no_stop)]
+    # Series titles are often known by their first few words.
+    if len(no_stop) > 2:
+        out += ["".join(no_stop[:3]), "-".join(no_stop[:3])]
+    seen, uniq = set(), []
+    for c in out:
+        if c and c not in seen and len(c) > 3:
+            seen.add(c)
+            uniq.append(c)
+    return uniq
+
+
 def resolve(title: str, attempts: int = 3) -> tuple[str | None, str]:
     """Resolve with retries — the failures here are mostly transport.
 
@@ -140,6 +168,13 @@ def resolve(title: str, attempts: int = 3) -> tuple[str | None, str]:
     lookups, reported as "no wiki found". A network blip and a book with no
     wiki are not the same finding and must not read the same.
     """
+    # Guess-and-check first; it costs one cheap API call per candidate and
+    # succeeds where the search-based resolver cannot.
+    for cand in candidate_subdomains(title):
+        ok, why = verify(title, cand)
+        if ok:
+            return cand, f"[direct] {why}"
+
     from tools.fandom import resolve_fandom_subdomain
     sub = None
     for attempt in range(attempts):
