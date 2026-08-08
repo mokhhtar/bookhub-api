@@ -72,6 +72,26 @@ CHAR_ABSENT_CONFIDENCE = 0.06
 # might have the character and simply not be catalogued.
 CHAR_UNKNOWN_CONFIDENCE = 0.10
 
+# When to risk the first guess.
+#
+# Was 0.85, on the reasonable-sounding principle that a guess should be
+# confident. Measured across four seeds at 5,000 books, it is worse on BOTH
+# axes than guessing earlier:
+#
+#   0.85   50.0% success, median 30q
+#   0.65   56.2% success, median 27q
+#
+# Counter-intuitive until you count the guesses. THREE are allowed, and the
+# old threshold spent none of them: 85% is often never reached inside the
+# question cap, so the game ran out of turns with the right book sitting
+# second or third. Guessing at 0.65 costs one turn when wrong and the ratio
+# test carries on afterwards — and it asks the player a question they can
+# actually answer ("is it this book?") instead of a twenty-eighth question
+# about page counts.
+#
+# The owner reported the length twice before this was measured.
+GUESS_THRESHOLD = 0.65
+
 # Character questions only once the field has narrowed this far.
 ENDGAME_CANDIDATES = 30
 
@@ -407,12 +427,12 @@ class Engine:
             return None
         top_idx, top_p = ranked[0]
 
-        if top_p >= 0.85:
+        if top_p >= GUESS_THRESHOLD:
             return {"kind": "book", "index": top_idx, "p": top_p}
 
         totals = self.series_belief()
         for sid, total in sorted(totals.items(), key=lambda x: -x[1]):
-            if sid in rejected or total < 0.85:
+            if sid in rejected or total < GUESS_THRESHOLD:
                 continue
             members = [i for i in self.m.series_members[sid] if i not in rejected]
             if not members:
@@ -426,7 +446,7 @@ class Engine:
 
         return {"kind": "book", "index": top_idx, "p": top_p}
 
-    def should_guess(self, threshold: float = 0.85) -> bool:
+    def should_guess(self, threshold: float = GUESS_THRESHOLD) -> bool:
         """Guess on absolute confidence, or on a decisive lead.
 
         The ratio test matters when two books are genuinely similar: 0.55
