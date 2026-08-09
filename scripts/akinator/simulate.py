@@ -50,7 +50,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from author_traits import AUTHOR_QUESTIONS, book_traits, load_wikidata  # noqa: E402
 from characters import extract_characters, usable_token          # noqa: E402
-from corpus_filter import filter_corpus                          # noqa: E402
+from corpus_filter import SHIPPED_BOOKS, filter_corpus           # noqa: E402
 from site_books import supplement as site_supplement              # noqa: E402
 from traits import TRAIT_QUESTIONS, apply_labels, load_traits     # noqa: E402
 from engine import Engine, Matrix                                # noqa: E402
@@ -293,8 +293,14 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--sample", type=int, default=0,
                     help="test only the N most popular books (0 = all)")
-    ap.add_argument("--corpus-size", type=int, default=0,
-                    help="truncate the corpus by popularity (0 = all)")
+    ap.add_argument("--corpus-size", type=int, default=SHIPPED_BOOKS,
+                    help=f"truncate the corpus by popularity. Defaults to "
+                         f"{SHIPPED_BOOKS}, the number that ships — this used "
+                         f"to default to 0 (all 19,890), so the file whose "
+                         f"job is to describe the live game was measuring a "
+                         f"corpus four times larger, and corpus size is worth "
+                         f"tens of points of success rate. 0 = all, for the "
+                         f"corpus-size sweep.")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 

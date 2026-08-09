@@ -46,7 +46,7 @@ from series import series_for_docs                                  # noqa: E402
 from work_traits import (WORK_QUESTIONS, load_protagonists,         # noqa: E402
                          load_works, merge_into)
 from characters import extract_characters, usable_token             # noqa: E402
-from corpus_filter import filter_corpus                             # noqa: E402
+from corpus_filter import SHIPPED_BOOKS, filter_corpus              # noqa: E402
 from site_books import supplement as site_supplement                # noqa: E402
 from traits import TRAIT_QUESTIONS, apply_labels, load_traits       # noqa: E402
 from series import VOLUME_DOMINANCE                                  # noqa: E402
@@ -65,18 +65,13 @@ DEFAULT_OUT = os.path.join(REPO_ROOT, "data", "akinator_build")
 MIN_FREQ = 0.05
 MAX_FREQ = 0.60
 
-# How many books ship. Not a tuning knob: success was measured at 76% on
-# 1,000 books, 68% on 2,500 and 40% on 10,000, because a book at rank 10,000
-# carries half the subjects of one at rank 1,000. 5,000 is the measured
-# ceiling for the sources we have.
+# SHIPPED_BOOKS is the DEFAULT for --limit because the default should build
+# the thing that ships. It used to be 0, meaning the whole 19,890-book
+# corpus, and a plain `python build_matrix.py` therefore produced 45
+# questions instead of 58 and a 237 KB first paint against a 78 KB budget —
+# a different game, silently, with every column renumbered. Pass --limit 0
+# for analysis. Defined in corpus_filter so simulate.py shares it.
 #
-# This is the DEFAULT for --limit because the default should build the thing
-# that ships. It used to be 0, meaning the whole 19,890-book corpus, and a
-# plain `python build_matrix.py` therefore produced 45 questions instead of
-# 58 and a 237 KB first paint against a 78 KB budget — a different game,
-# silently, with every column renumbered. Pass --limit 0 for analysis.
-SHIPPED_BOOKS = 5000
-
 # The stated first-paint budget: the matrix, the wording and the decoding
 # rule, and nothing else. Checked at the end of a build rather than trusted,
 # because exceeding it is invisible in every other output.

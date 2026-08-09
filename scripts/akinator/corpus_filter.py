@@ -37,6 +37,19 @@ from __future__ import annotations
 
 import re
 
+# How many books ship, and therefore how many any measurement of the game
+# must use. Not a tuning knob: success was measured at 76% on 1,000 books,
+# 68% on 2,500 and 40% on 10,000, because a book at rank 10,000 carries half
+# the subjects of one at rank 1,000. 5,000 is the measured ceiling for the
+# sources we have.
+#
+# It lives HERE, imported by both build_matrix.py and simulate.py, because
+# both defaulted to "the whole corpus" independently — 19,890 books — and so
+# the builder produced a game nobody plays while the simulator measured one
+# nobody ships. Given the numbers above, that gap is worth tens of points of
+# success rate. One definition, two callers.
+SHIPPED_BOOKS = 5000
+
 # Words that a derivative product usually has and a novel usually does not.
 # Necessary but NOT sufficient — see `is_derivative`.
 _MARKER = re.compile(
