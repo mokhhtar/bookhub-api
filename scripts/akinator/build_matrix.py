@@ -65,6 +65,23 @@ DEFAULT_OUT = os.path.join(REPO_ROOT, "data", "akinator_build")
 MIN_FREQ = 0.05
 MAX_FREQ = 0.60
 
+# How many books ship. Not a tuning knob: success was measured at 76% on
+# 1,000 books, 68% on 2,500 and 40% on 10,000, because a book at rank 10,000
+# carries half the subjects of one at rank 1,000. 5,000 is the measured
+# ceiling for the sources we have.
+#
+# This is the DEFAULT for --limit because the default should build the thing
+# that ships. It used to be 0, meaning the whole 19,890-book corpus, and a
+# plain `python build_matrix.py` therefore produced 45 questions instead of
+# 58 and a 237 KB first paint against a 78 KB budget — a different game,
+# silently, with every column renumbered. Pass --limit 0 for analysis.
+SHIPPED_BOOKS = 5000
+
+# The stated first-paint budget: the matrix, the wording and the decoding
+# rule, and nothing else. Checked at the end of a build rather than trusted,
+# because exceeding it is invisible in every other output.
+FIRST_PAINT_BUDGET_KB = 100
+
 # A character name is useful precisely because it is rare. Only the ceiling
 # matters, and it scales with corpus size rather than being a fixed count.
 MAX_CHAR_SHARE = 0.02
@@ -217,8 +234,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--corpus", default=CORPUS_PATH)
     ap.add_argument("--out-dir", default=DEFAULT_OUT)
-    ap.add_argument("--limit", type=int, default=0,
-                    help="cap the corpus (0 = all of it)")
+    ap.add_argument("--limit", type=int, default=SHIPPED_BOOKS,
+                    help=f"how many books to build ({SHIPPED_BOOKS} is what "
+                         f"ships; 0 = the whole corpus, for analysis only)")
     args = ap.parse_args()
 
     docs = load_corpus(args.corpus)
@@ -389,6 +407,12 @@ def main() -> None:
         print(f"  {name:<20} {size / 1024:8.1f} KB   {tag}")
     print(f"  {'TOTAL':<20} {total / 1024:8.1f} KB  ({total / 1024 / 1024:.2f} MB)")
     print(f"  {'first paint (core)':<20} {core_total / 1024:8.1f} KB")
+    if core_total / 1024 > FIRST_PAINT_BUDGET_KB:
+        print(f"\n! FIRST PAINT IS OVER BUDGET: {core_total / 1024:.1f} KB "
+              f"against {FIRST_PAINT_BUDGET_KB} KB.", file=sys.stderr)
+        print(f"  {len(books)} books x {len(questions)} questions. If that is "
+              f"more than {SHIPPED_BOOKS} books, --limit was set to 0 or too "
+              f"high; this build should not be published.", file=sys.stderr)
 
     try:
         import gzip

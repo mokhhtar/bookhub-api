@@ -109,6 +109,11 @@ def expected_traits(themes: list[str]) -> set[str]:
 # number, as harvest_descriptions.py.
 MAX_CONSECUTIVE_FAILURES = 6
 
+# Ceiling on the backoff below. Past this a wait is no longer riding out a
+# per-minute limit, it is waiting for a daily one, and stopping to resume
+# later is the honest answer.
+MAX_BACKOFF = 120.0
+
 
 class _LastProviderError(logging.Handler):
     """Remembers the last thing gemini_client complained about.
@@ -143,11 +148,21 @@ class _LastProviderError(logging.Handler):
         self.last = text
         if "RESOURCE_EXHAUSTED" in text or "429" in text:
             self.quota = text
-            if "PerDay" in text or "RequestsPerDay" in text:
+            # Gemini says "…PerDayPerProjectPerModel"; Groq says "tokens per
+            # day (TPD)". Both are the same fact — come back tomorrow — and
+            # neither is the per-minute limit, which just needs a slower pace.
+            if ("PerDay" in text or "RequestsPerDay" in text
+                    or "per day" in text.lower() or "TPD" in text):
                 self.daily = text
 
     def diagnose(self) -> str:
         if self.daily:
+            if "TPD" in self.daily or "per day" in self.daily.lower():
+                return ("a provider's DAILY token budget is spent — Groq's "
+                        "free tier is 100,000 tokens a day per model, and the "
+                        "remaining corpus needs roughly 490,000. Resume "
+                        "tomorrow, or use --groq-model to switch to a model "
+                        "with its own separate daily bucket.")
             also = (" Groq is rate limited too, so there is no fallback left "
                     "today." if "groq" in self.quota.lower() else "")
             return ("the free tier's DAILY request cap is spent. It resets at "
@@ -157,6 +172,38 @@ class _LastProviderError(logging.Handler):
             return ("rate limited, with no per-day marker in the error. If it "
                     "is the per-minute cap, raise --delay and resume now.")
         return self.last[:200] if self.last else "no provider error was logged."
+
+
+# Groq bills RESERVED output against its tokens-per-minute ceiling, not the
+# tokens actually generated. The shared client asks for max_tokens=4096,
+# which is right for a summary and ruinous here: a batch prompt is ~2,700
+# tokens, so each call was charged ~6,800 of a 12,000/min budget and the run
+# could not sustain two requests a minute at ANY --delay. That is the real
+# reason behind "real prompts stop after four" in the earlier notes — the
+# limit was never the prompt size.
+#
+# A reply here is one short JSON object: eight books, at most sixteen short
+# labels each, well under 500 tokens. 800 leaves room and cuts the charge
+# per call by roughly half. An over-long reply is truncated, fails to parse
+# and is discarded whole by parse_batch_response — the same safe path as any
+# other malformed reply, never a partial label set.
+TRAIT_MAX_OUTPUT_TOKENS = 800
+
+
+def _trait_config():
+    """DEFAULT_CONFIG's temperature, this task's much smaller output cap.
+
+    Built here rather than by editing gemini_client.DEFAULT_CONFIG, which is
+    shared with every runtime tool in the API — /summary and the quiz
+    generators genuinely need 4096.
+    """
+    from google.genai import types as genai_types
+
+    from gemini_client import DEFAULT_CONFIG
+    return genai_types.GenerateContentConfig(
+        temperature=DEFAULT_CONFIG.temperature,
+        max_output_tokens=TRAIT_MAX_OUTPUT_TOKENS,
+    )
 
 
 def _generate(prompt: str, provider: str = "auto") -> str:
@@ -172,14 +219,56 @@ def _generate(prompt: str, provider: str = "auto") -> str:
     minute per key, which is 5.6 hours for the corpus on one key and is
     what pushed this to a switch rather than a preference.
     """
+    config = _trait_config()
     if provider == "groq":
-        from gemini_client import DEFAULT_CONFIG, _groq_generate
-        text = _groq_generate(prompt, DEFAULT_CONFIG)
+        text = _groq_call(prompt, config)
         if not text:
             raise RuntimeError("Groq returned nothing (key set? quota left?)")
         return text
     from gemini_client import generate
-    return generate(prompt)
+    return generate(prompt, config)
+
+
+# Set by main() from --groq-model. Each Groq model has its OWN daily token
+# bucket, so exhausting llama-3.3-70b (100,000 a day) does not touch the
+# others — which is the only lever left once a day's budget is gone.
+GROQ_MODEL_OVERRIDE: str | None = None
+
+
+def _groq_call(prompt: str, config) -> str | None:
+    """Groq, optionally against a model other than the shared default.
+
+    gemini_client._groq_generate is hardcoded to GROQ_MODEL because the API's
+    runtime fallback should not be reconfigurable per call. This is a build-
+    time script with a different constraint — it needs whichever model still
+    has daily budget — so it posts directly rather than widening the shared
+    client's contract for a caller that is not in the request path.
+    """
+    import httpx
+
+    from gemini_client import (GROQ_API_KEY, GROQ_CHAT_URL, GROQ_MODEL,
+                               _groq_generate)
+    if not GROQ_MODEL_OVERRIDE:
+        return _groq_generate(prompt, config)
+    if not GROQ_API_KEY:
+        return None
+    try:
+        resp = httpx.post(
+            GROQ_CHAT_URL,
+            headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+            json={
+                "model": GROQ_MODEL_OVERRIDE or GROQ_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": config.temperature,
+                "max_tokens": config.max_output_tokens,
+            },
+            timeout=90.0,
+        )
+        resp.raise_for_status()
+        return (resp.json()["choices"][0]["message"]["content"] or "").strip() or None
+    except Exception as e:  # noqa: BLE001 — same fail-open shape as the client
+        logging.getLogger("gemini_client").warning(f"Groq fallback failed: {e}")
+        return None
 
 
 def extract_one(title: str, author: str, text: str,
@@ -340,8 +429,19 @@ def main() -> None:
                     help="'groq' skips the Gemini attempts entirely. Use it "
                          "once Gemini's daily quota is spent — otherwise "
                          "every call pays for a doomed Gemini try first.")
+    ap.add_argument("--groq-model", default=None,
+                    help="Groq model to use with --provider groq. Each model "
+                         "has its own daily token bucket, so this is the way "
+                         "to keep going after one is spent. A different model "
+                         "is a different labeller: run --calibrate on it "
+                         "before trusting a corpus labelled with it.")
     ap.add_argument("--out", default=OUT_PATH)
     args = ap.parse_args()
+
+    global GROQ_MODEL_OVERRIDE
+    GROQ_MODEL_OVERRIDE = args.groq_model
+    if args.groq_model:
+        print(f"Groq model: {args.groq_model}")
 
     if args.rescore:
         rescore()
@@ -422,7 +522,20 @@ def main() -> None:
                   f"nothing is lost.", file=sys.stderr)
             stopped_early = True
             break
-        time.sleep(args.delay)
+
+        # Back off after a failure instead of marching straight into the next
+        # one. Groq's ceiling is 12,000 tokens a MINUTE and a batch of eight
+        # costs ~2,700, so the limit is reached by going slightly too fast,
+        # and it clears by waiting. Without this, a brief overrun spends all
+        # six of the stop budget in under two minutes and ends a run that had
+        # only needed to pause. Gemini's daily cap is unaffected: backing off
+        # six times costs ~2 minutes before the same stop.
+        pause = args.delay
+        if consecutive:
+            pause = min(args.delay * (2 ** consecutive), MAX_BACKOFF)
+            print(f"    . backing off {pause:.0f}s "
+                  f"({consecutive} failed in a row)", file=sys.stderr)
+        time.sleep(pause)
 
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump({"traits": out}, fh, ensure_ascii=False)
