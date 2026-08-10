@@ -37,6 +37,8 @@ from __future__ import annotations
 
 import re
 
+from corrections import apply_corrections
+
 # How many books ship, and therefore how many any measurement of the game
 # must use. Not a tuning knob: success was measured at 76% on 1,000 books,
 # 68% on 2,500 and 40% on 10,000, because a book at rank 10,000 carries half
@@ -140,7 +142,17 @@ def find_translations(docs: list[dict], median_richness: float) -> set[int]:
 
 
 def filter_corpus(docs: list[dict], verbose: bool = True) -> list[dict]:
-    """Drop derivatives and translation duplicates. `docs` sorted by rank."""
+    """Drop derivatives and translation duplicates. `docs` sorted by rank.
+
+    Also applies the hand-verified metadata corrections. This is the one
+    function both build_matrix.py and simulate.py pass their documents
+    through, so applying them here is what stops the shipped artifact and
+    the measurement of it disagreeing about a fact.
+    """
+    fixed = apply_corrections(docs, verbose=verbose)
+    if fixed and verbose:
+        print(f"Corrections: {fixed} verified-wrong field(s) fixed")
+
     richness = sorted(len(d.get("subject") or []) for d in docs)
     median = richness[len(richness) // 2] if richness else 0
 

@@ -30,8 +30,9 @@ from __future__ import annotations
 
 import math
 
-from features import (EXCLUDES, PRESENCE_CONFIDENCE, UNKNOWN_CONFIDENCE,
-                      absence_confidence)
+from features import (EXCLUDES, LADDER_OF, LADDERS, PRESENCE_CONFIDENCE,
+                      UNKNOWN_CONFIDENCE, absence_confidence,
+                      ladder_determined, ladder_narrow)
 from series import VOLUME_DOMINANCE
 
 # The five answers a player can give, and how strongly each is trusted.
@@ -94,6 +95,10 @@ GUESS_THRESHOLD = 0.65
 
 # Character questions only once the field has narrowed this far.
 ENDGAME_CANDIDATES = 30
+
+# How many "don't know" answers about one ladder dimension (year, pages)
+# before the engine stops asking about that dimension at all.
+DK_BEFORE_DIMENSION_DROPPED = 2
 
 # How sure the engine must be that the player's book HAS a named cast before
 # it spends endgame turns asking about names. Swept, not guessed — measured
@@ -203,6 +208,12 @@ class Engine:
         self.m = matrix
         self.belief = list(matrix.prior)
         self.asked: set[str] = set()
+        # Per-dimension interval implied by the firm answers so far, and how
+        # many times the player has said "don't know" about that dimension.
+        self.bounds: dict[str, list[float]] = {
+            dim: [-1e9, 1e9] for dim in LADDERS
+        }
+        self.dk_count: dict[str, int] = {dim: 0 for dim in LADDERS}
 
     # -- inference ---------------------------------------------------------
 
@@ -231,6 +242,36 @@ class Engine:
             # simulation has been blind to the thing that matters — see
             # phase 3 on unanswerable questions.
             self.asked.update(EXCLUDES.get(question, ()))
+
+        # LADDERS: several questions that are really one number. A firm
+        # answer fixes an interval, and every rung the interval already
+        # settles has exactly zero information left — so stop asking it.
+        # This is what made the owner's session ask "was it published in the
+        # last 25 years?" (yes), "in the last 10?" (no), and then "was it
+        # written before 2000?", whose answer had been determined two turns
+        # earlier.
+        rung = LADDER_OF.get(question)
+        if rung is not None:
+            dim, op, thr = rung
+            lo, hi = self.bounds[dim]
+            if answer in ("yes", "no"):
+                lo, hi = ladder_narrow(lo, hi, op, thr, answer == "yes")
+                self.bounds[dim] = [lo, hi]
+            elif weight == 0.0:
+                # "Don't know" about a page count is rarely about THIS
+                # threshold — it is a player who does not think about books
+                # in pages. Asking the same dimension again is how the owner
+                # got three page questions in one game, all answered "idk".
+                # Two is the allowance: a reader who cannot say "under 300"
+                # may still know a brick when they see one, so one more is
+                # fair — a third is not.
+                self.dk_count[dim] += 1
+                if self.dk_count[dim] >= DK_BEFORE_DIMENSION_DROPPED:
+                    self.asked.update(q for q, _o, _t in LADDERS[dim])
+            for q, o, t in LADDERS[dim]:
+                if q not in self.asked and ladder_determined(o, t, lo, hi):
+                    self.asked.add(q)
+
         if weight == 0.0:
             return  # "don't know" genuinely tells us nothing; don't fake a signal
 

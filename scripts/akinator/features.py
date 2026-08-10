@@ -104,6 +104,51 @@ def is_stop_subject(normalized: str) -> bool:
     return any(p in normalized for p in STOP_SUBJECT_PATTERNS)
 
 
+# Words that describe a character's ROLE rather than name them. An entry
+# made only of these is not a name.
+_GENERIC_CAST = {
+    "the", "a", "an", "and", "or", "of", "his", "her", "their", "its",
+    "man", "men", "woman", "women", "boy", "boys", "girl", "girls",
+    "child", "children", "kid", "kids", "baby", "person", "people",
+    "narrator", "protagonist", "hero", "heroine", "villain", "author",
+    "main", "character", "characters", "unnamed", "nameless", "reader",
+    "young", "old", "little", "fictitious",
+}
+
+
+def has_named_characters(persons: list[str]) -> bool:
+    """Does this book have characters a reader could NAME?
+
+    THE CASE THIS EXISTS FOR. The owner played *The Road* and answered "no"
+    to "does it have well-known named characters?" — correctly: McCarthy's
+    two characters are "the man" and "the boy", and their namelessness is
+    the point of the book. Open Library files those strings under `person`,
+    the feature was `bool(doc.get("person"))`, so the game asserted they
+    were named, scored a firm and correct answer as a contradiction, and
+    pushed a rank-363 book down for it.
+
+    WHY NOT REUSE `usable_token`, which was the obvious first fix and is
+    wrong. That filter answers a different question — "is this token worth
+    ASKING about" — and requires four characters, so it rejects **Ove**,
+    **Pi** and **Cat in the Hat**. Measured over the corpus it flipped 33
+    books and several of the flips were plainly wrong. `extract_characters`
+    is no better here: it discards `"Lucy Pevensie and Edmund Pevensie"`
+    entirely, returning no names for a book that obviously has them.
+
+    So this is deliberately conservative in the other direction: a book
+    loses the feature only when EVERY entry is made purely of role words.
+    A false "yes" costs a little belief; a false "no" contradicts a player
+    who is right, which is the failure that started this.
+    """
+    for entry in persons:
+        tokens = [t for t in normalize(entry).split() if t]
+        if not tokens:
+            continue
+        if any(t not in _GENERIC_CAST for t in tokens):
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Stage 2 — the curated vocabulary
 # ---------------------------------------------------------------------------
@@ -429,7 +474,22 @@ def structural_features(doc: dict, popularity_rank: int, corpus_size: int) -> di
 
     # Top decile of a popularity-sorted corpus.
     feats["fact:famous"] = popularity_rank < max(1, corpus_size // 10)
-    feats["fact:namedchars"] = bool(doc.get("person"))
+    # "Well-known NAMED characters" — and a name the character questions
+    # would refuse to ask about is not one.
+    #
+    # This was `bool(doc.get("person"))`, which counted any entry at all.
+    # The owner played *The Road* and answered "no", correctly: McCarthy's
+    # two characters are "the man" and "the boy" and that is the point of
+    # the book. Open Library files them under `person`, so the game asserted
+    # they were named, scored a firm and correct "no" as a contradiction,
+    # and pushed a rank-363 book down for it.
+    #
+    # The inconsistency was internal, which is why it survived: the endgame
+    # already runs those same strings through `usable_token`, which rejects
+    # "the", "man" and "boy" — so one half of the engine knew there were no
+    # usable names while the other half claimed there were. Same filter now
+    # decides both.
+    feats["fact:namedchars"] = has_named_characters(doc.get("person") or [])
 
     feats["fact:highlyrated"] = (ratings_avg >= 4.2) if (ratings_avg and ratings_n >= 20) else None
 
@@ -522,6 +582,86 @@ EXCLUDES: dict[str, set[str]] = {}
 for _group in EXCLUSIVE_GROUPS:
     for _q in _group:
         EXCLUDES[_q] = {x for x in _group if x != _q}
+
+
+# ---------------------------------------------------------------------------
+# Ordered ladders: several questions that are really one number
+# ---------------------------------------------------------------------------
+# EXCLUSIVE_GROUPS handles alternatives — American OR British. It cannot
+# express IMPLICATION, and two families of questions here are pure
+# implication because they are thresholds on a single underlying value:
+#
+#     year  : <1900, <1950, <1970, <2000, >=2001, >=2016
+#     pages : <200, <300, >400, >600
+#
+# The owner played the game and was asked, in one session:
+#
+#     "Was it published in the last 25 years?"  yes      (so year >= 2001)
+#     "Was it published in the last 10 years?"  no       (so year <= 2015)
+#     "Was it written before 2000?"                      <- already answered
+#
+# The third question's answer was determined two turns earlier. The engine
+# could not know that: to the matrix these are three unrelated columns, and
+# because the belief update is deliberately SOFT (a wrong answer weakens a
+# book, never eliminates it) the pre-2000 books still held enough mass
+# afterwards that the question kept a positive information gain. Nothing was
+# broken; the engine was reasoning correctly from a model that was missing a
+# fact.
+#
+# Declaring the ladders lets the engine hold an interval per dimension and
+# skip any question whose answer is already implied by it. Not a heuristic —
+# the skipped questions have exactly zero information left to give.
+#
+# The same table is duplicated in the JavaScript engine. That duplication is
+# a known hazard here (it has bitten this project twice), so it is covered by
+# the golden-trace parity test: change one side and `node
+# games/parity-check.js` fails on the turn where the sequences part.
+LADDERS: dict[str, list[tuple[str, str, float]]] = {
+    "year": [
+        ("fact:veryold", "<", 1900),
+        ("fact:old", "<", 1950),
+        ("fact:pre1970", "<", 1970),
+        ("fact:pre2000", "<", 2000),
+        ("fact:recent", ">=", 2001),
+        ("fact:verrecent", ">=", 2016),
+    ],
+    "pages": [
+        ("fact:short", "<", 200),
+        ("fact:midshort", "<", 300),
+        ("fact:long", ">", 400),
+        ("fact:verylong", ">", 600),
+    ],
+}
+
+# question -> (dimension, op, threshold)
+LADDER_OF: dict[str, tuple[str, str, float]] = {
+    q: (dim, op, thr)
+    for dim, rungs in LADDERS.items()
+    for q, op, thr in rungs
+}
+
+
+def ladder_narrow(lo: float, hi: float, op: str, thr: float,
+                  answer_is_yes: bool) -> tuple[float, float]:
+    """Narrow an inclusive [lo, hi] interval by one answered threshold."""
+    if op == "<":
+        # "is it < thr?"  yes -> value <= thr-1 ; no -> value >= thr
+        return (lo, min(hi, thr - 1)) if answer_is_yes else (max(lo, thr), hi)
+    if op == ">":
+        return (max(lo, thr + 1), hi) if answer_is_yes else (lo, min(hi, thr))
+    # ">="
+    return (max(lo, thr), hi) if answer_is_yes else (lo, min(hi, thr - 1))
+
+
+def ladder_determined(op: str, thr: float, lo: float, hi: float) -> bool:
+    """True when every value in [lo, hi] answers this rung the same way."""
+    if lo > hi:
+        return True                      # contradictory answers; stop asking
+    if op == "<":
+        return hi < thr or lo >= thr
+    if op == ">":
+        return lo > thr or hi <= thr
+    return lo >= thr or hi < thr         # ">="
 
 
 # Questions kept regardless of the 5% frequency floor (owner, 2026-08-07).
