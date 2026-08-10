@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 
 from features import normalize
 
@@ -137,7 +138,68 @@ def series_for_docs(docs: list[dict], works: dict[str, dict] | None = None,
             names[sid] = name
 
     out = [sid if sid in names else None for sid in raw]
+
+    # Fallback: volumes that SAY they are volumes.
+    #
+    # Everything above depends on Wikidata P179, which does not cover
+    # translated web novels at all. The owner played Lord of the Mysteries —
+    # three volumes in the corpus, at ranks 3232, 3313 and 3403, titled
+    # "Lord of the Mysteries, Volume 3: Traveler" and so on — and the game
+    # never pooled them, so their belief split three ways and the mechanism
+    # built for exactly this case did nothing. They even answer `unknown` to
+    # "is it part of a series?".
+    #
+    # DELIBERATELY STRICT, because loose title matching is this project's
+    # most repeated bug (Warsaw, Indiana, "A Good Girl's Guide to Murder").
+    # All four must hold: an explicit volume marker with a number, an
+    # identical normalized prefix before it, the same first author, and at
+    # least two members. Measured over the shipped 5,000 that yields exactly
+    # two groups — Heartstopper and Lord of the Mysteries — and no false
+    # ones. It only ever fires where Wikidata gave nothing.
+    for (prefix, _author), idx in _volume_groups(docs).items():
+        if len(idx) < MIN_MEMBERS or any(out[i] for i in idx):
+            continue
+        sid = "title:" + prefix
+        # The name is the title BEFORE the volume marker, in its original
+        # case. NOT common_title_prefix, which is word-wise over the whole
+        # titles and therefore returns "Heartstopper, Volume".
+        m = _VOLUME_RE.match(docs[idx[0]].get("title") or "")
+        name = m.group(1).strip(" ,:-") if m else ""
+        if not name:
+            continue
+        names[sid] = name
+        for i in idx:
+            out[i] = sid
+
     return out, names
+
+
+# "..., Volume 3: Traveler", "... Book 2", "... Part One". A NUMBER is
+# required — a title merely containing the word "book" is not a volume —
+# but it may be spelled out, because Heartstopper ships "Volume 1" through
+# "Volume 4" and then "Volume Five". Dropping the fifth out of its own
+# series would be exactly the silent hole this fallback exists to close.
+_NUMBER_WORDS = ("one|two|three|four|five|six|seven|eight|nine|ten|"
+                 "eleven|twelve")
+_VOLUME_RE = re.compile(
+    r"^(.*?)[,:]?\s*\b(?:volume|vol\.?|book|part)\s*"
+    r"(\d+|" + _NUMBER_WORDS + r")\b.*$", re.I)
+
+
+def _volume_groups(docs: list[dict]) -> dict[tuple[str, str], list[int]]:
+    """(normalized title prefix, normalized first author) -> book indices."""
+    groups: dict[tuple[str, str], list[int]] = {}
+    for i, doc in enumerate(docs):
+        m = _VOLUME_RE.match(doc.get("title") or "")
+        if not m:
+            continue
+        prefix = normalize(m.group(1))
+        author = normalize((doc.get("author_name") or [""])[0])
+        # A very short prefix is not a series name, it is a coincidence.
+        if len(prefix) < 4 or not author:
+            continue
+        groups.setdefault((prefix, author), []).append(i)
+    return groups
 
 
 def group_members(series_of: list[str | None]) -> dict[str, list[int]]:
