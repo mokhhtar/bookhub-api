@@ -88,6 +88,9 @@ MIN_AUTHOR_BOOKS = 2
 
 STATE_ABSENT, STATE_PRESENT, STATE_UNKNOWN = 0, 1, 2
 
+# Set from --no-traits in main(); read by build_books.
+NO_TRAITS = False
+
 
 def load_corpus(path: str) -> list[dict]:
     docs = []
@@ -134,7 +137,7 @@ def build_books(docs: list[dict]) -> tuple[list[dict], AuthorIndex]:
     wd = load_wikidata()
     works = load_works()
     protagonists = load_protagonists()
-    extracted = load_traits()
+    extracted = {} if NO_TRAITS else load_traits()
     if extracted:
         print(f"Extracted traits: {len(extracted)} books labelled by the model")
     book_counts: dict[str, int] = {}
@@ -229,10 +232,19 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--corpus", default=CORPUS_PATH)
     ap.add_argument("--out-dir", default=DEFAULT_OUT)
+    ap.add_argument("--no-traits", action="store_true",
+                    help="build without the model-extracted trait columns. "
+                         "Measured over 12 seeds and 2,400 paired games they "
+                         "are worth +0.38 points at p=0.37 — no effect — "
+                         "while costing 8 questions of first paint against a "
+                         "78 KB budget. Revisit when extraction is complete.")
     ap.add_argument("--limit", type=int, default=SHIPPED_BOOKS,
                     help=f"how many books to build ({SHIPPED_BOOKS} is what "
                          f"ships; 0 = the whole corpus, for analysis only)")
     args = ap.parse_args()
+
+    global NO_TRAITS
+    NO_TRAITS = args.no_traits
 
     docs = load_corpus(args.corpus)
     if args.limit:
