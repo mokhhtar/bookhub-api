@@ -344,15 +344,54 @@ def supplement(docs: list[dict], pages: list[dict] | None = None,
             d["readinglog_count"] = bot_val
             promoted += 1
 
+    # Author keys for the synthetic entries, borrowed from the corpus.
+    #
+    # These rows are built from our own pages, which carry an author NAME
+    # and no Open Library author key — and `book_traits()` looks up Wikidata
+    # BY KEY. So every book we publish arrived with no nationality, no
+    # gender, no alive/dead and no prolific flag: 44 books including The
+    # Little Prince, Crime and Punishment and The Count of Monte Cristo,
+    # all sitting at `unknown` for questions the game asks constantly.
+    #
+    # But these authors are almost never strangers to the corpus — Dumas,
+    # Kafka and Saint-Exupéry all have OTHER books in it, with keys. So the
+    # key is looked up by author name, then by SURNAME, which is the same
+    # two-step this function already uses for titles and for the same
+    # reason: our pages say "graf Leo Tolstoy" where Open Library says
+    # "Лев Толстой", and the surname is the part that survives.
+    by_name: dict[str, str] = {}
+    by_surname: dict[str, str] = {}
+    for d in docs:
+        keys = d.get("author_key") or []
+        for i, nm in enumerate(d.get("author_name") or []):
+            if i >= len(keys) or not keys[i]:
+                continue
+            by_name.setdefault(normalize(nm), keys[i])
+            sur = surname_token(canonical_author(nm))
+            if sur:
+                by_surname.setdefault(sur, keys[i])
+
+    def author_key_for(name: str) -> list[str]:
+        if not name:
+            return []
+        hit = by_name.get(normalize(name))
+        if not hit:
+            hit = by_surname.get(surname_token(canonical_author(name)))
+        return [hit] if hit else []
+
     added = []
+    borrowed = 0
     n = max(1, len(ordered) - 1)
     for i, p in enumerate(ordered):
         frac = i / n
+        _akey = author_key_for(p.get("author") or "")
+        if _akey:
+            borrowed += 1
         added.append({
             "key": "/site/" + (p["slug"] or normalize(p["title"]).replace(" ", "-")),
             "title": p["title"],
             "author_name": [p["author"]] if p["author"] else [],
-            "author_key": [],
+            "author_key": _akey,
             "first_publish_year": int(p["year"]) if str(p["year"]).isdigit() else None,
             # Our themes and categories ARE this book's subjects. They are
             # editorial judgments rather than catalogue strings, which is
@@ -377,6 +416,6 @@ def supplement(docs: list[dict], pages: list[dict] | None = None,
     out = docs + added
     out.sort(key=lambda d: -(d.get("readinglog_count") or 0))
     if verbose:
-        print(f"Site pages: +{len(added)} added, {promoted} promoted into the "
+        print(f"Site pages: +{len(added)} added ({borrowed} with an author key borrowed from the corpus), {promoted} promoted into the "
               f"shipped band (books we publish that ranked below it)")
     return out
