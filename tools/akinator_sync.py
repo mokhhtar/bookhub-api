@@ -163,6 +163,85 @@ def question_hash(questions: list[dict]) -> str:
     return hashlib.sha256(ids.encode("utf-8")).hexdigest()[:16]
 
 
+def _mark_uncomputed_unknown(book: dict, question_ids: list[str]) -> None:
+    """Anything this sync cannot work out must be `unknown`, never absent.
+
+    THE BUG THIS FIXES, found by asking what a newly published book actually
+    claims. `_encode_row` writes ABSENT for any question in neither
+    `present` nor `unknown`, and the monthly build fills those sets from
+    FOUR sources while this sync only ever ran the first:
+
+        extract()      subjects and structural facts      <- ran here
+        book_traits()  Wikidata author facts              <- never ran
+        merge_into()   film adaptation, protagonist       <- never ran
+        apply_labels() the extracted traits               <- never ran
+
+    So every book the owner published arrived asserting **no** to 55 of 66
+    questions: no magic, no war, no family — and, absurdly, not American AND
+    not British AND not European AND not non-western, all at once. A reader
+    thinking of a book we ourselves publish, answering "yes, there's magic"
+    correctly, pushed it DOWN.
+
+    Subject-derived absence stays absent, and that is deliberate: a book
+    whose subjects are known and do not include horror is weak evidence
+    against horror, scaled by richness. The families below are different —
+    they were never computed at all, and "we did not look" is what `unknown`
+    is for. Same distinction as everywhere else here: a 429 is not a
+    measurement, an unharvested description is not "no magic".
+    """
+    from author_traits import AUTHOR_QUESTIONS          # noqa: E402
+    from work_traits import WORK_QUESTIONS              # noqa: E402
+    from traits import TRAIT_QUESTIONS                  # noqa: E402
+
+    uncomputed = set(AUTHOR_QUESTIONS) | set(WORK_QUESTIONS) | set(TRAIT_QUESTIONS)
+    determined = set(book["present"]) | set(book["unknown"])
+    book["unknown"] = sorted(
+        set(book["unknown"]) | ((uncomputed & set(question_ids)) - determined))
+
+
+def _label_traits(book: dict, page: dict, question_ids: list[str]) -> None:
+    """Ask the model for this book's traits, from our own page's prose.
+
+    The monthly rebuild labels traits from Open Library descriptions. A book
+    we just published has something better: the summary on its own page,
+    which a human reviewed. One call per newly published book — a handful a
+    night — and it is build-time work on a schedule, never in the play path.
+
+    FAILURE IS SAFE BY CONSTRUCTION. `_mark_uncomputed_unknown` has already
+    set every trait to `unknown`, so a missing key, a spent quota, a timeout
+    or an unparseable reply all leave the book exactly as if this function
+    did not exist. It can only ever turn `unknown` into `present`, which is
+    why it is allowed to run unattended at 02:40 with nobody watching.
+
+    Grounded on the supplied prose only, by the same prompt the offline
+    extractor uses — the model is told to omit anything the text does not
+    support, and anything outside the vocabulary is dropped by the parser.
+    """
+    prose = (page.get("prose") or "").strip()
+    if not prose:
+        return
+    try:
+        from traits import TRAIT_QUESTIONS, build_prompt, parse_response
+        wanted = set(TRAIT_QUESTIONS) & set(question_ids)
+        if not wanted:
+            return                      # this build ships no trait questions
+        from gemini_client import generate
+        labels = parse_response(generate(
+            build_prompt(page.get("title") or "", page.get("author") or "",
+                         prose[:4000])))
+    except Exception as exc:            # noqa: BLE001
+        log.warning("trait labelling skipped for %s: %s",
+                    page.get("title"), str(exc)[:120])
+        return
+
+    hit = [l for l in labels if l in wanted]
+    if not hit:
+        return
+    book["present"] = sorted(set(book["present"]) | set(hit))
+    book["unknown"] = sorted(set(book["unknown"]) - set(hit))
+    log.info("traits for %s: %s", page.get("title"), ", ".join(hit))
+
+
 def _encode_row(book: dict, question_ids: list[str], bytes_per_row: int) -> bytes:
     """Pack one book's answers, exactly as build_matrix.pack_matrix does."""
     present = set(book["present"])
@@ -272,6 +351,8 @@ def sync(dry_run: bool = False) -> dict:
         book = extract(doc, rank, rank + 1)
         names_, tokens = extract_characters(book.pop("persons"))
         book["char_tokens"] = sorted(t for t in tokens if usable_token(t))
+        _mark_uncomputed_unknown(book, question_ids)
+        _label_traits(book, page, question_ids)
 
         try:
             row = _encode_row(book, question_ids, bpr)
