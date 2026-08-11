@@ -323,7 +323,13 @@ def play(matrix: Matrix, target_idx: int, rng: random.Random,
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--trials", type=int, default=2, help="plays per book")
-    ap.add_argument("--max-questions", type=int, default=25)
+    # 30, matching MAX_QUESTIONS in book-mind-reader.html. This sat at 25
+    # while the page allowed 30, so every simulation measured a game five
+    # questions shorter than the one players get — the exact
+    # mirror-divergence the parity test exists to prevent, in the one
+    # constant the parity test cannot see (it replays a fixed script and
+    # never runs to the cap).
+    ap.add_argument("--max-questions", type=int, default=30)
     ap.add_argument("--max-guesses", type=int, default=3)
     ap.add_argument("--noise", type=float, default=0.10,
                     help="chance the player hedges on a question")
