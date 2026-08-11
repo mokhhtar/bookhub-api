@@ -244,24 +244,66 @@ def answer_as_player(book: dict, question: str, rng: random.Random,
 def play(matrix: Matrix, target_idx: int, rng: random.Random,
          max_questions: int, max_guesses: int, noise: float,
          miss_rate: float) -> tuple[bool, int]:
-    """Returns (guessed correctly, questions used)."""
+    """Returns (guessed correctly, questions used).
+
+    MIRRORS THE PAGE'S TURN LOOP, and did not used to. This function
+    previously read `engine.ranking()` directly and, at the question cap,
+    scored a win if the target was anywhere in the top three. The shipped
+    game calls `guess_target()`, which is a different thing in three ways
+    that all matter:
+
+      * it can name a SERIES. Pooling volumes is the whole mechanism behind
+        Harry Potter and Lord of the Mysteries, and reading `ranking()`
+        meant no measurement here has ever seen it work.
+      * it refuses below MIN_GUESS_CONFIDENCE, so "I don't know it" was
+        invisible too — the simulator always guessed, however flat the
+        belief.
+      * a rejected series guess rejects every volume in it, not one row.
+
+    So the old numbers described an endgame nobody plays. Correcting it
+    moves the absolute success rate; the paired comparisons in the vault
+    were measured under the old loop and would need re-running to be
+    quoted against numbers from this one.
+    """
     engine = Engine(matrix)
     target = matrix.books[target_idx]
     target_tokens = set(target["char_tokens"])
     rejected: set[int] = set()
+    rejected_series: set[str] = set()
+    guesses = 0
     asked = 0
 
+    def offer() -> bool | None:
+        """Make one guess. True/False if the game ends, None to carry on."""
+        nonlocal guesses
+        target_g = engine.guess_target(rejected | rejected_series)
+        if target_g is None:
+            return False            # below the floor: "I don't know it"
+        guesses += 1
+
+        if target_g["kind"] == "series":
+            sid = target_g["sid"]
+            members = matrix.series_members.get(sid, [])
+            # A player thinking of any volume accepts the series name.
+            if target_idx in members:
+                return True
+            rejected_series.add(sid)
+            hit = members
+        else:
+            if target_g["index"] == target_idx:
+                return True
+            hit = [target_g["index"]]
+
+        for i in hit:
+            rejected.add(i)
+            engine.reject(i)
+        return False if guesses >= max_guesses else None
+
     while asked < max_questions:
-        if engine.should_guess():
-            for idx, _p in engine.ranking(10):
-                if idx not in rejected:
-                    if idx == target_idx:
-                        return True, asked
-                    rejected.add(idx)
-                    engine.reject(idx)
-                    break
-            if len(rejected) >= max_guesses:
-                return False, asked
+        if engine.should_guess() and guesses < max_guesses:
+            done = offer()
+            if done is not None:
+                return done, asked
 
         question = engine.next_question()
         if question is None:
@@ -270,9 +312,11 @@ def play(matrix: Matrix, target_idx: int, rng: random.Random,
             target, question, rng, noise, miss_rate, target_tokens))
         asked += 1
 
-    for idx, _p in engine.ranking(3):
-        if idx not in rejected:
-            return idx == target_idx, asked
+    # Out of questions: the page guesses here too, until the guesses run out.
+    while guesses < max_guesses:
+        done = offer()
+        if done is not None:
+            return done, asked
     return False, asked
 
 

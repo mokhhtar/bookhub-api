@@ -93,6 +93,37 @@ CHAR_UNKNOWN_CONFIDENCE = 0.10
 # The owner reported the length twice before this was measured.
 GUESS_THRESHOLD = 0.65
 
+# Refuse to name a book below this confidence. DISABLED (0.0), and the
+# measurement is why — this is a rejected idea kept because the number is
+# worth more than the code.
+#
+# The owner played Lord of the Mysteries and watched the game spend all
+# three guesses at 26%, 17% and 15% confidence. I called those "guesses it
+# does not believe in" and proposed refusing them; the owner agreed. Both of
+# us were wrong, and the arithmetic says so plainly: 26% over a 5,000-book
+# corpus is **1,300x the prior**. That is not noise, it is a strong belief
+# that happens to be expressed as a small number.
+#
+# Measured, 200 games x 4 seeds, paired per game, with play() calling
+# guess_target as the page does:
+#
+#   floor 0.00   69.2%   23q   (baseline)
+#   floor 0.20   53.9%   21q   lost 123, won 0,  p<0.0001
+#   floor 0.30   49.1%   20q   lost 161, won 0,  p<0.0001
+#
+# **"won 0" in every arm**, and that is the whole story rather than a
+# curiosity. A floor cannot block an early guess — those fire at >=0.65, or
+# on the ratio test at >=0.35, both above any floor here — so it only ever
+# blocks the guess made when the questions run out. There is nothing after
+# that guess, so refusing it can only convert a win into a loss. Twenty
+# points bought nothing.
+#
+# What the owner actually saw was a bad LOSING experience, and three wrong
+# guesses in one game is a real complaint. The fix for it is the wording,
+# not the behaviour: the page hedges the lead-in below LOW_CONFIDENCE_COPY
+# so a long-shot guess reads as one. That costs no accuracy at all.
+MIN_GUESS_CONFIDENCE = 0.0
+
 # Character questions only once the field has narrowed this far.
 ENDGAME_CANDIDATES = 30
 
@@ -512,6 +543,19 @@ class Engine:
         if not ranked:
             return None
         top_idx, top_p = ranked[0]
+
+        # Disabled by default (see MIN_GUESS_CONFIDENCE); the guard stays so
+        # the measurement can be re-run, and short-circuits when off so it
+        # costs nothing. Checked against the best SERIES total too, because
+        # pooling is exactly how scattered volumes become a real belief.
+        if MIN_GUESS_CONFIDENCE > 0.0:
+            best_series = 0.0
+            if self.m.series_members:
+                totals = self.series_belief()
+                live = [t for sid, t in totals.items() if sid not in rejected]
+                best_series = max(live) if live else 0.0
+            if max(top_p, best_series) < MIN_GUESS_CONFIDENCE:
+                return None
 
         if top_p >= GUESS_THRESHOLD:
             return {"kind": "book", "index": top_idx, "p": top_p}
