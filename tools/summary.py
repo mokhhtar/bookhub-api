@@ -1210,7 +1210,7 @@ _WQ_DISAMBIG_TEMPLATE_RE = re.compile(r"\{\{\s*disambig", re.IGNORECASE)
 
 # Bump whenever resolve_wikiquote_quotes changes what it returns; the
 # on-read heal refreshes any cached payload stamped with less.
-_WQ_PAYLOAD_VERSION = 9
+_WQ_PAYLOAD_VERSION = 10
 
 _WQ_DISAMBIGUATION_RE = re.compile(
     r"(?=.*\b(?:1[5-9]|20)\d\d\b)"
@@ -1219,6 +1219,73 @@ _WQ_DISAMBIGUATION_RE = re.compile(
     r"|\b(?:novel|film|play|opera|musical|series|adaptation)\s+(?:written\s+)?(?:by|directed by)\b",
     re.IGNORECASE,
 )
+
+
+# en.wikiquote's convention for a TRANSLATED work is to quote the original
+# language as the top-level bullet and hang the English translation off it as a
+# sub-bullet:
+#
+#   * ''Les grandes personnes ne comprennent jamais rien toutes seules…''
+#   ** '''Grown-ups never understand anything by themselves…'''
+#   *** Chapter I
+#
+# We only ever read top-level bullets, so The Little Prince shipped five
+# quotations in French, Les Misérables the same, the Divine Comedy in Italian
+# and the Aeneid in Latin — every one of them genuinely from the book, and
+# unreadable to the reader who asked for it in English.
+#
+# The markup does NOT identify which is which: the translation is bold on some
+# pages ("The Little Prince") and plain on others ("Don Quixote", "Faust"), and
+# One Hundred Years of Solitude opens with a bold-italic original. So the text
+# itself is what gets read, by function words — the words a language cannot do
+# without and cannot borrow.
+#
+# The test is deliberately two-sided. A one-sided "not enough English words"
+# threshold dropped real quotes written in sparse or archaic English — Ahab's
+# "I am past scorching; not easily can'st thou scorch a scar" carries exactly
+# one common English word. Positive evidence of ANOTHER language is required
+# before anything is treated as foreign, which took the false drops to zero
+# across the 20-book corpus this was tuned on.
+_WQ_EN_MARKERS = frozenset("""
+the and of to is it that with was for you have not but they this from would there when
+what his her their will who been were are than then shall must does did has had how very
+only such into about them him she we all one out any could should because after before
+thou thy thee upon these those our your its
+""".split())
+
+# Homographs of common English words are deliberately absent — "a", "i", "o",
+# "e", "in", "no", "so", "as", "man", "war", "die", "son", "sin", "on", "y",
+# "es", "ha", "mi", "ti", "ci" all appear here in some language and would
+# convict English prose of being Spanish.
+_WQ_FOREIGN_MARKERS = frozenset("""
+le les un une des du de et est qui que ne pas dans pour sur avec tout tous elle ils ce cet
+cette sa ses nous vous mais comme être avoir quand sont était moi toi rien jamais toujours
+aux par où leur leurs cela plus fait ni ou sans aussi encore très chez alors donc ainsi
+celui celle même mémes bien peu autre autres ces mon ton votre notre deux
+el los las del por para con su sus lo al más pero todo todos cuando muy había sobre esta
+este esa ese eso nada siempre porque
+il gli di da della delle che si nel nella tutto suo sua perché una con più
+der das und nicht ein eine einen einem den dem zu mit sich auf für von ich aber auch wenn
+hat wie nur noch dass daß oder mehr sein seine doch schon sind wird werden über durch
+não uma dos das em
+quod cum sed ut sunt esse autem enim quae hoc atque neque
+""".split())
+
+_WQ_WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
+
+
+def _wq_looks_english(text: str) -> bool:
+    words = _WQ_WORD_RE.findall(text.lower())
+    # Too short to judge. "Dessine-moi un mouton!" is French and four words
+    # long, but so is many an English epigram, and the length floor on quotes
+    # (40 chars) already keeps most of these out.
+    if len(words) < 8:
+        return True
+    english = sum(1 for w in words if w in _WQ_EN_MARKERS)
+    if english / len(words) >= 0.10:
+        return True
+    foreign = sum(1 for w in words if w in _WQ_FOREIGN_MARKERS)
+    return not (foreign >= 2 and foreign > english)
 
 
 # A Wikiquote title can be a REDIRECT, and `redirects=1` follows it silently:
@@ -1375,8 +1442,23 @@ def resolve_wikiquote_quotes(record: book_data.BookRecord, limit: int = 5) -> Op
             continue
         if _WQ_DISAMBIGUATION_RE.search(text):
             continue
-        speaker = ""
         nxt = lines[idx + 1].strip() if idx + 1 < len(lines) else ""
+        if not _wq_looks_english(text):
+            # Translated work: the English is one level down. Held to the same
+            # length bounds as any other quote, and to the language test in the
+            # other direction — a sub-bullet that is a citation ("Ch. V (tr.
+            # Francis Steegmuller)") or a second foreign edition is not a
+            # translation, and no quote beats one the reader cannot read.
+            sub = (_clean_wikitext(nxt.lstrip("*").strip())
+                   if nxt.startswith("**") and not nxt.startswith("***") else "")
+            if not (sub and 40 <= len(sub) <= 300 and _wq_looks_english(sub)):
+                continue
+            # The speaker parenthetical lives on the sub-bullet, which is now
+            # the quote itself; the line below it is the chapter citation, not
+            # an attribution. Unattested, so left unattested.
+            candidates.append((sub, ""))
+            continue
+        speaker = ""
         if nxt.startswith("**"):
             m = _speaker_re.search(_clean_wikitext(nxt.lstrip("*").strip()))
             if m:
@@ -1479,7 +1561,10 @@ def _cached_quotes(record: book_data.BookRecord, *,
     #     the quotes of whatever page the title redirects TO — "Crime" for
     #     Kidnapped, the author's page for eight others. Nothing about the
     #     stored texts distinguishes those from real ones; only re-resolving does.
-    key = ("wikiquote_v9", record.title, record.author)
+    # v10: top-level bullets on a translated work's page are the ORIGINAL
+    #      language, so v9 payloads hold French/Italian/Latin/German quotes
+    #      the English translation was sitting one line below all along.
+    key = ("wikiquote_v10", record.title, record.author)
     # Same two-layer trap as _cached_free_ebook above, latent rather than
     # observed here only because this key's version has been bumped often
     # enough to keep clearing it by accident. See that function for the why.
