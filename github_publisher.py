@@ -195,6 +195,21 @@ def _update_file(path: str, content: str, message: str, sha: str) -> bool:
 
 _CONTENT_VERSION_RE = re.compile(r"^content_version:\s*(\d+)", re.MULTILINE)
 _FREE_EBOOK_LINE_RE = re.compile(r"^free_ebook: (\{.*\})\s*$", re.MULTILINE)
+_QUOTES_LINE_RE = re.compile(r"^quotes: (\{.*\})\s*$", re.MULTILINE)
+
+# Every versioned payload a page bakes in, so adding the NEXT one is a line
+# here rather than a fifth rediscovery of the same bug. `quotes` was the
+# fourth sighting: the staleness test had been generalised past
+# content_version for free_ebook alone, so a page at the current
+# content_version holding quotes from the wrong work was frozen exactly the
+# way Peter Pan was. Five published pages were — Jane Eyre carried lyrics
+# from "Jane Eyre: The Musical", Persuasion carried a modern political
+# quotation about persuasion the rhetorical topic, and both pages read as
+# current to every check we had.
+_VERSIONED_PAYLOADS = (
+    ("free_ebook", _FREE_EBOOK_LINE_RE, "_FREE_EBOOK_PAYLOAD_VERSION"),
+    ("quotes", _QUOTES_LINE_RE, "_WQ_PAYLOAD_VERSION"),
+)
 
 
 def _page_content_version(markdown: str) -> int:
@@ -204,11 +219,15 @@ def _page_content_version(markdown: str) -> int:
     return int(m.group(1)) if m else 1
 
 
-def _free_ebook_payload_version() -> int:
+def _current_payload_version(name: str) -> int:
     # Lazy: tools.summary imports this module, so a module-level import here
     # would be circular.
-    from tools.summary import _FREE_EBOOK_PAYLOAD_VERSION
-    return _FREE_EBOOK_PAYLOAD_VERSION
+    import tools.summary as summary
+    return getattr(summary, name)
+
+
+def _free_ebook_payload_version() -> int:
+    return _current_payload_version("_FREE_EBOOK_PAYLOAD_VERSION")
 
 
 def _payload_version_of(free_ebook) -> int:
@@ -234,17 +253,26 @@ def _page_is_stale(markdown: str) -> bool:
     So the payload's own version is part of the question. This is the same
     shape as the sub-cache bug underneath it (tools/summary.py's `force`): a
     freshness check that consults a proxy for the data instead of the data.
+
+    Asked of EVERY versioned payload, not just free_ebook — see
+    _VERSIONED_PAYLOADS. Checking one of them was the same mistake one field
+    over, and it froze five pages holding another work's quotations.
     """
     if _page_content_version(markdown) < PUBLISH_CONTENT_VERSION:
         return True
-    m = _FREE_EBOOK_LINE_RE.search(markdown or "")
-    if not m:
-        return False           # `free_ebook: null` or absent — nothing stale
-    try:
-        payload = json.loads(m.group(1))
-    except Exception:
-        return True            # unparseable: rewriting regenerates the line
-    return _payload_version_of(payload) < _free_ebook_payload_version()
+    for _name, line_re, version_attr in _VERSIONED_PAYLOADS:
+        m = line_re.search(markdown or "")
+        if not m:
+            continue           # `null` or absent — no payload to be out of date
+        try:
+            payload = json.loads(m.group(1))
+        except Exception:
+            return True        # unparseable: rewriting regenerates the line
+        if not isinstance(payload, dict):
+            continue
+        if int(payload.get("v", 0) or 0) < _current_payload_version(version_attr):
+            return True
+    return False
 
 
 # ── Front-matter emission ────────────────────────────────────
