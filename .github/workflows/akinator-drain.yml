@@ -51,6 +51,13 @@ jobs:
           # reason NOT to write (committing an empty file would erase every
           # override the game has), and each should be visible rather than
           # buried in a green run.
-          curl -sS -f -m 300 -X POST \
+          #
+          # --fail-with-body, not -f: plain -f discards the response body on
+          # an HTTP error, so the endpoint's carefully distinct reasons
+          # ("counts unreadable", "artifacts unreachable", "existing
+          # overrides.json is unparseable") never reached the log — the run
+          # said only "returned error: 409" and which guard fired was
+          # unknowable. Same non-zero exit, body kept.
+          curl -sS --fail-with-body -m 300 -X POST \
             -H "X-Sync-Secret: ${{ secrets.AKINATOR_SYNC_SECRET }}" \
             "https://bookhub-api-hnv7.onrender.com/akinator/drain?dry_run=${{ inputs.dry_run || false }}"

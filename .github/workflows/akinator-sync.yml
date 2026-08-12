@@ -43,6 +43,10 @@ jobs:
           # 409 is the guards refusing (question_hash mismatch, size check
           # failed) and it means "run a full build", not "a bug" — but it
           # should still fail the run so it is visible rather than buried.
-          curl -sS -f -m 300 -X POST \
+          #
+          # --fail-with-body, not -f: -f throws the body away on an HTTP
+          # error, which is exactly when the reason string matters. WHICH
+          # guard refused decides what to do next, and it was being dropped.
+          curl -sS --fail-with-body -m 300 -X POST \
             -H "X-Sync-Secret: ${{ secrets.AKINATOR_SYNC_SECRET }}" \
             "https://bookhub-api-hnv7.onrender.com/akinator/sync?dry_run=${{ inputs.dry_run || false }}"
