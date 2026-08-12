@@ -1,34 +1,43 @@
 """
-scripts/refresh_quote_pages.py — republish the committed book pages whose
-"Notable Quotes" came from a Wikiquote REDIRECT.
+scripts/refresh_quote_pages.py — republish committed book pages whose
+"Notable Quotes" were produced by a resolver we have since corrected.
 
     python scripts/refresh_quote_pages.py --dry-run     # list, touch nothing
     python scripts/refresh_quote_pages.py --limit 1     # canary FIRST
     python scripts/refresh_quote_pages.py               # the rest
 
-WHY. `redirects=1` on the parse call was followed blindly, so a title that
-redirects elsewhere on Wikiquote published THAT page's quotes. "Kidnapped"
-redirects to "Crime", so Stevenson's novel shipped five quotations about
-crime as a topic; eight more books redirect to their AUTHOR, which is how
-"Around the World in Eighty Days" and "The Mysterious Island" ended up
-displaying the same five quotes as each other, in French.
+WHY. The quotes resolver has been wrong three times, each in a way no reader
+could have spotted, because every version shipped real quotations verbatim
+from the page it cites — just not the book's page:
+
+  v7  `redirects=1` followed blindly. "Kidnapped" redirects to "Crime", so
+      Stevenson's novel carried five quotations about crime as a topic;
+      eight more redirect to their AUTHOR.
+  v10 The top-level bullet on a TRANSLATED work's page is the original
+      language, and the English translation sits one level below it. The
+      Little Prince, Les Misérables and Candide shipped in French.
+  v11 A title resolves to whatever page bears it — a theme, an adaptation, a
+      musical. Jane Eyre carried lyrics from "Jane Eyre: The Musical";
+      Persuasion carried a modern political quotation about persuasion.
 
 The resolver is fixed and the cache heals itself on read. Committed pages do
 neither — [[Storage Layers]] layer 4 is permanent and never self-repairs — so
 this script exists to push the fix into the files.
 
-HOW IT FINDS THEM. Not by reading the quotes: they are ordinary, well-formed
-quotations that happen to belong to another article, and no inspection of the
-text could ever say so. That was the whole trap. It asks Wikiquote instead —
-`action=query&redirects=1` reports where each stored source_url actually
-lands — and keeps the page only when the landing title disagrees with the
-book title under the same word-level test the resolver now uses.
+HOW IT FINDS THEM. By the payload's own version, not by reading the quotes.
+That is the whole lesson of the three incidents above: the text is always
+well-formed and plausible, so no inspection of it can say whose it is. Any
+page whose stored `quotes.v` is below tools/summary.py's _WQ_PAYLOAD_VERSION
+was written by a resolver we have since corrected, which is the same
+invariant github_publisher._page_is_stale now uses. The test needs no edit
+the next time this happens — only the version bump the fix carries anyway.
 
 Publishing is a SIDE EFFECT of a normal /summary call (publish_book runs as a
 FastAPI BackgroundTask), so this is a paced crawl of the live API. It creates
-nothing itself and needs no credentials. PUBLISH_CONTENT_VERSION must already
-be 7 on the deployed process, or every call will no-op and the report will
-say so rather than pretending it worked.
+nothing itself and needs no credentials. The deployed process must already be
+serving the current _WQ_PAYLOAD_VERSION, or every call rewrites the page with
+the same stale payload; the run aborts and says so rather than reporting a
+success it did not achieve.
 """
 from __future__ import annotations
 
@@ -44,7 +53,7 @@ import httpx
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tools.summary import _wq_titles_agree  # noqa: E402  the resolver's own test
+from tools.summary import _WQ_PAYLOAD_VERSION  # noqa: E402  the resolver's own stamp
 
 API = os.environ.get("LITHECA_API", "https://bookhub-api-hnv7.onrender.com")
 SITE = os.path.abspath(os.path.join(
@@ -78,40 +87,23 @@ def _front_matter(path: str) -> dict:
             out["wq_page"] = urllib.parse.unquote(url.rsplit("/", 1)[-1]).replace("_", " ")
             out["quote_count"] = len(quotes.get("texts") or [])
             out["first_quote"] = (quotes.get("texts") or [""])[0]
+            out["quotes_v"] = int(quotes.get("v", 0) or 0)
     return out
 
 
 def find_affected() -> list[dict]:
-    """Pages whose stored Wikiquote title redirects somewhere that isn't the book."""
-    pages = []
+    """Pages whose baked-in quotes predate the current resolver."""
+    affected = []
     for name in sorted(os.listdir(BOOKS)):
         if not name.endswith(".md"):
             continue
         fm = _front_matter(os.path.join(BOOKS, name))
-        if fm.get("wq_page") and fm.get("title"):
-            fm["file"] = name
-            pages.append(fm)
-
-    # One batched lookup per 20 titles; the API reports every redirect it
-    # followed, so a title absent from that list is not a redirect at all.
-    landed: dict[str, str] = {}
-    with httpx.Client(headers=UA, timeout=30.0) as client:
-        titles = [p["wq_page"] for p in pages]
-        for i in range(0, len(titles), 20):
-            r = client.get(WQ_API, params={
-                "action": "query", "redirects": 1, "format": "json",
-                "titles": "|".join(titles[i:i + 20]),
-            })
-            for hop in (r.json().get("query", {}).get("redirects") or []):
-                landed[hop["from"]] = hop["to"]
-            time.sleep(0.3)
-
-    affected = []
-    for p in pages:
-        target = landed.get(p["wq_page"])
-        if target and not _wq_titles_agree(p["title"], target):
-            p["redirects_to"] = target
-            affected.append(p)
+        if not (fm.get("wq_page") and fm.get("title")):
+            continue
+        if fm.get("quotes_v", 0) >= _WQ_PAYLOAD_VERSION:
+            continue
+        fm["file"] = name
+        affected.append(fm)
     return affected
 
 
@@ -131,7 +123,7 @@ def refresh(page: dict, client: httpx.Client) -> str:
         return "unparseable"
     if not quotes:
         return "cleared"                      # the honest outcome for these
-    if quotes.get("v", 0) < 7:
+    if quotes.get("v", 0) < _WQ_PAYLOAD_VERSION:
         return "STALE v%s — is the deploy live?" % quotes.get("v")
     return "requoted from " + (quotes.get("source_url", "").rsplit("/", 1)[-1])
 
@@ -143,9 +135,10 @@ def main() -> int:
     args = ap.parse_args()
 
     affected = find_affected()
-    print(f"{len(affected)} committed page(s) carry quotes from a redirect:\n")
+    print(f"{len(affected)} committed page(s) hold quotes below "
+          f"v{_WQ_PAYLOAD_VERSION}:\n")
     for p in affected:
-        print(f"  {p['file'][:-3]:<40} {p['wq_page']} -> {p['redirects_to']}")
+        print(f"  {p['file'][:-3]:<40} v{p['quotes_v']}  from '{p['wq_page']}'")
         print(f"      {p['quote_count']} quote(s), first: {p['first_quote'][:70]}")
     if not affected:
         return 0
@@ -160,8 +153,10 @@ def main() -> int:
             outcome = refresh(p, client)
             print(f"  [{i}/{len(todo)}] {p['file'][:-3]:<40} {outcome}")
             if outcome.startswith("STALE"):
-                print("\nAborting: the deployed process is not running "
-                      "PUBLISH_CONTENT_VERSION 7 yet. Nothing further was called.")
+                print(f"\nAborting: the deployed process is not serving "
+                      f"_WQ_PAYLOAD_VERSION {_WQ_PAYLOAD_VERSION} yet, so every "
+                      f"call would rewrite the page with the same stale payload. "
+                      f"Nothing further was called.")
                 return 1
             if i < len(todo):
                 time.sleep(PACE_SECONDS)
