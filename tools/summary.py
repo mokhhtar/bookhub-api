@@ -1210,7 +1210,7 @@ _WQ_DISAMBIG_TEMPLATE_RE = re.compile(r"\{\{\s*disambig", re.IGNORECASE)
 
 # Bump whenever resolve_wikiquote_quotes changes what it returns; the
 # on-read heal refreshes any cached payload stamped with less.
-_WQ_PAYLOAD_VERSION = 10
+_WQ_PAYLOAD_VERSION = 11
 
 _WQ_DISAMBIGUATION_RE = re.compile(
     r"(?=.*\b(?:1[5-9]|20)\d\d\b)"
@@ -1323,6 +1323,43 @@ _WQ_ADAPTATION_QUALIFIER_RE = re.compile(
 )
 
 
+# Every guard above asks about the page's TITLE, and a title is exactly what
+# these pages share with the book. Measured against the 46 published books that
+# resolve to a Wikiquote page, seven were quoting something else entirely:
+#
+#   Jane Eyre            -> "Jane Eyre: The Musical"        (a lyricist's words)
+#   Persuasion           -> "Persuasion"                    (the rhetorical topic)
+#   War and Peace        -> "War and peace"                 (the theme; Bacon, Berry)
+#   The War of the Worlds-> "...(radio drama)"              (Welles' broadcast)
+#   Project Hail Mary    -> "Project Hail Mary"             (the 2026 film)
+#   The Day After        -> "The Day After Tomorrow"        (the 2004 film)
+#   Mutiny on the Bounty -> "Mutiny on the Bounty"          (the historical event)
+#
+# The subtitle case walks straight through `_wq_titles_agree` (it strips a
+# trailing parenthetical, not a colon), and no wording filter can separate a
+# musical's lyrics from a novel's prose — both are quotations, both are real.
+#
+# But Wikiquote files its pages, and a work is filed as a work: "Works by Leo
+# Tolstoy", "Russian novels", "Shakespearean tragedies", "Portuguese novels",
+# "Public domain works". A theme carries "Peace", "War", "Philosophy"; an
+# adaptation carries "Musicals", "2026 films", "Radio shows". Asking WHAT THE
+# PAGE IS costs nothing — `prop` takes `wikitext|categories` in the request we
+# already make.
+#
+# Anchored on the last word of the category, which is what measured clean:
+# 39 of 39 real work pages kept, 7 of 7 impostors refused.
+_WQ_WORK_CATEGORY_RE = re.compile(
+    r"^works by\b"
+    r"|\b(?:novels?|novellas?|books?|plays?|poems?|poetry|tragedies|comedies|"
+    r"stories|essays|memoirs?|works|epics?|fiction|literature)$",
+    re.IGNORECASE,
+)
+
+
+def _wq_is_a_work(categories: list[str]) -> bool:
+    return any(_WQ_WORK_CATEGORY_RE.search(c.replace("_", " ")) for c in categories)
+
+
 def _wq_titles_agree(asked: str, landed: str) -> bool:
     qualifier = re.search(r"\(([^)]*)\)\s*$", landed or "")
     if qualifier and _WQ_ADAPTATION_QUALIFIER_RE.search(qualifier.group(1)):
@@ -1383,13 +1420,14 @@ def resolve_wikiquote_quotes(record: book_data.BookRecord, limit: int = 5) -> Op
     for candidate in ordered[:3]:
         try:
             r = httpx.get(WIKIQUOTE_API, params={
-                "action": "parse", "page": candidate, "prop": "wikitext",
+                "action": "parse", "page": candidate, "prop": "wikitext|categories",
                 "format": "json", "redirects": 1,
             }, headers=_UA_HEADERS, timeout=8.0)
             parsed = r.json()["parse"]
             text = parsed["wikitext"]["*"]
             # Where the API actually landed after following redirects.
             landed = parsed.get("title") or candidate
+            cats = [c.get("*", "") for c in (parsed.get("categories") or [])]
         except Exception as e:
             log.warning(f"Wikiquote parse failed for '{candidate}': {e}")
             continue
@@ -1408,6 +1446,11 @@ def resolve_wikiquote_quotes(record: book_data.BookRecord, limit: int = 5) -> Op
         # attributing them to ONE book is wrong even when they are genuine.
         if author_norm and _norm_match(landed) == author_norm:
             log.info(f"Wikiquote '{candidate}' redirects to the author page '{landed}' — skipping.")
+            continue
+        # Last: is this page a WORK at all? See _WQ_WORK_CATEGORY_RE above.
+        if not _wq_is_a_work(cats):
+            log.info(f"Wikiquote '{landed}' is not filed as a work "
+                     f"(categories: {cats[:6]}) — skipping.")
             continue
         # The resolved title, so source_url points where the text came from.
         wikitext, page = text, landed
@@ -1564,7 +1607,11 @@ def _cached_quotes(record: book_data.BookRecord, *,
     # v10: top-level bullets on a translated work's page are the ORIGINAL
     #      language, so v9 payloads hold French/Italian/Latin/German quotes
     #      the English translation was sitting one line below all along.
-    key = ("wikiquote_v10", record.title, record.author)
+    # v11: the page a title resolves to may be a theme, an adaptation or a
+    #      musical rather than the book — seven of the 46 resolved published
+    #      books were quoting one, so v10 payloads can hold another work's
+    #      words entirely (Jane Eyre's were the musical's).
+    key = ("wikiquote_v11", record.title, record.author)
     # Same two-layer trap as _cached_free_ebook above, latent rather than
     # observed here only because this key's version has been bumped often
     # enough to keep clearing it by accident. See that function for the why.
