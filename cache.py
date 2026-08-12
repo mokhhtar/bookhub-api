@@ -229,6 +229,77 @@ def incr_key(key: str, ttl: int) -> Optional[int]:
         return None
 
 
+def pipeline(commands: list[list]) -> Optional[list]:
+    """Run several Redis commands in one round trip. None on any failure.
+
+    Added for the mind reader's learning loop, which records one hash
+    increment per question answered in a game — twenty-odd commands that
+    would otherwise be twenty-odd HTTP requests from Render's free tier.
+
+    NOT atomic (Upstash's /pipeline runs in order but does not wrap in a
+    transaction) and that is fine here: the counters it drives are
+    monotonic and independent, so a partially applied batch loses a few
+    increments rather than corrupting anything. Nothing in this file needs
+    /multi-exec.
+    """
+    if not (UPSTASH_URL and UPSTASH_TOKEN):
+        return None
+    try:
+        r = httpx.post(f"{UPSTASH_URL}/pipeline", headers=_HEADERS,
+                       json=commands, timeout=8.0)
+        if r.status_code != 200:
+            log.warning(f"Redis pipeline returned {r.status_code}")
+            return None
+        return r.json()
+    except Exception as e:
+        log.warning(f"Redis pipeline failed: {e}")
+        return None
+
+
+def hgetall(key: str) -> Optional[dict]:
+    """Whole hash as {field: value}, or None on failure.
+
+    Upstash returns HGETALL as a flat [k1, v1, k2, v2, ...] array, which is
+    the raw RESP shape rather than a map — folded here so callers never
+    depend on that detail.
+    """
+    if not (UPSTASH_URL and UPSTASH_TOKEN):
+        return None
+    try:
+        r = httpx.post(UPSTASH_URL, headers={**_HEADERS, "Content-Type": "application/json"},
+                       json=["HGETALL", key], timeout=6.0)
+        if r.status_code != 200:
+            return None
+        flat = r.json().get("result") or []
+        return {flat[i]: flat[i + 1] for i in range(0, len(flat) - 1, 2)}
+    except Exception as e:
+        log.warning(f"Redis HGETALL failed for '{key}': {e}")
+        return None
+
+
+def set_members(key: str) -> Optional[list[str]]:
+    """SMEMBERS. None on failure — callers must not treat that as empty.
+
+    The learning loop keeps an explicit set of touched books rather than
+    SCANning for them: Upstash restricts SCAN on read-only tokens, and a
+    set the writer maintains is cheaper and exact. `None` vs `[]` matters
+    here — an empty set means "nothing was submitted", a failure means "we
+    could not look", and the drain must not commit an empty file for the
+    second reason.
+    """
+    if not (UPSTASH_URL and UPSTASH_TOKEN):
+        return None
+    try:
+        r = httpx.post(UPSTASH_URL, headers={**_HEADERS, "Content-Type": "application/json"},
+                       json=["SMEMBERS", key], timeout=6.0)
+        if r.status_code != 200:
+            return None
+        return list(r.json().get("result") or [])
+    except Exception as e:
+        log.warning(f"Redis SMEMBERS failed for '{key}': {e}")
+        return None
+
+
 def delete_key(key: str) -> None:
     """Best-effort DEL (also evicts L1) — e.g. releasing an ingest lock on failure."""
     _mem_cache.pop(key, None)
