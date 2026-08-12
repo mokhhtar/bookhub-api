@@ -239,6 +239,20 @@ def _payload_version_of(free_ebook) -> int:
     return int(free_ebook.get("v", 0) or 0)
 
 
+def _published_payload_versions(result: dict) -> dict:
+    """The version each versioned payload in this /summary result carries.
+
+    A field that is absent or null counts as CURRENT — there is no payload to
+    be out of date — which is the same rule _payload_version_of applies, and
+    the reason a book with no free ebook is not republished forever."""
+    out = {}
+    for name, _line_re, attr in _VERSIONED_PAYLOADS:
+        payload = result.get(name)
+        out[name] = (int(payload.get("v", 0) or 0) if isinstance(payload, dict)
+                     else _current_payload_version(attr))
+    return out
+
+
 def _page_is_stale(markdown: str) -> bool:
     """Whether a published page needs rewriting.
 
@@ -624,7 +638,7 @@ def publish_book(result: dict) -> None:
                 return
 
         a_slug = slug_mod.author_slug(result.get("author") or "")
-        fev = _payload_version_of(result.get("free_ebook"))
+        pv = _published_payload_versions(result)
 
         # Dedupe layer 2 + collision handling: the repo itself.
         path = f"_books/{book_slug}.md"
@@ -639,7 +653,7 @@ def publish_book(result: dict) -> None:
                     if _update_file(path, md,
                                     f"Refresh book page to v{PUBLISH_CONTENT_VERSION}: {title}", sha):
                         log.info(f"Refreshed stale book page ({path}) to v{PUBLISH_CONTENT_VERSION}")
-                _mark_published(book_slug, gid, a_slug, fev)
+                _mark_published(book_slug, gid, a_slug, pv)
                 return
             # Different book shares the slug — suffix with author, then -2.
             for candidate in (f"{book_slug}-{a_slug}", f"{book_slug}-2"):
@@ -653,7 +667,7 @@ def publish_book(result: dict) -> None:
                             if _update_file(f"_books/{candidate}.md", md,
                                             f"Refresh book page to v{PUBLISH_CONTENT_VERSION}: {title}", c_sha):
                                 log.info(f"Refreshed stale book page (_books/{candidate}.md)")
-                        _mark_published(candidate, gid, a_slug, fev)
+                        _mark_published(candidate, gid, a_slug, pv)
                         return
                     continue
                 book_slug, path = candidate, f"_books/{candidate}.md"
@@ -665,27 +679,38 @@ def publish_book(result: dict) -> None:
         md = _book_markdown(result, book_slug, a_slug)
         if _create_file(path, md, f"Add book page: {title}"):
             log.info(f"Published book page: {path}")
-        _mark_published(book_slug, gid, a_slug, fev)  # set flags even on benign-skip
+        _mark_published(book_slug, gid, a_slug, pv)  # set flags even on benign-skip
     except Exception as e:
         log.warning(f"publish_book failed (non-fatal): {e}")
 
 
 def _flag_is_current(flag) -> bool:
     """A published:* / published_gid:* flag counts as 'done' only if it records
-    a content version >= the current one AND the free_ebook payload version the
-    page was published with. Absent flag or a pre-versioning flag (no 'v',
-    treated as 1) is stale → allow the repo check to refresh.
+    a content version >= the current one AND the version of EVERY versioned
+    payload the page was published with. Absent flag or a pre-versioning flag
+    (no 'v', treated as 1) is stale → allow the repo check to refresh.
 
     The payload half matters because this flag is checked BEFORE the repo is
     read: without it, a page published from a stale payload short-circuits here
-    and _page_is_stale never gets to see it. Flags written before 'fev' existed
-    have no such record, so they are distrusted once — one repo read per page,
+    and _page_is_stale never gets to see it. Flags written before this record
+    existed have none, so they are distrusted once — one repo read per page,
     after which the flag carries it and the short-circuit resumes. That sweep
     is the point, not a cost to avoid: it is how the pages already frozen in
-    that state get re-examined."""
-    return (isinstance(flag, dict)
-            and flag.get("v", 1) >= PUBLISH_CONTENT_VERSION
-            and flag.get("fev", 0) >= _free_ebook_payload_version())
+    that state get re-examined.
+
+    It recorded free_ebook's version and nothing else, which is why fixing
+    _page_is_stale alone left twenty pages still quoting the wrong work: the
+    flag said done and the corrected test never ran. Same bug, one layer out,
+    for the same reason — third sighting of this shape. Reading the whole of
+    _VERSIONED_PAYLOADS is what stops there being a fourth.
+    """
+    if not (isinstance(flag, dict) and flag.get("v", 1) >= PUBLISH_CONTENT_VERSION):
+        return False
+    published = flag.get("pv")
+    if not isinstance(published, dict):
+        return False        # pre-'pv' flag: distrust once, then it carries
+    return all(published.get(name, 0) >= _current_payload_version(attr)
+               for name, _line_re, attr in _VERSIONED_PAYLOADS)
 
 
 # ── Published-books index (single Redis key) ─────────────────
@@ -814,17 +839,19 @@ def _same_book(content: str, title: str, a_slug: str) -> bool:
 
 
 def _mark_published(book_slug: str, gid: str, a_slug: str = "",
-                    fev: int = 0) -> None:
+                    pv: dict | None = None) -> None:
     ts = datetime.now(timezone.utc).timestamp()
     v = PUBLISH_CONTENT_VERSION
     # "a" (author_slug) joined the flags for /search static-link identity
     # checks — two books sharing a title must never swap static pages.
-    # "fev" is the free_ebook payload version the page was written from, so a
-    # page built on a stale payload cannot be short-circuited as done. It
-    # records what was PUBLISHED, never the current constant.
-    cache.set_key(f"published:{book_slug}", {"gid": gid, "ts": ts, "v": v, "a": a_slug, "fev": fev})
+    # "pv" is the version of every versioned payload the page was written
+    # from, so a page built on a stale one cannot be short-circuited as done.
+    # It records what was PUBLISHED, never the current constants — writing the
+    # constants here would make the flag agree with itself forever.
+    entry = {"gid": gid, "ts": ts, "v": v, "a": a_slug, "pv": pv or {}}
+    cache.set_key(f"published:{book_slug}", entry)
     if gid:
-        cache.set_key(f"published_gid:{gid}", {"slug": book_slug, "ts": ts, "v": v, "a": a_slug, "fev": fev})
+        cache.set_key(f"published_gid:{gid}", {**entry, "slug": book_slug})
     _index_published(book_slug, gid, a_slug)
 
 
