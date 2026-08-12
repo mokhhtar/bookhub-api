@@ -1,0 +1,56 @@
+name: Drain mind reader play counts into overrides
+
+# The second half of the learning loop. /akinator/submit records what
+# players answered about the book they said they meant; this folds those
+# counts into games/data/akinator/overrides.json and commits it, so the
+# page can load what the game has learned.
+#
+# WHY IT EXISTS AT ALL. Every measurement this project has taken says the
+# engine is not the bottleneck — the data is. A player answering from
+# knowledge Open Library lacks costs about twenty points of success rate,
+# and no harvest closes that: traits at full coverage bought nothing,
+# Wikidata does not have 91% of the books we are missing. This is the only
+# source that records what READERS know rather than what cataloguers wrote
+# down.
+#
+# WHY ON RENDER, not here — same reason as akinator-sync.yml. Render holds
+# both the Redis credentials and GITHUB_PAT; CI holds neither, and the
+# drain needs to read counts and commit in one pass.
+#
+# AFTER THE SYNC (02:40), so a book published today is already a row in the
+# matrix before any override could refer to it. An override for a book the
+# artifacts do not carry is skipped rather than failing, but ordering them
+# means that path stays theoretical.
+#
+# Requires AKINATOR_SYNC_SECRET — the same secret as the sync, since both
+# endpoints do the same privileged thing: commit to a public repo. Without
+# it the endpoint is closed (403), and this fails loudly rather than
+# quietly doing nothing.
+
+on:
+  schedule:
+    - cron: "10 3 * * *"  # 03:10 UTC daily — 30 min after akinator-sync
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Report what would be written, commit nothing"
+        type: boolean
+        default: false
+
+jobs:
+  drain:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake the instance (free tier sleeps after ~15 min idle)
+        run: curl -sS -m 100 --retry 3 --retry-delay 10 "https://bookhub-api-hnv7.onrender.com/health" || true
+
+      - name: Fold play counts into overrides.json
+        run: |
+          # 409 means the drain refused — unreadable counts, unreachable
+          # artifacts, an unparseable existing file. Each of those is a
+          # reason NOT to write (committing an empty file would erase every
+          # override the game has), and each should be visible rather than
+          # buried in a green run.
+          curl -sS -f -m 300 -X POST \
+            -H "X-Sync-Secret: ${{ secrets.AKINATOR_SYNC_SECRET }}" \
+            "https://bookhub-api-hnv7.onrender.com/akinator/drain?dry_run=${{ inputs.dry_run || false }}"
