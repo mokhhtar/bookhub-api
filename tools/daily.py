@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import re
+import unicodedata
 from datetime import datetime, timezone
 
 import httpx
@@ -175,6 +176,77 @@ Return ONLY JSON: {{"accurate": true or false}}"""
         return False
 
 
+# ── Do we already publish a page for this book? ──────────────
+#
+# An event-linked book of the day is a CATALOG book, so its card has always
+# pointed at the dynamic summarizer — which on Render's free tier means a
+# 30-60s cold start at the exact moment the reader clicks the one link the
+# card exists to offer. `_book_from_our_shelf` never had this problem because
+# it only ever picks books we publish; the verified path did, every time it
+# fired.
+#
+# books.json is the site's own machine-readable index of published pages — the
+# same file warm-print.yml crawls and the game's relinker matches against. It
+# is one small GET, it is right by construction, and it cannot drift from what
+# is actually published the way a hardcoded list would.
+SITE_BOOKS_JSON = "https://litheca.com/books.json"
+
+_ARTICLE_RE = re.compile(r"^(?:the|a|an)\s+", re.IGNORECASE)
+
+
+def _title_key(title: str) -> str:
+    """Match key for a title: no accents, no subtitle, no leading article."""
+    t = unicodedata.normalize("NFKD", title or "").encode("ascii", "ignore").decode()
+    t = t.split(":")[0]                       # "Dracula: A Mystery Story" → "Dracula"
+    t = _ARTICLE_RE.sub("", t.strip())        # "The Odyssey" ↔ "Odyssey"
+    return re.sub(r"[^a-z0-9]+", "", t.lower())
+
+
+def _surname_key(author: str) -> str:
+    """Five leading letters of the first author's surname.
+
+    Not an exact comparison, and not for tidiness: the same person is spelled
+    differently by different catalogues in ways that are not typos. Google
+    Books says "F. Scott Fitzgerald" where a page says "Francis Scott Key
+    Fitzgerald"; "Dostoyevsky" and "Dostoevsky" are both correct; Gutenberg
+    writes "graf Leo Tolstoy". Five letters of the surname survives all of
+    them and is still specific enough to separate authors.
+    """
+    a = unicodedata.normalize("NFKD", author or "").encode("ascii", "ignore").decode()
+    parts = re.sub(r"[^A-Za-z\s]", " ", a.split(",")[0]).split()
+    return parts[-1][:5].lower() if parts else ""
+
+
+def _published_index() -> dict[tuple[str, str], str]:
+    """{(title_key, surname_key): "/summary/slug/"} for every page we publish."""
+    key = ("published_index_v1",)
+    hit = cache.get(*key)
+    if hit is not None:
+        return {tuple(k.split("\t")): v for k, v in hit.items()}
+    index: dict[str, str] = {}
+    try:
+        r = httpx.get(SITE_BOOKS_JSON, headers=HEADERS, timeout=10.0)
+        if r.status_code == 200:
+            for b in r.json() or []:
+                url, title = b.get("url"), b.get("title")
+                if url and title:
+                    index[f"{_title_key(title)}\t{_surname_key(b.get('author'))}"] = url
+    except Exception as e:
+        log.warning(f"books.json fetch failed: {e}")
+    # Cached either way, but a failure only briefly — a missing index costs a
+    # cold-start link, not a wrong one, so it is never worth a long negative.
+    cache.set(index, *key, ttl=21600 if index else 600)
+    return {tuple(k.split("\t")): v for k, v in index.items()}
+
+
+def _our_page_url(title: str, author: str) -> str | None:
+    """The static page we publish for this book, or None if we publish none."""
+    tk, sk = _title_key(title), _surname_key(author)
+    if not tk or not sk:
+        return None
+    return _published_index().get((tk, sk))
+
+
 def _book_from_our_shelf(date_str: str) -> dict | None:
     """Fallback when no event/book link survives the accuracy check.
 
@@ -234,11 +306,17 @@ Real, widely available books only. Return ONLY the JSON."""
         verified = book_data.verify_book_exists(cand.get("title", ""), cand.get("author", ""))
         if verified:
             ev = events[idx]
-            return {
+            out = {
                 **verified,
                 "event": {"year": ev.get("year"), "text": (ev.get("text") or "")[:300]},
                 "connection": (cand.get("connection") or "")[:300],
             }
+            # The homepage already prefers book_url over the summarizer link;
+            # it was simply never given one on this path.
+            page = _our_page_url(verified.get("title", ""), verified.get("author", ""))
+            if page:
+                out["book_url"] = page
+            return out
     return _book_from_our_shelf(date_str)
 
 
@@ -296,6 +374,12 @@ Return ONLY JSON: {{"index": 0, "blurb": "...", "notable_book_title": "..." or n
         notable = None
         if data.get("notable_book_title"):
             notable = book_data.verify_book_exists(data["notable_book_title"], chosen["name"])
+            # "Best known for <book>" is the one link on this card, and an
+            # author of the day is exactly the kind of author we publish.
+            if notable:
+                page = _our_page_url(notable.get("title", ""), notable.get("author", ""))
+                if page:
+                    notable["book_url"] = page
     except Exception as e:
         log.warning(f"Author-of-day selection failed: {e}")
         chosen, blurb, notable = shortlist[0], "", None
