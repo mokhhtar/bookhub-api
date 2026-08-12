@@ -241,6 +241,15 @@ def pipeline(commands: list[list]) -> Optional[list]:
     monotonic and independent, so a partially applied batch loses a few
     increments rather than corrupting anything. Nothing in this file needs
     /multi-exec.
+
+    A PER-COMMAND ERROR IS A FAILURE, even though the HTTP call succeeded.
+    Upstash answers a pipeline with 200 and one object per command, each
+    either {"result": ...} or {"error": "..."} — so a batch of writes
+    rejected by a READ-ONLY token comes back 200 with an error in every
+    slot. Returning that list would have every caller read "not None" as
+    "stored", and the learning loop would report recording answers it never
+    wrote, then find nothing to drain, forever. Silent partial success is
+    this project's most repeated bug; it does not get a fifth outing here.
     """
     if not (UPSTASH_URL and UPSTASH_TOKEN):
         return None
@@ -250,10 +259,38 @@ def pipeline(commands: list[list]) -> Optional[list]:
         if r.status_code != 200:
             log.warning(f"Redis pipeline returned {r.status_code}")
             return None
-        return r.json()
+        out = r.json()
+        if not isinstance(out, list) or len(out) != len(commands):
+            log.warning("Redis pipeline returned %d results for %d commands",
+                        len(out) if isinstance(out, list) else -1, len(commands))
+            return None
+        for i, item in enumerate(out):
+            if isinstance(item, dict) and item.get("error"):
+                log.warning("Redis pipeline command %d (%s) failed: %s",
+                            i, commands[i][0], str(item["error"])[:120])
+                return None
+        return out
     except Exception as e:
         log.warning(f"Redis pipeline failed: {e}")
         return None
+
+
+def _result(payload, what: str):
+    """The `result` of a single-command REST reply, or None if it errored.
+
+    Same distinction as above at the single-command endpoint: Upstash
+    answers a rejected command with 200 and {"error": ...}, which a plain
+    `.get("result") or []` reads as an empty hash or an empty set. For
+    `set_members` that is the exact confusion its docstring warns about —
+    "nothing was submitted" and "we could not look" must not collapse,
+    because the drain commits on the first and refuses on the second.
+    """
+    if not isinstance(payload, dict) or payload.get("error"):
+        log.warning("Redis %s errored: %s", what,
+                    str((payload or {}).get("error"))[:120]
+                    if isinstance(payload, dict) else "malformed reply")
+        return None
+    return payload.get("result")
 
 
 def hgetall(key: str) -> Optional[dict]:
@@ -270,7 +307,9 @@ def hgetall(key: str) -> Optional[dict]:
                        json=["HGETALL", key], timeout=6.0)
         if r.status_code != 200:
             return None
-        flat = r.json().get("result") or []
+        flat = _result(r.json(), "HGETALL")
+        if flat is None:
+            return None
         return {flat[i]: flat[i + 1] for i in range(0, len(flat) - 1, 2)}
     except Exception as e:
         log.warning(f"Redis HGETALL failed for '{key}': {e}")
@@ -294,7 +333,8 @@ def set_members(key: str) -> Optional[list[str]]:
                        json=["SMEMBERS", key], timeout=6.0)
         if r.status_code != 200:
             return None
-        return list(r.json().get("result") or [])
+        members = _result(r.json(), "SMEMBERS")
+        return None if members is None else list(members)
     except Exception as e:
         log.warning(f"Redis SMEMBERS failed for '{key}': {e}")
         return None
