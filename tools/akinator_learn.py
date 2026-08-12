@@ -215,6 +215,11 @@ def _artifacts() -> dict:
             "meta": meta,
             "qids": [q["id"] for q in questions],
             "index": {b.get("k"): i for i, b in enumerate(books) if b.get("k")},
+            # Richness drives absence_confidence, which the drain needs to
+            # anchor an absent cell's prior at the right strength: 0.45 for
+            # a bare record, 0.15 for a rich one.
+            "richness": {b.get("k"): (b.get("r") or 0)
+                         for b in books if b.get("k")},
             "matrix": matrix,
         })
     except Exception as exc:  # noqa: BLE001
