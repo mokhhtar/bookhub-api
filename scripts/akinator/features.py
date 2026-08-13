@@ -51,14 +51,24 @@ import unicodedata
 
 # Suffixes OL appends to express "this subject, as it applies to fiction".
 # They carry no information the `fiction` feature doesn't already carry.
+# `\b` is load-bearing: without it this strips the qualifier off the END OF
+# A WORD, not just off the end of a string. "sciencefiction" became
+# "science" — which is what defeated the compound collapse below on the
+# first attempt, and would defeat any future one the same way.
 _TRAILING_QUALIFIERS = re.compile(
-    r",?\s*(fiction|general|etc\.?|juvenile|nonfiction|"
+    r",?\s*\b(fiction|general|etc\.?|juvenile|nonfiction|"
     r"history and criticism|criticism and interpretation)\s*$",
     re.I,
 )
 
 _PUNCT = re.compile(r"[\"'“”‘’\(\)\[\]{}.:;!?]+")
 _WS = re.compile(r"\s+")
+
+# Compound genre names whose second word the trailing-qualifier strip would
+# otherwise eat, changing what the phrase means. Collapsed to one token so
+# the phrase survives as itself — `genre:scifi` and `form:fiction` both
+# already match `sciencefiction`. See the note in normalize().
+_SCIFI_COMPOUND = re.compile(r"\bscience[\s-]+fiction\b", re.I)
 
 
 def normalize(raw: str) -> str:
@@ -73,6 +83,30 @@ def normalize(raw: str) -> str:
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
     s = s.lower().strip()
     s = _PUNCT.sub(" ", s)
+    # "Science fiction" is the NAME OF A GENRE, not the word "science" with
+    # a trailing qualifier, and the strip below cannot tell the difference.
+    # It turned the most common science-fiction subject in the corpus into
+    # the bare word "science", which is wrong twice over:
+    #
+    #   "Science fiction"  ->  "science"  ->  genre:science YES (false)
+    #                                         genre:scifi   no  (missing)
+    #
+    # So 900 books answered YES to "Is it about science?" — 505 of them
+    # novels, including Harry Potter, A Game of Thrones, The Hobbit,
+    # Animal Farm and Kafka's Metamorphosis — while the books actually
+    # tagged "Science fiction" were not marked as science fiction at all.
+    # `genre:scifi` has carried "sciencefiction" as a keyword all along,
+    # waiting for a collapse that never happened; this is it.
+    #
+    # Found by the owner playing: they answered "no" to "Is it about
+    # science?" about The Road, correctly, and the table scored it a FIRM
+    # clash — the heaviest penalty in the belief update — against the very
+    # book they had in mind. Fifth time play has beaten simulation to a bug.
+    #
+    # Done HERE rather than as a rule exclusion because the evidence is
+    # destroyed here: by the time any rule runs, the word "fiction" is
+    # already gone and nothing downstream can tell the two cases apart.
+    s = _SCIFI_COMPOUND.sub("sciencefiction", s)
     # Applied repeatedly: "adventure and adventurers, fiction, general".
     for _ in range(3):
         new = _TRAILING_QUALIFIERS.sub("", s).strip(" ,-")
@@ -173,7 +207,12 @@ SUBJECT_RULES: list[tuple[str, str, list[str]]] = [
     # that is a real qualifier — but it now also registers the fiction
     # signal here rather than discarding it.
     ("form:fiction", "Is it fiction (a made-up story)?",
-     ["fiction", "novel*", "stories", "tales", "roman*", "ficcion", "novela"]),
+     # "sciencefiction" is the collapsed compound from normalize(); without
+     # it a book whose only subject is "Science fiction" would not be
+     # marked as fiction at all — which was already true before the
+     # collapse existed, since that subject normalized to "science".
+     ["fiction", "sciencefiction", "novel*", "stories", "tales", "roman*",
+      "ficcion", "novela"]),
     ("form:nonfiction", "Is it a factual, non-fiction book?",
      ["nonfiction", "non fiction", "true stor*", "essays"]),
 
