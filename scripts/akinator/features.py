@@ -692,15 +692,69 @@ def ladder_narrow(lo: float, hi: float, op: str, thr: float,
     return (max(lo, thr), hi) if answer_is_yes else (lo, min(hi, thr - 1))
 
 
+# A rung whose minority side is smaller than this share of the surviving
+# interval is treated as settled even though it is not strictly determined.
+# 0.0 disables it — the strict behaviour.
+#
+# WHY A THRESHOLD AND NOT JUST THE STRICT TEST. The owner played a game
+# that went: "before 2000?" no, "in the last 10 years?" no — leaving the
+# interval [2000, 2015] — and was then asked "in the last 25 years?"
+# (>= 2001). Strictly that is undetermined, because the single year 2000
+# still answers it "no". Practically it can separate 98 books out of the
+# 1,344 in that range, 7.3%, and it cost one of the thirty questions a
+# game gets.
+#
+# The strict test cannot see this: 2001 lies inside [2000, 2015], so the
+# rung survives, and the deliberately SOFT belief update then leaves it a
+# positive information gain from the pre-2000 mass that never fully died.
+# That is the same failure the ladder was built to fix, and this is its
+# residue — the year ladder happens to carry two thresholds one year
+# apart (`< 2000` and `>= 2001`), so answering either nearly answers both.
+#
+# Measured from the interval alone, never from the corpus, so both engines
+# can compute it identically with nothing extra shipped.
+LADDER_DEMINIMIS = 0.0
+
+# `engine.py` seeds unbounded dimensions with ±1e9 rather than infinities.
+_UNBOUNDED = 1e8
+
+
+def _rung_split(op: str, thr: float, lo: float, hi: float) -> tuple[float, float]:
+    """Widths of the (yes, no) sides this rung would cut [lo, hi] into."""
+    if op == "<":
+        yes, no = (lo, thr - 1), (thr, hi)
+    elif op == ">":
+        yes, no = (thr + 1, hi), (lo, thr)
+    else:                                                        # ">="
+        yes, no = (thr, hi), (lo, thr - 1)
+    return (max(0.0, min(hi, yes[1]) - max(lo, yes[0]) + 1),
+            max(0.0, min(hi, no[1]) - max(lo, no[0]) + 1))
+
+
 def ladder_determined(op: str, thr: float, lo: float, hi: float) -> bool:
-    """True when every value in [lo, hi] answers this rung the same way."""
+    """True when every value in [lo, hi] answers this rung the same way.
+
+    Or near enough — see LADDER_DEMINIMIS, which is a no-op at 0.0.
+    """
     if lo > hi:
         return True                      # contradictory answers; stop asking
     if op == "<":
-        return hi < thr or lo >= thr
-    if op == ">":
-        return lo > thr or hi <= thr
-    return lo >= thr or hi < thr         # ">="
+        strict = hi < thr or lo >= thr
+    elif op == ">":
+        strict = lo > thr or hi <= thr
+    else:
+        strict = lo >= thr or hi < thr   # ">="
+    if strict or not LADDER_DEMINIMIS:
+        return strict
+
+    # Only meaningful once BOTH ends are pinned: an open side is not small,
+    # and calling it small on a ±1e9 sentinel would retire a rung that still
+    # splits most of the corpus.
+    if lo <= -_UNBOUNDED or hi >= _UNBOUNDED:
+        return False
+    w_yes, w_no = _rung_split(op, thr, lo, hi)
+    total = w_yes + w_no
+    return bool(total) and min(w_yes, w_no) / total < LADDER_DEMINIMIS
 
 
 # Questions kept regardless of the 5% frequency floor (owner, 2026-08-07).
