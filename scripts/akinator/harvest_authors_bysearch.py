@@ -25,9 +25,9 @@ shelf, silently. So a candidate is accepted only when ALL of these hold:
   1. it is a human            (P31 = Q5)
   2. it has a writing occupation (P106 in WRITING_OCCUPATIONS)
   3. **exactly one** candidate in the result set satisfies 1 and 2
-  4. the text that actually matched is the queried name, normalised —
-     `wbsearchentities` is a fuzzy search and will happily offer a near
-     neighbour when nothing matches
+  4. the label or alias that matched IS the queried name, exactly — never
+     a near neighbour (structural since the batch rewrite: the name is the
+     literal the query matches on, so nothing fuzzy can come back)
   5. no book we hold for that author predates their birth
 
 Rules 1 and 2 do most of the work. Searching "Bell Hooks" returns the
@@ -37,13 +37,35 @@ a common name fail closed instead of guessing. Rule 4 is the lesson from
 today's Fandom cross-check, where a loose title test cheerfully confirmed
 "Against the Gods" as a 1976 Allen Drury novel about Akhenaten.
 
-UNAVAILABLE IS NOT NOT_FOUND. This network drops connections regularly —
-it did so twice while this script was being designed — and a timeout says
-nothing about whether the author exists. Anything that fails to complete
-is recorded as unreachable and left for the next run; only a completed
-search with no qualifying candidate is written as a negative. `asked` is
-tracked apart from `found`, because "we looked and found nothing" and "we
-never looked" have been conflated in this repo four times.
+ASKED IN BATCHES, VIA SPARQL, AND NOT ONE NAME AT A TIME. The first
+version called `wbsearchentities` per author, and it ran at roughly ONE
+AUTHOR PER MINUTE — thirty hours for this list. The cause was not
+Wikidata and not the algorithm: timing the raw calls showed two requests
+in three failing with a connection timeout after ~22 seconds, while a
+request that connected returned in 0.8s. This machine's network drops
+connections constantly (the same fact that forces NO_PROXY='*' on every
+httpx script here), so the fix is not faster retries, it is FEWER
+REQUESTS.
+
+One SPARQL query resolves 150 names at once: 38 rows in 4.0 seconds for
+11 names in testing, against ~60 seconds per name through the search API.
+It also makes rule 4 structural rather than a post-check — the name is
+the VALUES literal matched against `rdfs:label|skos:altLabel`, so a
+result IS an exact name match and cannot be a fuzzy neighbour. Rules 1
+and 2 move into the query as `wdt:P31 wd:Q5` and a required `wdt:P106`.
+
+Verified to reproduce the per-name results exactly on the smoke-test set,
+including both refusals: Alvin Schwartz comes back with three items and
+Scott Cunningham with five, so both still fail rule 3, and Mojang returns
+no row at all because it is not a human.
+
+UNAVAILABLE IS NOT NOT_FOUND. A timeout says nothing about whether the
+author exists. Anything that fails to complete is recorded as unreachable
+and left for the next run; only a completed lookup with no qualifying
+candidate is written as a negative. `asked` is tracked apart from
+`found`, because "we looked and found nothing" and "we never looked" have
+been conflated in this repo four times. With batching this matters more,
+not less: one dropped query would otherwise bury 150 names as absent.
 
 Output: data/akinator_authors_search.json — a SEPARATE file, merged after
 the P648 harvest so the exact join always wins a disagreement. Gitignored,
@@ -67,11 +89,59 @@ CORPUS_PATH = os.path.join(REPO_ROOT, "data", "akinator_corpus.jsonl")
 P648_PATH = os.path.join(REPO_ROOT, "data", "akinator_authors_wd.json")
 OUT_PATH = os.path.join(REPO_ROOT, "data", "akinator_authors_search.json")
 
-API = "https://www.wikidata.org/w/api.php"
-HEADERS = {"User-Agent": "Litheca/1.0 (https://litheca.com; hello@litheca.com)"}
+ENDPOINT = "https://query.wikidata.org/sparql"
+HEADERS = {
+    "User-Agent": "Litheca/1.0 (https://litheca.com; hello@litheca.com)",
+    "Accept": "application/sparql-results+json",
+}
 
 SHIPPED_BOOKS = 5000
-CANDIDATES = 7          # how many search hits to interrogate
+
+# 150 names per query returned in ~4s in testing. WDQS times out at one
+# minute and a timeout loses the WHOLE batch, so this stays conservative —
+# the same reasoning as harvest_works.py's smaller batch.
+BATCH = 150
+
+# Rules 1 and 2 live here, server-side: a human, with an occupation. The
+# occupation VALUE is filtered in Python against WRITING_OCCUPATIONS, which
+# keeps the whitelist in one readable place instead of inside a query
+# string. rdfs:label|skos:altLabel is what lets Open Library's 太宰 治 reach
+# an item whose English label is "Osamu Dazai".
+QUERY = """SELECT ?nm ?item ?occ ?gender ?birth ?death ?country WHERE {
+  VALUES ?nm { %s }
+  ?item rdfs:label|skos:altLabel ?nm .
+  ?item wdt:P31 wd:Q5 .
+  ?item wdt:P106 ?occ .
+  OPTIONAL { ?item wdt:P21  ?gender }
+  OPTIONAL { ?item wdt:P27  ?country }
+  OPTIONAL { ?item wdt:P569 ?birth }
+  OPTIONAL { ?item wdt:P570 ?death }
+}"""
+
+# Which language tags to try a name under. A label is stored per language,
+# so "太宰 治" is only findable as @ja. Latin-script names are asked as @en,
+# which is the language nearly every person item carries.
+_SCRIPTS = [
+    (0x4E00, 0x9FFF, ["ja", "zh", "ko"]),      # CJK ideographs
+    (0x3040, 0x30FF, ["ja"]),                  # kana
+    (0xAC00, 0xD7AF, ["ko"]),                  # hangul
+    (0x0400, 0x04FF, ["ru", "uk"]),            # cyrillic
+    (0x0600, 0x06FF, ["ar", "fa"]),            # arabic
+    (0x0590, 0x05FF, ["he"]),                  # hebrew
+    (0x0370, 0x03FF, ["el"]),                  # greek
+]
+
+
+def lang_tags(name: str) -> list[str]:
+    tags = ["en"]
+    for ch in name:
+        cp = ord(ch)
+        for lo, hi, langs in _SCRIPTS:
+            if lo <= cp <= hi:
+                for lg in langs:
+                    if lg not in tags:
+                        tags.append(lg)
+    return tags
 
 GENDER = {"Q6581097": "male", "Q6581072": "female"}
 
@@ -153,107 +223,156 @@ class Unavailable(Exception):
     """The lookup did not complete. Never a finding about the author."""
 
 
-def _get(params: dict, attempts: int = 3, timeout: int = 40) -> dict:
-    params = {**params, "format": "json"}
-    url = API + "?" + urllib.parse.urlencode(params)
+def _query(names: list[str], attempts: int = 4, timeout: int = 75) -> list[dict]:
+    """One SPARQL round trip for many names. Raises Unavailable, never lies.
+
+    Retries are short and immediate rather than backed off: the failure
+    mode measured on this network is a connection that never establishes,
+    not a server pushing back, and sleeping does not make a dropped
+    connection more likely to succeed.
+    """
+    values = " ".join(
+        f"{json.dumps(n, ensure_ascii=False)}@{tag}"
+        for n in names for tag in lang_tags(n))
+    url = ENDPOINT + "?" + urllib.parse.urlencode(
+        {"query": QUERY % values, "format": "json"})
     last = ""
     for attempt in range(attempts):
         try:
             req = urllib.request.Request(url, headers=HEADERS)
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return json.load(resp)
+                return json.load(resp)["results"]["bindings"]
         except urllib.error.HTTPError as exc:
             last = f"HTTP {exc.code}"
             if exc.code == 429:
-                time.sleep(10 + attempt * 10)
+                time.sleep(15)
                 continue
             break
         except Exception as exc:  # noqa: BLE001
-            last = f"{type(exc).__name__}"
+            last = type(exc).__name__
         if attempt < attempts - 1:
-            time.sleep(3 + attempt * 4)
+            time.sleep(1.5)
     raise Unavailable(last or "unknown")
 
 
-def _claim_ids(entity: dict, prop: str) -> list[str]:
-    out = []
-    for c in (entity.get("claims") or {}).get(prop, []):
-        v = ((c.get("mainsnak") or {}).get("datavalue") or {}).get("value")
-        if isinstance(v, dict) and v.get("id"):
-            out.append(v["id"])
-    return out
-
-
-def _claim_time_year(entity: dict, prop: str) -> int | None:
-    for c in (entity.get("claims") or {}).get(prop, []):
-        t = (((c.get("mainsnak") or {}).get("datavalue") or {})
-             .get("value") or {}).get("time")
-        if t and len(t) > 5:
-            try:
-                return int(t[1:5])
-            except ValueError:
-                pass
+def _year(literal: str | None) -> int | None:
+    if literal and len(literal) > 5:
+        try:
+            return int(literal[1:5]) if literal[0] in "+-" else int(literal[:4])
+        except ValueError:
+            return None
     return None
 
 
-def resolve(name: str, earliest_book_year: int | None) -> tuple[dict | None, str]:
-    """(record, reason). Raises Unavailable if the lookup did not complete."""
-    hits = _get({"action": "wbsearchentities", "search": name,
-                 "language": "en", "uselang": "en", "type": "item",
-                 "limit": CANDIDATES}).get("search") or []
-    if not hits:
-        return None, "no candidates"
+def _fold(rows: list[dict]) -> dict[str, dict]:
+    """SPARQL returns one row per (item x occupation x country x ...).
 
-    # Rule 4 first, and before spending an entity call: keep only hits whose
-    # MATCHED TEXT is this name. wbsearchentities is fuzzy by design.
-    named = [h for h in hits
-             if same_person_name((h.get("match") or {}).get("text", ""), name)
-             or same_person_name(h.get("label", ""), name)]
-    if not named:
-        return None, f"no exact-name candidate among {len(hits)}"
+    Collapse to one record per (name, item), keeping sets — a person
+    routinely has several occupations and several citizenships, and
+    assignment instead of accumulation would keep whichever came last.
+    """
+    out: dict[str, dict] = {}
+    for b in rows:
+        nm = b["nm"]["value"]
+        qid = b["item"]["value"].rsplit("/", 1)[-1]
+        rec = out.setdefault(f"{nm}\x00{qid}", {
+            "name": nm, "qid": qid, "occupations": set(),
+            "country_qids": set(), "gender": None,
+            "birth": None, "death": None,
+        })
+        if "occ" in b:
+            rec["occupations"].add(b["occ"]["value"].rsplit("/", 1)[-1])
+        if "country" in b:
+            rec["country_qids"].add(b["country"]["value"].rsplit("/", 1)[-1])
+        if "gender" in b:
+            g = GENDER.get(b["gender"]["value"].rsplit("/", 1)[-1])
+            if g:
+                rec["gender"] = g
+        for key, prop in (("birth", "birth"), ("death", "death")):
+            if prop in b and rec[key] is None:
+                rec[key] = _year(b[prop]["value"])
+    return out
 
-    ents = _get({"action": "wbgetentities",
-                 "ids": "|".join(h["id"] for h in named[:CANDIDATES]),
-                 "props": "claims|labels", "languages": "en"}
-                ).get("entities") or {}
 
-    qualified = []
-    for h in named:
-        e = ents.get(h["id"])
-        if not e:
-            continue
-        if "Q5" not in _claim_ids(e, "P31"):
-            continue                                   # rule 1
-        occ = _claim_ids(e, "P106")
-        if not (set(occ) & WRITING_OCCUPATIONS):
-            continue                                   # rule 2
-        qualified.append((h["id"], e, occ))
+def decide(name: str, candidates: list[dict],
+           earliest_book_year: int | None) -> tuple[dict | None, str]:
+    """Rules 2, 3 and 5 over one name's candidates. Rules 1 and 4 already
+    held: the query demanded a human, and matched the name exactly."""
+    if not candidates:
+        return None, "no candidate is a human with an occupation"
 
+    qualified = [c for c in candidates
+                 if c["occupations"] & WRITING_OCCUPATIONS]      # rule 2
     if not qualified:
-        return None, f"none of {len(named)} is a human who writes"
-    if len(qualified) > 1:                             # rule 3
-        return None, ("ambiguous: " +
-                      ", ".join(q[0] for q in qualified[:4]))
+        return None, f"none of {len(candidates)} is a human who writes"
+    if len(qualified) > 1:                                       # rule 3
+        return None, "ambiguous: " + ", ".join(
+            sorted(c["qid"] for c in qualified)[:4])
 
-    qid, ent, occ = qualified[0]
-    birth = _claim_time_year(ent, "P569")
-    death = _claim_time_year(ent, "P570")
-
-    # Rule 5. A book cannot predate its author. This is cheap and it is the
-    # only check here that uses what WE know rather than what Wikidata says.
-    if birth and earliest_book_year and earliest_book_year < birth:
+    c = qualified[0]
+    # Rule 5. A book cannot predate its author — the only check here that
+    # uses what WE hold rather than what Wikidata says.
+    if c["birth"] and earliest_book_year and earliest_book_year < c["birth"]:
         return None, (f"rejected: our earliest book is {earliest_book_year}, "
-                      f"{qid} was born {birth}")
+                      f"{c['qid']} was born {c['birth']}")
 
-    countries = []
-    for c in _claim_ids(ent, "P27"):
-        countries.append(c)
-    gender = next((GENDER[g] for g in _claim_ids(ent, "P21")
-                   if g in GENDER), None)
-    return ({"qid": qid, "gender": gender, "country_qids": countries,
-             "occupations": occ, "birth": birth, "death": death,
-             "matched_label": ((ent.get("labels") or {}).get("en") or {})
-                              .get("value", "")}, "ok")
+    return ({"qid": c["qid"], "gender": c["gender"],
+             "country_qids": sorted(c["country_qids"]),
+             "occupations": sorted(c["occupations"]),
+             "birth": c["birth"], "death": c["death"],
+             "matched_label": c["name"]}, "ok")
+
+
+def label_countries(store: dict) -> int:
+    """Turn P27 QIDs into the country NAMES the rest of the pipeline uses.
+
+    `author_traits.py` compares against strings like "United States" and
+    "Canada", so an unlabelled QID would silently answer every nationality
+    question as unknown — the harvest would look complete and teach the
+    game nothing. Labels are cached on disk: they are stable, and there is
+    no reason to re-ask Wikidata for "Q30" on every run.
+    """
+    cache_path = os.path.join(REPO_ROOT, "data", "akinator_country_labels.json")
+    labels = {}
+    if os.path.exists(cache_path):
+        with open(cache_path, encoding="utf-8") as fh:
+            labels = json.load(fh)
+
+    need = sorted({q for v in store.values()
+                   if v.get("status") == "found"
+                   for q in (v.get("country_qids") or [])
+                   if q not in labels})
+    for i in range(0, len(need), 50):
+        chunk = need[i:i + 50]
+        for attempt in range(4):
+            try:
+                url = ("https://www.wikidata.org/w/api.php?"
+                       + urllib.parse.urlencode({
+                           "action": "wbgetentities", "ids": "|".join(chunk),
+                           "props": "labels", "languages": "en",
+                           "format": "json"}))
+                req = urllib.request.Request(url, headers={
+                    "User-Agent": HEADERS["User-Agent"]})
+                with urllib.request.urlopen(req, timeout=45) as resp:
+                    ents = json.load(resp).get("entities") or {}
+                for q, e in ents.items():
+                    labels[q] = (((e.get("labels") or {}).get("en") or {})
+                                 .get("value") or q)
+                break
+            except Exception:  # noqa: BLE001
+                time.sleep(2 + attempt * 2)
+    with open(cache_path, "w", encoding="utf-8") as fh:
+        json.dump(labels, fh, ensure_ascii=False, indent=1)
+
+    filled = 0
+    for v in store.values():
+        if v.get("status") != "found":
+            continue
+        named = [labels[q] for q in (v.get("country_qids") or []) if q in labels]
+        if named != v.get("countries"):
+            v["countries"] = named
+            filled += 1
+    return filled
 
 
 def load_targets() -> list[tuple[str, str, int, int | None]]:
@@ -297,7 +416,8 @@ def main() -> None:
     ap.add_argument("--out", default=OUT_PATH)
     ap.add_argument("--limit", type=int, default=0,
                     help="only the N most-published unresolved authors")
-    ap.add_argument("--delay", type=float, default=0.35)
+    ap.add_argument("--delay", type=float, default=1.5,
+                    help="between BATCHES, not between names")
     args = ap.parse_args()
 
     targets = load_targets()
@@ -317,33 +437,52 @@ def main() -> None:
           f"{len(pending)} to ask about now\n")
 
     found = notfound = unavailable = 0
-    for i, (key, name, books, earliest) in enumerate(pending, 1):
+    done = 0
+    for start in range(0, len(pending), BATCH):
+        chunk = pending[start:start + BATCH]
+        names = sorted({t[1] for t in chunk})
         try:
-            rec, why = resolve(name, earliest)
+            folded = _fold(_query(names))
         except Unavailable as exc:
-            unavailable += 1
-            store[key] = {"status": "unavailable", "name": name,
-                          "reason": str(exc)}
-            print(f"  [{i}/{len(pending)}] ?  {name[:34]:<34} "
-                  f"UNAVAILABLE ({exc}) — will retry")
-        else:
+            # One dropped query must not bury 150 names as absent. Every
+            # name in the batch stays retryable.
+            for key, name, _books, _e in chunk:
+                store[key] = {"status": "unavailable", "name": name,
+                              "reason": str(exc)}
+            unavailable += len(chunk)
+            done += len(chunk)
+            print(f"  [{done}/{len(pending)}] BATCH UNAVAILABLE ({exc}) — "
+                  f"{len(chunk)} names kept for retry")
+            continue
+
+        by_name: dict[str, list[dict]] = {}
+        for rec in folded.values():
+            by_name.setdefault(rec["name"], []).append(rec)
+
+        for key, name, books, earliest in chunk:
+            rec, why = decide(name, by_name.get(name, []), earliest)
+            done += 1
             if rec:
                 found += 1
                 store[key] = {"status": "found", "name": name,
                               "books": books, **rec}
-                print(f"  [{i}/{len(pending)}] ok {name[:34]:<34} "
-                      f"{rec['qid']:<12} {rec['matched_label'][:26]:<26} "
-                      f"({books} books)")
+                print(f"  [{done}/{len(pending)}] ok {name[:32]:<32} "
+                      f"{rec['qid']:<12} ({books} books)")
             else:
                 notfound += 1
                 store[key] = {"status": "not_found", "name": name,
                               "books": books, "reason": why}
-                print(f"  [{i}/{len(pending)}] -  {name[:34]:<34} {why[:44]}")
+                print(f"  [{done}/{len(pending)}] -  {name[:32]:<32} {why[:42]}")
 
-        if i % 25 == 0 or i == len(pending):
-            with open(args.out, "w", encoding="utf-8") as fh:
-                json.dump(store, fh, ensure_ascii=False, indent=1)
+        with open(args.out, "w", encoding="utf-8") as fh:
+            json.dump(store, fh, ensure_ascii=False, indent=1)
         time.sleep(args.delay)
+
+    # Always, even when nothing was pending: a record resolved by an older
+    # run may still be carrying bare QIDs.
+    filled = label_countries(store)
+    if filled:
+        print(f"\n  country labels filled in for {filled} author(s)")
 
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump(store, fh, ensure_ascii=False, indent=1)

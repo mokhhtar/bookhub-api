@@ -82,11 +82,62 @@ _EUROPEAN = {
 _WESTERN_OTHER = {"Canada", "Australia", "New Zealand", "Ireland"}
 
 
-def load_wikidata(path: str = AUTHORS_WD_PATH) -> dict[str, dict]:
+AUTHORS_SEARCH_PATH = os.path.join(REPO_ROOT, "data",
+                                   "akinator_authors_search.json")
+
+
+def load_wikidata(path: str = AUTHORS_WD_PATH,
+                  search_path: str = AUTHORS_SEARCH_PATH) -> dict[str, dict]:
+    """The P648 join, plus the name-matched authors it could not reach.
+
+    TWO SOURCES, ONE OF THEM AUTHORITATIVE. `harvest_authors.py` joins on
+    P648 — an identifier somebody asserted, needing no judgement. It covers
+    1,962 of the 4,134 authors in the shipped corpus.
+    `harvest_authors_bysearch.py` finds another 632 by NAME, under five
+    acceptance rules, because a name is not an identifier.
+
+    So a P648 record ALWAYS wins: a judgement call never overrides an
+    asserted identity, and a search record is only used for an author the
+    exact join left empty. Missing search file = the game simply has the
+    coverage it had before, never wrong facts.
+
+    Shapes are reconciled here rather than at harvest time so each file
+    stays a faithful record of what its own source said: the search
+    harvest stores years as integers and countries as QIDs plus resolved
+    names, and `traits_for` expects date-like strings and country names.
+    """
     if not os.path.exists(path):
         return {}
     with open(path, encoding="utf-8") as fh:
-        return json.load(fh)
+        merged = json.load(fh)
+
+    if not os.path.exists(search_path):
+        return merged
+
+    with open(search_path, encoding="utf-8") as fh:
+        found = json.load(fh)
+
+    added = 0
+    for key, rec in found.items():
+        if rec.get("status") != "found":
+            continue
+        existing = merged.get(key)
+        if isinstance(existing, dict) and existing.get("qid"):
+            continue                      # the exact join wins, always
+        merged[key] = {
+            "qid": rec.get("qid"),
+            "gender": rec.get("gender"),
+            "countries": list(rec.get("countries") or []),
+            "occupations": list(rec.get("occupations") or []),
+            # traits_for()'s _year() parses a leading year off a string.
+            "birth": str(rec["birth"]) if rec.get("birth") else None,
+            "death": str(rec["death"]) if rec.get("death") else None,
+        }
+        added += 1
+    if added:
+        print(f"Author facts: +{added} matched by name "
+              f"(P648 kept priority on every conflict)")
+    return merged
 
 
 def _year(date_str: str | None) -> int | None:

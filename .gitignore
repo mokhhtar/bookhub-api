@@ -92,3 +92,7 @@ venv/
 # by scripts/akinator/harvest_authors_bysearch.py (resumable — re-running
 # retries only the entries left UNAVAILABLE).
 /data/akinator_authors_search.json
+
+# Wikidata country QID -> English name, cached by
+# harvest_authors_bysearch.py so stable labels are not re-fetched.
+/data/akinator_country_labels.json
