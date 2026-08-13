@@ -79,3 +79,11 @@ venv/
 # Regenerable by scripts/akinator/extract_traits.py --calibrate, but that
 # is 129 calls of a 15-a-minute quota, so it is worth not deleting.
 /data/akinator_calibration.json
+
+# Fandom wiki resolution (harvest_fandom.py) and its proof under the
+# redesign's acceptance rules (prove_fandom.py). Both regenerable, but the
+# proof costs ~180 API calls across 29 wikis and is network-flaky, so it is
+# worth not deleting. The FINDINGS live in the vault, not here — this file
+# is evidence you can re-derive, not the decision it supports.
+/data/akinator_fandom.json
+/data/akinator_fandom_proof.json
