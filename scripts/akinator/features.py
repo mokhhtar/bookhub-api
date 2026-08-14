@@ -545,6 +545,29 @@ def structural_features(doc: dict, popularity_rank: int, corpus_size: int) -> di
 # Per-book feature extraction
 # ---------------------------------------------------------------------------
 
+# A GENRE claim needs more than one stray subject behind it. Moby Dick
+# carries 97 raw OL subjects; exactly one of them — the literal string
+# "History" — was enough to assert `genre:history: YES`, and exactly one —
+# "Science Fiction & Fantasy", a bookstore shelf category, not a
+# description of the book — asserted `genre:scifi: YES`. Measured over the
+# shipped 5,000: `genre:history` and `genre:romance` are single-subject
+# supported in 53% of the books that have them present, `genre:crime` 47%,
+# `genre:scifi` 38%, `genre:fantasy` 33%, `genre:horror` 32%. Found by the
+# owner playing, the same way the science/scifi and ladder bugs were.
+#
+# Scoped to `genre:` keys only. `form:fiction`'s single strong signal is
+# the subject "Fiction" — that is the correctly-designed case, not the
+# bug, and raising the bar there would cost unmeasured coverage for a
+# problem that was never shown to exist outside genre classification.
+#
+# A subject that fails this bar is NOT recorded as absent — that would
+# repeat the exact present/absent conflation this project keeps finding.
+# It simply does not enter `present`, which is identical to what a book
+# with ZERO supporting subjects already gets: the existing
+# richness-scaled `absence_confidence()` soft prior, unchanged.
+GENRE_MIN_SUPPORT = 2
+
+
 def extract(doc: dict, popularity_rank: int, corpus_size: int) -> dict:
     """Build one book's feature record.
 
@@ -557,14 +580,30 @@ def extract(doc: dict, popularity_rank: int, corpus_size: int) -> dict:
     normalized = [normalize(s) for s in raw_subjects]
     content_subjects = [n for n in normalized if n and not is_stop_subject(n)]
 
-    present: set[str] = set()
-    for n in content_subjects:
-        present.update(map_subject(n))
-
-    # `place` and `time` feed the same setting rules — OL files "Devon
-    # (England)" under place, not subject, and it means the same thing.
+    # One independent SOURCE STRING, not one raw subject: two identical
+    # strings (OL sometimes lists a subject twice) must not count as two
+    # signals, or GENRE_MIN_SUPPORT would be satisfied by a data-entry
+    # duplicate instead of genuine corroboration. Deduplicated across BOTH
+    # feeds below — subject and place/time — since what matters is how
+    # many independent things assert a feature, not which OL field they
+    # came from.
+    signals: set[str] = set(content_subjects)
     for extra in (doc.get("place") or []) + (doc.get("time") or []):
-        present.update(map_subject(normalize(extra)))
+        # `place`/`time` feed the same setting rules — OL files "Devon
+        # (England)" under place, not subject, and it means the same thing.
+        n = normalize(extra)
+        if n:
+            signals.add(n)
+
+    support: dict[str, int] = {}
+    for n in signals:
+        for f in map_subject(n):
+            support[f] = support.get(f, 0) + 1
+
+    present: set[str] = {
+        f for f, n in support.items()
+        if not f.startswith("genre:") or n >= GENRE_MIN_SUPPORT
+    }
 
     unknown: set[str] = set()
     known_false: set[str] = set()
