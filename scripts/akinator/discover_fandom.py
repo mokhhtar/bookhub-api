@@ -51,7 +51,8 @@ alias in the overlay):
   1. Subdomain guessing — `harvest_fandom.py`'s own `candidate_subdomains`,
      reused unmodified, applied to every name rather than just the seed
      title. Cheap: one siteinfo call per guess, no external search.
-  2. Brave Search — `"{name}" site:fandom.com`, live-verified working
+  2. Brave Search — `{name} site:fandom.com` (unquoted -- see try_brave's
+     docstring for why exact-phrase quoting missed a real hit), live-verified working
      (2,000 req/month free tier) after Google CSE turned out to be a dead
      end. Found `the-kings-avatar.fandom.com` for "The King's Avatar" on
      the first query — a hyphenation `candidate_subdomains()` cannot
@@ -216,6 +217,18 @@ def try_brave(names: list[str]) -> tuple[list[tuple[str, str]], list[str]]:
     about this specific book (Chrysalis/Delve-shaped ambiguity applies
     here as much as anywhere).
 
+    NOT QUOTED AS AN EXACT PHRASE. The first version sent `"{name}"
+    site:fandom.com`, and it missed "Forty Millennia of Cultivation"
+    entirely -- zero results -- because that wiki spells it "Forty
+    MILLENNIUMS of Cultivation" (a non-standard plural the translated
+    source material itself uses), so the exact quoted phrase never
+    appears on any page Brave indexed. The unquoted, relevance-ranked
+    query returns forty-millenniums-of-cultivation.fandom.com as the
+    FIRST result. Found by the owner re-running the identical search by
+    hand and asking why the tool's version came up empty. Safe to loosen
+    for the same reason every other source here is: this only proposes a
+    candidate, prove() still has to accept it.
+
     No key configured -- BRAVE_KEY empty -- returns no candidates and no
     failure; this source is optional, and its absence must not look like
     every query failed.
@@ -225,7 +238,7 @@ def try_brave(names: list[str]) -> tuple[list[tuple[str, str]], list[str]]:
     candidates: list[tuple[str, str]] = []
     unavailable: list[str] = []
     for n in names:
-        q = urllib.parse.urlencode({"q": f'"{n}" site:fandom.com', "count": 6})
+        q = urllib.parse.urlencode({"q": f"{n} site:fandom.com", "count": 6})
         url = f"{BRAVE_ENDPOINT}?{q}"
         last = ""
         hits = None
@@ -301,20 +314,85 @@ def discover(title: str, alts: dict, delay: float) -> dict:
     unavailable: list[str] = []
     best: dict | None = None
 
-    def consider(source: str, name: str, sub: str) -> bool:
-        """Prove one candidate, fold it into `best`. Returns True if this
-        reached CONFIRMED/LIKELY (caller should stop trying more)."""
-        nonlocal best
+    def _prove_one(prove_as: str, sub: str) -> dict | None:
         try:
-            result = prove(title, sub, do_independent=True)
+            return prove(prove_as, sub, do_independent=True)
         except Exception as exc:  # noqa: BLE001
-            unavailable.append(f"prove({title!r}, {sub!r}): {exc}")
+            unavailable.append(f"prove({prove_as!r}, {sub!r}): {exc}")
+            return None
+
+    def consider(source: str, name: str, sub: str) -> bool:
+        """Prove one candidate against the CANONICAL title, then against
+        EVERY alias in the overlay (not just the one name that happened
+        to surface this subdomain), keeping whichever proof is best.
+
+        This exists because identity/page matching (prove_fandom.py's
+        _title_match, a two-thirds-token-overlap test) cannot bridge two
+        real gaps found live on 2026-08-14: a short colloquial name
+        sharing almost no tokens with a long original title ("Re:Zero"
+        vs "Re:Zero kara Hajimeru Isekai Seikatsu" -- the wiki's own page
+        title was an EXACT match for the long form, proving identity, but
+        its sitename never scores against it), and a single-word
+        translation variant ("S-Ranks" vs "S-Classes" -- zero character
+        overlap despite being the same in-universe term in this genre's
+        looser fan translations).
+
+        TRYING EVERY ALIAS, NOT JUST THE ONE THAT FOUND THE CANDIDATE, is
+        the fix for a real miss the first version of this mechanism had:
+        try_brave() dedupes by SUBDOMAIN, keeping only the first name that
+        surfaced it -- and Brave's own semantic search already associates
+        "S-Classes" with "S-Ranks" well enough to surface `mysranks` from
+        the CANONICAL title's own query, before the curated "S-Ranks"
+        alias ever got a turn. That silently discarded the one alias that
+        would have proven it. Re-querying every alias against a subdomain
+        already known to exist costs a handful of extra siteinfo/page
+        calls, not new search-API quota, and is the only way to guarantee
+        a curated alias is not shadowed by whichever name happened first.
+
+        Each (subdomain) is proved at most once per name across the whole
+        run via `proved_subs`, so retrying here never repeats an identical
+        prove() call already made for this exact subdomain+title pair.
+        """
+        nonlocal best
+        already_tried: set[str] = set()
+
+        def try_name(nm: str) -> dict | None:
+            key = nm.strip().lower()
+            if key in already_tried:
+                return None
+            already_tried.add(key)
+            return _prove_one(nm, sub)
+
+        result = try_name(title)
+        if result is None:
             return False
-        attempts.append({"source": source, "tried_as": name,
+        attempts.append({"source": source, "tried_as": title,
                          "subdomain": sub, "status": result["status"]})
-        if best is None or _RANK[result["status"]] > _RANK[best["status"]]:
-            best = {**result, "discovered_via": source, "tried_as": name}
-        return result["status"] in ("CONFIRMED", "LIKELY")
+        chosen_name, chosen_result = title, result
+
+        if result["status"] not in ("CONFIRMED", "LIKELY"):
+            for alt in names_for(title, alts):
+                alt_result = try_name(alt)
+                if alt_result is None:
+                    continue
+                attempts.append({"source": f"{source}+alias", "tried_as": alt,
+                                 "subdomain": sub, "status": alt_result["status"]})
+                if _RANK[alt_result["status"]] > _RANK[chosen_result["status"]]:
+                    chosen_name, chosen_result = alt, alt_result
+                if chosen_result["status"] in ("CONFIRMED", "LIKELY"):
+                    break
+
+        if best is None or _RANK[chosen_result["status"]] > _RANK[best["status"]]:
+            # `chosen_result` is prove()'s own return dict, and prove()
+            # sets ITS OWN "title" field to whatever string it was asked
+            # to verify -- the alias, when that is what won. Overridden
+            # back to the canonical seed title here: akinator_fandom.json
+            # must stay keyed by the title fandom_seed.json actually
+            # uses, or every downstream lookup by seed title breaks.
+            # "tried_as" is the field that correctly carries the alias.
+            best = {**chosen_result, "title": title, "discovered_via": source,
+                    "tried_as": chosen_name}
+        return chosen_result["status"] in ("CONFIRMED", "LIKELY")
 
     for name, sub in try_guessing(names):
         if consider("guess", name, sub):
