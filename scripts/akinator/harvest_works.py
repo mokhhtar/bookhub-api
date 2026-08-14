@@ -81,7 +81,12 @@ DELAY = 2.5
 # into a film?" does not draw a line between a feature film and a
 # prestige TV adaptation, and including both roughly doubles the hit rate,
 # so the question is worded for screen rather than cinema.
-QUERY = """SELECT ?author ?work ?workLabel ?adapted ?series WHERE {
+# P407 is the language of the WORK, which is not the language of an edition
+# — the distinction that matters, since Open Library's edition language
+# would call Alice in Wonderland Klingon. Asked here rather than through a
+# book's own Wikidata id for exactly that reason: this path reaches works
+# via their author, so it never touches the edition entities.
+QUERY = """SELECT ?author ?work ?workLabel ?adapted ?series ?lang WHERE {
   VALUES ?author { %s }
   ?work wdt:P50 ?author .
   OPTIONAL {
@@ -90,6 +95,7 @@ QUERY = """SELECT ?author ?work ?workLabel ?adapted ?series WHERE {
     VALUES ?kind { wd:Q11424 wd:Q5398426 }
   }
   OPTIONAL { ?work wdt:P179 ?series }
+  OPTIONAL { ?work wdt:P407 ?lang }
   SERVICE wikibase:label { bd:serviceParam wikibase:language "en" }
 }"""
 
@@ -111,8 +117,20 @@ def load_targets() -> tuple[list[tuple[str, str]], set[tuple[str, str]]]:
     Only pairs in the corpus are kept — Wikidata knows far more works than
     we carry.
     """
-    with open(AUTHORS_WD_PATH, encoding="utf-8") as fh:
-        wd = json.load(fh)
+    # BOTH author sources, not just the P648 join. This file used to read
+    # akinator_authors_wd.json directly, so the 632 authors matched by name
+    # in harvest_authors_bysearch.py were invisible here — and this harvest
+    # reaches works through the AUTHOR (?work wdt:P50 ?author), so every
+    # author it cannot see is a set of works it cannot find. Going through
+    # load_wikidata() also means P648 keeps priority here exactly as it does
+    # everywhere else.
+    #
+    # It sidesteps the edition-QID trap as a bonus: books.json's `w` is 96.6%
+    # `P31 = Q3331189` (version/edition/translation) — Alice in Wonderland
+    # points at the Klingon translation — and nothing on this path touches
+    # it. Reaching works through their author is what keeps that safe.
+    from author_traits import load_wikidata
+    wd = load_wikidata()
 
     docs = []
     with open(CORPUS_PATH, encoding="utf-8") as fh:
@@ -157,6 +175,14 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=0,
                     help="only the first N authors (0 = all)")
     ap.add_argument("--timeout", type=int, default=180)
+    ap.add_argument("--refresh", action="store_true",
+                    help="re-ask authors already in the asked list. Needed "
+                         "when the QUERY gains a field: the 4,867 authors "
+                         "asked before P407 was added have records with no "
+                         "language, and resuming would skip them forever "
+                         "while the file looked complete. Existing records "
+                         "are kept and updated in place, so a failed batch "
+                         "costs nothing already harvested.")
     args = ap.parse_args()
 
     ordered, wanted = load_targets()
@@ -176,9 +202,11 @@ def main() -> None:
     if os.path.exists(args.out):
         with open(args.out, encoding="utf-8") as fh:
             found = json.load(fh)
-    if os.path.exists(asked_path):
+    if os.path.exists(asked_path) and not args.refresh:
         with open(asked_path, encoding="utf-8") as fh:
             asked = set(json.load(fh))
+    elif args.refresh:
+        print("--refresh: re-asking every author, keeping existing records\n")
     if asked:
         print(f"Resuming: {len(asked)} authors already asked, "
               f"{len(found)} books matched.\n")
@@ -215,7 +243,17 @@ def main() -> None:
             if not title or title not in wanted_titles.get(key, ()):
                 continue
             rec = found.setdefault(f"{key}|{title}",
-                                   {"film": False, "series": False, "sid": None})
+                                   {"film": False, "series": False,
+                                    "sid": None, "lang": None})
+            if "lang" in b:
+                # Q1860 is English. Stored as the QID, not a boolean, so the
+                # question can be reworded later ("originally in English?",
+                # "translated from Japanese?") without re-harvesting. A work
+                # with several P407 values keeps the first — those are
+                # bilingual originals, and they are rare enough that
+                # preferring one is honest while inventing a rule is not.
+                if rec.get("lang") is None:
+                    rec["lang"] = b["lang"]["value"].rsplit("/", 1)[-1]
             if "adapted" in b:
                 rec["film"] = True
             if "series" in b:
