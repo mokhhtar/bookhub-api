@@ -96,3 +96,7 @@ venv/
 # Wikidata country QID -> English name, cached by
 # harvest_authors_bysearch.py so stable labels are not re-fetched.
 /data/akinator_country_labels.json
+
+# Fandom discovery run output (scripts/akinator/discover_fandom.py) --
+# audit trail of every candidate tried per title. Regenerable.
+/data/akinator_fandom_discovery.json
