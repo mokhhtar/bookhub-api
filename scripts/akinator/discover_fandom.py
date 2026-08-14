@@ -27,10 +27,16 @@ before writing a line of this file, and neither held up:
     scrapes as its last resort) answered HTTP 202 with an "anomaly"
     (rate-limit) page after the SECOND request in testing. Not viable as
     a base layer for the dozens of name-variant queries this needs.
-  - Google Custom Search (`tools/fandom.py`'s Tier 3) needs
-    GOOGLE_CUSTOM_SEARCH_API_KEY / GOOGLE_SEARCH_CX_ID, neither present
-    in this machine's .env, and there is no way to confirm they exist on
-    Render from here either.
+  - Google Custom Search (`tools/fandom.py`'s Tier 3) needed
+    GOOGLE_CUSTOM_SEARCH_API_KEY / GOOGLE_SEARCH_CX_ID. The owner obtained
+    both, correctly configured (API enabled, key restrictions fixed) —
+    and it 403'd anyway: "This project does not have the access to Custom
+    Search JSON API." Confirmed against Google's own documentation
+    (developers.google.com/custom-search/v1/overview): the API has been
+    **closed to new customers since January 2026**, existing customers
+    get until January 1, 2027. A key created today can never work here,
+    regardless of Console configuration. Not a setup mistake — chased
+    for three rounds of Console changes before this was verified.
 
 So "many names" is supplied here as a small HAND-CURATED overlay
 (`data/fandom_alt_titles.json`) instead of auto-discovered — 19 titles is
@@ -39,13 +45,21 @@ search API. This is exactly the "guessing is a discovery tactic, not a
 source of truth" principle the redesign note already established for
 subdomain-guessing; it applies just as well to name-guessing.
 
-THREE CANDIDATE SOURCES, IN ORDER, for EVERY name (seed title + every
+FOUR CANDIDATE SOURCES, IN ORDER, for EVERY name (seed title + every
 alias in the overlay):
 
   1. Subdomain guessing — `harvest_fandom.py`'s own `candidate_subdomains`,
      reused unmodified, applied to every name rather than just the seed
      title. Cheap: one siteinfo call per guess, no external search.
-  2. Wikipedia — search for the name, and ONLY IF THE HIT PASSES
+  2. Brave Search — `"{name}" site:fandom.com`, live-verified working
+     (2,000 req/month free tier) after Google CSE turned out to be a dead
+     end. Found `the-kings-avatar.fandom.com` for "The King's Avatar" on
+     the first query — a hyphenation `candidate_subdomains()` cannot
+     produce (it guesses `the-king-s-avatar`, squashing the possessive's
+     apostrophe into its own hyphen). Optional: BRAVE_SEARCH_API_KEY
+     unset skips this source with no candidates and no failure recorded,
+     so its absence never looks like every query failed.
+  3. Wikipedia — search for the name, and ONLY IF THE HIT PASSES
      `prove_fandom.py`'s `_same_work` (imported directly, not
      reimplemented) is its raw wikitext scanned for a `*.fandom.com`
      link. `_same_work` matters here more than it did as a cross-check
@@ -54,11 +68,13 @@ alias in the overlay):
      nominated web serial) surfaced "Wandering Witch: The Journey of
      Elaina" (an unrelated anime) as the top hit for a looser query.
      Strict identity is not optional here.
-  3. `tools/fandom.py`'s `resolve_fandom_subdomain` — the existing 5-tier
+  4. `tools/fandom.py`'s `resolve_fandom_subdomain` — the existing 5-tier
      cascade, UNCHANGED, exactly the fallback `harvest_fandom.py` already
      uses. No edits to that function; its production blast radius
      (/fandom/resolve, /fandom/universe, book_data.py, quiz.py,
-     summary.py) is untouched by this file.
+     summary.py) is untouched by this file. Its own Google CSE tier is
+     dead for the same reason as above and will simply keep failing
+     silently, same as it already did before Brave was added.
 
 Every candidate that reaches this far — regardless of source — is proved,
 not accepted, via `prove_fandom.py.prove()`. This script never writes
@@ -177,6 +193,77 @@ def try_wikipedia(names: list[str]) -> tuple[list[tuple[str, str]], list[str]]:
     return uniq, unavailable
 
 
+BRAVE_KEY = os.environ.get("BRAVE_SEARCH_API_KEY", "")
+BRAVE_ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
+
+
+def try_brave(names: list[str]) -> tuple[list[tuple[str, str]], list[str]]:
+    """(name, subdomain) pairs from Brave Search's `site:fandom.com`.
+
+    Added 2026-08-14, after Google Custom Search turned out to be a dead
+    end for a NEW key -- Google closed it to new customers in Jan 2026
+    (developers.google.com/custom-search/v1/overview), and the 403 this
+    project hit chasing Console settings was never a config problem.
+    Brave's free tier (2,000 req/month, verified live before writing this
+    function) found `the-kings-avatar.fandom.com` for "The King's
+    Avatar" on the first try -- a hyphenation candidate_subdomains()
+    never produces (it guesses "the-king-s-avatar", squashing the
+    possessive's apostrophe into its own hyphen; the real wiki drops it).
+
+    Results are NOT trusted as-is -- same as every other source, each
+    candidate still goes through prove()'s five signals. A search engine
+    finding a fandom.com URL only means the URL exists, not that it is
+    about this specific book (Chrysalis/Delve-shaped ambiguity applies
+    here as much as anywhere).
+
+    No key configured -- BRAVE_KEY empty -- returns no candidates and no
+    failure; this source is optional, and its absence must not look like
+    every query failed.
+    """
+    if not BRAVE_KEY:
+        return [], []
+    candidates: list[tuple[str, str]] = []
+    unavailable: list[str] = []
+    for n in names:
+        q = urllib.parse.urlencode({"q": f'"{n}" site:fandom.com', "count": 6})
+        url = f"{BRAVE_ENDPOINT}?{q}"
+        last = ""
+        hits = None
+        for attempt in range(3):
+            try:
+                req = urllib.request.Request(url, headers={
+                    **HEADERS, "Accept": "application/json",
+                    "X-Subscription-Token": BRAVE_KEY})
+                with urllib.request.urlopen(req, timeout=25) as resp:
+                    hits = json.load(resp)
+                break
+            except urllib.error.HTTPError as exc:
+                last = f"HTTP {exc.code}"
+                if exc.code == 429:            # free tier is 1 req/s
+                    time.sleep(2 + attempt * 2)
+                    continue
+                break
+            except Exception as exc:  # noqa: BLE001
+                last = type(exc).__name__
+            if attempt < 2:
+                time.sleep(1.5)
+        if hits is None:
+            unavailable.append(f"brave search {n!r}: {last or 'unknown'}")
+            continue
+        for r in (hits.get("web") or {}).get("results") or []:
+            host = urllib.parse.urlparse(r.get("url", "")).hostname or ""
+            m = re.match(r"([a-z0-9_-]+)\.fandom\.com$", host)
+            if m:
+                candidates.append((f"{n} (via Brave)", m.group(1).lower()))
+        time.sleep(1.1)                        # stay under 1 req/s
+    seen, uniq = set(), []
+    for n, sub in candidates:
+        if sub not in seen:
+            seen.add(sub)
+            uniq.append((n, sub))
+    return uniq, unavailable
+
+
 def try_resolver(title: str) -> tuple[str, str] | None:
     """The existing, unmodified 5-tier cascade -- last resort, same as
     harvest_fandom.py's own fallback. Any failure here is swallowed the
@@ -231,6 +318,19 @@ def discover(title: str, alts: dict, delay: float) -> dict:
 
     for name, sub in try_guessing(names):
         if consider("guess", name, sub):
+            best["attempts"], best["unavailable"] = attempts, unavailable
+            return best
+        time.sleep(delay)
+
+    # Brave before Wikipedia: it is the source that actually found the 11
+    # titles guessing and Wikipedia both missed on 2026-08-14, and its
+    # 2,000/month free tier easily covers this list. Skipped for free
+    # (no candidates, no failure recorded) when BRAVE_SEARCH_API_KEY is
+    # unset, so this stays optional rather than load-bearing.
+    brave_cands, brave_unavail = try_brave(names)
+    unavailable.extend(brave_unavail)
+    for name, sub in brave_cands:
+        if consider("brave", name, sub):
             best["attempts"], best["unavailable"] = attempts, unavailable
             return best
         time.sleep(delay)
