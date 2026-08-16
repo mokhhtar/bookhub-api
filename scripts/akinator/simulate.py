@@ -363,6 +363,10 @@ def main() -> None:
                          "since a paired test needs one outcome per book.")
     ap.add_argument("--sample", type=int, default=0,
                     help="test only the N most popular books (0 = all)")
+    ap.add_argument("--target-prefix", default=None,
+                    help="play only books whose key starts with this "
+                         "(e.g. /fandom/). Measures what a supplement BUYS; "
+                         "--sample only ever measures what it costs.")
     ap.add_argument("--with-fandom", action="store_true",
                     help="include the census novels harvested from Fandom "
                          "wikis. Run once with and once without, same "
@@ -394,7 +398,20 @@ def main() -> None:
         sys.exit(1)
 
     matrix = Matrix(books, questions, char_questions)
-    targets = range(args.sample or len(books))
+    if args.target_prefix:
+        # Measure the books the corpus was EXTENDED with, not the head of
+        # it. A --sample run always targets the most popular N, and a
+        # supplement slotted into a low popularity band is never among
+        # them -- so the cost of adding books is measurable that way and
+        # the BENEFIT is not. The benefit is a player thinking of Shadow
+        # Slave being guessed instead of told the game does not know it,
+        # which only shows up when Shadow Slave is the target.
+        targets = [i for i, b in enumerate(books)
+                   if str(b.get("key") or "").startswith(args.target_prefix)]
+        print(f"Targeting {len(targets)} book(s) with key prefix "
+              f"{args.target_prefix!r}, out of {len(books)} in the corpus\n")
+    else:
+        targets = range(args.sample or len(books))
 
     results: list[tuple[bool, int]] = []
     per_tier: dict[str, list[bool]] = {"top 50": [], "51-200": [], "201+": []}
