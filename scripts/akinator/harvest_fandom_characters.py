@@ -154,8 +154,33 @@ _ADAPTATION_QUALIFIER = re.compile(
 _BENIGN_QUALIFIER = re.compile(r"\s*\([^)]*\)\s*$")
 
 MAX_MEMBER_PAGES = 6      # 500 members per request; 3,000 is plenty to rank
-DEFAULT_CAP = 25          # vs. Open Library's p95 of 14 — generous, not absurd
 MIN_ARTICLE_LENGTH = 400  # below this a page is a stub, not a named character
+
+# WHY 8 AND NOT 25, which is what the first run shipped.
+#
+# The owner asked the right question of it: this is a book-guessing game,
+# so what is a twenty-fifth character for? Three answers, none of them
+# "more data is better":
+#
+#   * Character questions are ENDGAME questions. `engine.py` only pools
+#     them once belief has narrowed, and then only for names a book still
+#     in contention carries. They separate two or three candidates; they
+#     never cut the 5,000 down.
+#   * A minor character PENALISES the right book. If the book genuinely
+#     has character #20 and the player — who does not remember character
+#     #20 — answers no, the correct book is scored as contradicted. Depth
+#     buys exactly this failure. It is the axis `traits.py` states for
+#     itself: "Can a player answer it? … without looking anything up."
+#   * `CHAR_ABSENT_CONFIDENCE = 0.06` is documented as calibrated on Open
+#     Library's lists being "reasonably complete when present" — lists
+#     whose median length is 2 and p90 is 7. Feeding 25-deep lists in
+#     beside 2-deep ones puts two very different completeness regimes
+#     under one constant.
+#
+# 8 sits at Open Library's p90, so the engine sees the shape it was tuned
+# on. Measured cost of the depth it drops: 25 added 3,704 character tokens
+# the shipped set did not already have, 8 adds 1,280.
+DEFAULT_CAP = 8
 
 
 def _api(subdomain: str, params: dict) -> dict:
