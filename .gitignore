@@ -100,3 +100,15 @@ venv/
 # Fandom discovery run output (scripts/akinator/discover_fandom.py) --
 # audit trail of every candidate tried per title. Regenerable.
 /data/akinator_fandom_discovery.json
+
+# Fandom-wide wiki census (community-maintained Module:WikiData
+# cache + Books_hub cross-reference + novel classification).
+# Regenerable by scripts/akinator/census_fandom_novels.py.
+/data/fandom_wikidata_module.json
+/data/fandom_novel_census.csv
+/data/fandom_novel_census.json
+
+# Cast harvested from the census's novel wikis, ranked by article length
+# (scripts/akinator/harvest_fandom_characters.py). Regenerable; the Open
+# Library `person` field's counterpart for books that catalogue misses.
+/data/akinator_fandom_characters.json
