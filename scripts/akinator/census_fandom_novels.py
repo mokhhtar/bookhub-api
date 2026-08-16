@@ -144,6 +144,18 @@ _BOOK_CATEGORY = re.compile(
     r"\b(books?|novels?|novellas?|light[- ]?novels?|web[- ]?novels?"
     r"|bibliography)\b", re.IGNORECASE)
 
+# Asked by exact name via `prop=categoryinfo` (see classify()), so these
+# are the literal category titles a book wiki uses, not a pattern.
+_BOOK_CATEGORY_NAMES = ("Books", "Novels", "Novellas", "Light novels",
+                        "Web novels", "Bibliography", "Short stories")
+
+# How many 500-category pages to sweep per wiki. Four covers every wiki
+# in the Books_hub set except memory-beta (14,608 categories), and the
+# signals read off the sweep are presence tests that saturate well
+# before 2,000 categories. The book signal does not depend on this cap
+# at all -- it is asked exactly, see classify().
+MAX_CATEGORY_PAGES = 4
+
 # Name-level exclusion, checked BEFORE any network call -- classify()
 # costs two live API requests per wiki, and these two shapes are wrong
 # from the wiki's own *scope*, not from its category contents, so no
@@ -271,19 +283,64 @@ def classify(subdomain: str) -> tuple[str, dict]:
     # manhwa-adaptation category elsewhere, and there is no way to tell
     # the two apart by NAME alone -- only by what is actually filed
     # under it. A real adaptation-content category has real pages.
+    #
+    # PAGINATED, and that is not a refinement. The first version asked for
+    # aclimit=500 once and read the reply as "this wiki's categories" --
+    # but allcategories is ALPHABETICAL, so on any wiki with more than 500
+    # it silently delivered an A-to-somewhere slice. Measured live
+    # (2026-08-16): malazan has 766 categories, iceandfire 1,052,
+    # agathachristie 1,920, dune 2,204, memory-beta 14,608. Every signal
+    # below was being computed on a truncated, alphabetically-biased
+    # sample -- Dune's own "Novels" category (35 members) and A Song of
+    # Ice and Fire's "Novels"/"Novellas" both sat past the cutoff and were
+    # invisible. Capped at MAX_CATEGORY_PAGES rather than exhaustive:
+    # memory-beta alone would cost 30 requests, and the signals here are
+    # presence tests that saturate long before that.
     sized: dict[str, int] = {}
-    try:
-        d2 = _fetch(f"https://{subdomain}.fandom.com/api.php?" +
-                    urllib.parse.urlencode({
-                        "action": "query", "list": "allcategories",
-                        "acprop": "size", "aclimit": 500, "format": "json"}))
+    cont: str | None = None
+    for _ in range(MAX_CATEGORY_PAGES):
+        params = {"action": "query", "list": "allcategories",
+                  "acprop": "size", "aclimit": 500, "format": "json"}
+        if cont:
+            params["acfrom"] = cont
+        try:
+            d2 = _fetch(f"https://{subdomain}.fandom.com/api.php?" +
+                        urllib.parse.urlencode(params))
+        except Unavailable:
+            break   # the random-page sample alone is enough to attempt a call
         for c in (d2.get("query") or {}).get("allcategories") or []:
             name = c.get("*", "")
             if name:
                 sized[name] = c.get("pages", 0)
                 cats.append(name)
+        cont = (d2.get("continue") or {}).get("accontinue")
+        if not cont:
+            break
+
+    # The book signal asked EXACTLY, not swept. Even paginated, the sweep
+    # above is capped and can still miss a book category on a huge wiki --
+    # and this particular signal is the one that decides NOVEL vs.
+    # LITERARY_MULTI_MEDIA, so a miss changes the verdict. `categoryinfo`
+    # answers "does Category:Novels exist here, and how many pages are in
+    # it" for every candidate name in ONE request, with no alphabetical
+    # window at all. Verified live: dune -> Novels 35, iceandfire ->
+    # Novels 7 + Novellas 5, both of which the unpaginated sweep missed
+    # entirely.
+    try:
+        d3 = _fetch(f"https://{subdomain}.fandom.com/api.php?" +
+                    urllib.parse.urlencode({
+                        "action": "query", "format": "json",
+                        "prop": "categoryinfo",
+                        "titles": "|".join(f"Category:{c}"
+                                          for c in _BOOK_CATEGORY_NAMES)}))
+        for p in (d3.get("query") or {}).get("pages", {}).values():
+            info = p.get("categoryinfo") or {}
+            name = (p.get("title") or "").split(":", 1)[-1]
+            if name and info.get("pages", 0) > 0:
+                sized[name] = max(sized.get(name, 0), info["pages"])
+                cats.append(name)
     except Unavailable:
-        pass   # the random-page sample alone is enough to attempt a call
+        pass
 
     # Crossover-database check, BEFORE any work/other-medium scoring --
     # found live (owner's hand review, 2026-08-16) against two wikis that
