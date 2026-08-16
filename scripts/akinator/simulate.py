@@ -48,10 +48,18 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# The Windows console in a non-UTF-8 locale (cp1256 here) cannot encode
+# every book title this prints, and a build that dies on a title is a
+# build lost to the terminal rather than to anything real.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+
 from author_traits import AUTHOR_QUESTIONS, book_traits, load_wikidata  # noqa: E402
 from characters import extract_characters, usable_token          # noqa: E402
 from corpus_filter import SHIPPED_BOOKS, filter_corpus           # noqa: E402
 from site_books import supplement as site_supplement              # noqa: E402
+from fandom_books import supplement as fandom_supplement           # noqa: E402
 from traits import TRAIT_QUESTIONS, apply_labels, load_traits     # noqa: E402
 from engine import Engine, Matrix                                # noqa: E402
 from work_traits import (WORK_QUESTIONS, load_protagonists,        # noqa: E402
@@ -75,7 +83,7 @@ MIN_CHAR_BOOKS = 1
 MAX_CHAR_SHARE = 0.02
 
 
-def load_docs(corpus_size: int = 0) -> list[dict]:
+def load_docs(corpus_size: int = 0, with_fandom: bool = False) -> list[dict]:
     """Prefer the real corpus; fall back to the Phase 0 sample.
 
     `corpus_size` truncates by popularity, which is what makes the
@@ -101,12 +109,19 @@ def load_docs(corpus_size: int = 0) -> list[dict]:
     docs = filter_corpus(docs, verbose=False)
     # Books we publish are pinned in regardless of Open Library rank.
     docs = site_supplement(docs, verbose=False)
+    # The census novels, when measuring what they cost or buy. Added
+    # BEFORE truncation so they compete for the shipped slots honestly
+    # rather than being appended past the cut where nothing can reach
+    # them -- the point of the measurement is what happens when they are
+    # really in the game.
+    if with_fandom:
+        docs = fandom_supplement(docs, verbose=False)
     return docs[:corpus_size] if corpus_size else docs
 
 
 def load_books(corpus_size: int = 0, with_author_traits: bool = True,
-               with_traits: bool = True) -> list[dict]:
-    docs = load_docs(corpus_size)
+               with_traits: bool = True, with_fandom: bool = False) -> list[dict]:
+    docs = load_docs(corpus_size, with_fandom)
     n = len(docs)
 
     # Phase 2: Wikidata author facts, if they have been harvested. Absent
@@ -341,8 +356,18 @@ def main() -> None:
     ap.add_argument("--no-characters", action="store_true",
                     help="disable endgame character questions (for A/B)")
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--per-book-out", default=None,
+                    help="write {book key: won?} JSON. Two runs' files are "
+                         "what a paired test consumes — compare them on the "
+                         "books both contain. Only written with --trials 1, "
+                         "since a paired test needs one outcome per book.")
     ap.add_argument("--sample", type=int, default=0,
                     help="test only the N most popular books (0 = all)")
+    ap.add_argument("--with-fandom", action="store_true",
+                    help="include the census novels harvested from Fandom "
+                         "wikis. Run once with and once without, same "
+                         "--seed, and compare the --per-book-out files on "
+                         "the books both runs contain.")
     ap.add_argument("--corpus-size", type=int, default=SHIPPED_BOOKS,
                     help=f"truncate the corpus by popularity. Defaults to "
                          f"{SHIPPED_BOOKS}, the number that ships — this used "
@@ -354,7 +379,8 @@ def main() -> None:
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
-    books = load_books(args.corpus_size, with_traits=not args.no_traits)
+    books = load_books(args.corpus_size, with_traits=not args.no_traits,
+                       with_fandom=args.with_fandom)
     verbose = not args.quiet
     if verbose:
         print(f"Corpus: {len(books)} books\n")
@@ -368,19 +394,44 @@ def main() -> None:
         sys.exit(1)
 
     matrix = Matrix(books, questions, char_questions)
-    rng = random.Random(args.seed)
     targets = range(args.sample or len(books))
 
     results: list[tuple[bool, int]] = []
     per_tier: dict[str, list[bool]] = {"top 50": [], "51-200": [], "201+": []}
+    # book key -> won?, so two runs over different corpora can be compared
+    # on the books they SHARE. See the per-game seeding note below.
+    per_book: dict[str, bool] = {}
 
     for idx in targets:
         tier = "top 50" if idx < 50 else ("51-200" if idx < 200 else "201+")
-        for _ in range(args.trials):
+        for trial in range(args.trials):
+            # SEEDED PER GAME, FROM THE BOOK'S OWN KEY -- not once for the
+            # whole run, and not from the book's index.
+            #
+            # A single shared RNG makes every comparison between two
+            # corpora meaningless: adding books shifts how many draws
+            # happen before game N, so "the same seed" gives that book a
+            # different player. The difference then reported is the draw
+            # order, not the change. Indexing by position has the same
+            # defect for the same reason -- a book that moves from rank
+            # 900 to 901 becomes a different experiment.
+            #
+            # Keying on the book's identity fixes both: a given book faces
+            # the same simulated player in every run it appears in, so two
+            # runs can be compared game-by-game on the intersection, which
+            # is what a paired test needs.
+            rng = random.Random(f"{args.seed}:{books[idx]['key']}:{trial}")
             ok, used = play(matrix, idx, rng, args.max_questions,
                             args.max_guesses, args.noise, args.miss_rate)
             results.append((ok, used))
             per_tier[tier].append(ok)
+            if args.trials == 1:
+                per_book[books[idx]["key"]] = ok
+
+    if args.per_book_out:
+        with open(args.per_book_out, "w", encoding="utf-8") as fh:
+            json.dump(per_book, fh)
+        print(f"per-book outcomes -> {args.per_book_out}\n")
 
     wins = [used for ok, used in results if ok]
     rate = len(wins) / len(results)

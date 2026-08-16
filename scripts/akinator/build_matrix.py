@@ -40,6 +40,13 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# The Windows console in a non-UTF-8 locale (cp1256 here) cannot encode
+# every book title this prints, and a build that dies on a title is a
+# build lost to the terminal rather than to anything real.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+
 from author_traits import AUTHOR_QUESTIONS, book_traits, load_wikidata  # noqa: E402
 from authors import AuthorIndex                                     # noqa: E402
 from series import series_for_docs                                  # noqa: E402
@@ -48,6 +55,7 @@ from work_traits import (WORK_QUESTIONS, load_protagonists,         # noqa: E402
 from characters import extract_characters, usable_token             # noqa: E402
 from corpus_filter import SHIPPED_BOOKS, filter_corpus              # noqa: E402
 from site_books import supplement as site_supplement                # noqa: E402
+from fandom_books import supplement as fandom_supplement             # noqa: E402
 from traits import TRAIT_QUESTIONS, apply_labels, load_traits       # noqa: E402
 from series import VOLUME_DOMINANCE                                  # noqa: E402
 from features import (EXCLUSIVE_GROUPS, FORCE_KEEP,                  # noqa: E402
@@ -91,6 +99,11 @@ STATE_ABSENT, STATE_PRESENT, STATE_UNKNOWN = 0, 1, 2
 # Set from --no-traits in main(); read by build_books.
 NO_TRAITS = False
 
+# Set from --with-fandom in main(); read by load_corpus. Off by default:
+# the shipped game must not change because a harvest ran. Turn it on to
+# BUILD a comparison, measure it with simulate.py, then decide.
+WITH_FANDOM = False
+
 
 def load_corpus(path: str) -> list[dict]:
     docs = []
@@ -110,7 +123,10 @@ def load_corpus(path: str) -> list[dict]:
     docs = filter_corpus(docs)
     # Books we publish are pinned in regardless of Open Library rank —
     # a player must never be told we don't know a book we host.
-    return site_supplement(docs)
+    docs = site_supplement(docs)
+    if WITH_FANDOM:
+        docs = fandom_supplement(docs)
+    return docs
 
 
 def load_covers(path: str = COVERS_PATH) -> dict[str, int]:
@@ -172,7 +188,18 @@ def build_books(docs: list[dict]) -> tuple[list[dict], AuthorIndex]:
         # Asserted -> present, everything else -> unknown, never absent.
         # Shared with simulate.py so the artifact and the measurement of it
         # cannot drift apart; see traits.apply_labels.
-        apply_labels(book, doc.get("key") or "", extracted)
+        #
+        # A Fandom row carries its labels on the doc rather than in
+        # `extracted`, because that dict is keyed by Open Library work key
+        # and these books have none. Handed to the SAME apply_labels so
+        # the asserted/unknown rule is identical for both sources -- the
+        # alternative, setting present/unknown here by hand, is how the
+        # two would drift apart.
+        fandom_labels = doc.get("_fandom_traits")
+        if fandom_labels:
+            apply_labels(book, doc["key"], {doc["key"]: fandom_labels})
+        else:
+            apply_labels(book, doc.get("key") or "", extracted)
 
         keys = doc.get("author_key") or []
         ids = []
@@ -232,6 +259,10 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--corpus", default=CORPUS_PATH)
     ap.add_argument("--out-dir", default=DEFAULT_OUT)
+    ap.add_argument("--with-fandom", action="store_true",
+                    help="include the census novels harvested from Fandom "
+                         "wikis. OFF by default — build with and without, "
+                         "measure the pair with simulate.py, then decide.")
     ap.add_argument("--no-traits", action="store_true",
                     help="build without the model-extracted trait columns. "
                          "Measured over 12 seeds and 2,400 paired games they "
@@ -245,6 +276,8 @@ def main() -> None:
 
     global NO_TRAITS
     NO_TRAITS = args.no_traits
+    global WITH_FANDOM
+    WITH_FANDOM = args.with_fandom
 
     docs = load_corpus(args.corpus)
     if args.limit:
