@@ -50,6 +50,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 CENSUS_PATH = os.path.join(REPO_ROOT, "data", "fandom_novel_census.json")
 CHARS_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_characters.json")
 TRAITS_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_traits.json")
+SUBJECTS_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_subjects.json")
 
 # Deeper into the corpus than site_books' (2000, 4800). Our own published
 # pages are books we host and must never fail to guess; these are books we
@@ -70,6 +71,7 @@ def load_fandom_books() -> list[dict]:
     census = _load(CENSUS_PATH)
     chars = _load(CHARS_PATH)
     traits = _load(TRAITS_PATH, "traits")
+    subjects = _load(SUBJECTS_PATH)
     if not census:
         return []
 
@@ -81,10 +83,15 @@ def load_fandom_books() -> list[dict]:
         title = r["title"]
         cast = [c["name"] for c in (chars.get(title, {}).get("characters") or [])]
         labels = traits.get(title) or []
+        # Only the categories that already map to a feature -- see
+        # harvest_fandom_subjects.py on why the unmapped ones must never
+        # reach `subject`, where their count would become `richness` and
+        # tell the engine these books are well documented.
+        subs = (subjects.get(title) or {}).get("subjects") or []
         # Nothing harvested means nothing to contribute -- a row with no
         # cast and no labels is a title and a popularity guess, which is
         # all cost and no signal.
-        if not cast and not labels:
+        if not cast and not labels and not subs:
             continue
         out.append({
             "title": title,
@@ -92,6 +99,7 @@ def load_fandom_books() -> list[dict]:
             "pages": r.get("pages") or 0,
             "cast": cast,
             "labels": labels,
+            "subjects": subs,
         })
     return out
 
@@ -134,8 +142,9 @@ def supplement(docs: list[dict], band: tuple[int, int] = DEFAULT_BAND,
             # The trait labels are NOT subjects: they are already keyed
             # (`t:magic`) and are handed to build_matrix separately so they
             # go through the same path as the Open Library labels rather
-            # than being re-derived from strings.
-            "subject": [],
+            # than being re-derived from strings. These strings are the
+            # wiki's own categories, pre-filtered to the ones that map.
+            "subject": b["subjects"],
             "person": b["cast"],
             "language": ["eng"],
             "readinglog_count": int(top_val - frac * (top_val - bot_val)),
@@ -149,7 +158,8 @@ def supplement(docs: list[dict], band: tuple[int, int] = DEFAULT_BAND,
     if verbose:
         with_cast = sum(1 for b in missing if b["cast"])
         with_labels = sum(1 for b in missing if b["labels"])
+        with_subs = sum(1 for b in missing if b["subjects"])
         print(f"Fandom novels: +{len(added)} added ({with_cast} with a cast, "
-              f"{with_labels} with trait labels), {skipped} skipped as "
-              f"already in the corpus")
+              f"{with_labels} with trait labels, {with_subs} with mapped "
+              f"subjects), {skipped} skipped as already in the corpus")
     return out
