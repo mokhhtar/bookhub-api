@@ -112,3 +112,8 @@ venv/
 # (scripts/akinator/harvest_fandom_characters.py). Regenerable; the Open
 # Library `person` field's counterpart for books that catalogue misses.
 /data/akinator_fandom_characters.json
+
+# Verified prose per novel wiki, the input traits.py needs and Open
+# Library cannot supply for web novels
+# (scripts/akinator/harvest_fandom_text.py). Regenerable.
+/data/akinator_fandom_text.json
