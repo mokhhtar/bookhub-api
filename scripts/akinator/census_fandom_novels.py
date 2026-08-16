@@ -36,19 +36,31 @@ uses and tested yesterday. That function is REUSED here via its
 `_WORK_CATEGORY` / `_GENERIC_CATEGORY` patterns, extended with an
 explicit exclusion set for other-medium categories — not reimplemented.
 
-THREE STATES, NOT TWO, because a binary novel/not-novel call is
+FOUR STATES, NOT TWO, because a binary novel/not-novel call is
 structurally wrong here: some works are genuinely multi-medium (Harry
 Potter's wiki is full of film content too, and excluding it for that
 would be exactly backwards — it started as, and still is, a novel
 series). A wiki earns:
 
-  NOVEL        strong narrative-work categories, no strong other-medium
-               signal (or the other-medium signal is clearly secondary)
-  MULTI_MEDIA  BOTH real work-shaped categories AND a strong other-medium
-               signal (film/game/TV adaptation content) — needs a human
-               look, not an automatic keep or drop
-  NOT_NOVEL    strong other-medium signal, no narrative-work categories
+  NOVEL                strong narrative-work categories, no strong
+                        other-medium signal
+  LITERARY_MULTI_MEDIA  both work-shaped AND other-medium categories,
+                        BUT an explicit "Books"/"Novels" category with
+                        real membership settles the origin medium —
+                        this is a novel series with adaptations
+                        (Warriors, Dune, Agatha Christie), safe to treat
+                        as a novel result
+  MULTI_MEDIA           both signals present, no explicit book category
+                        to settle origin medium — genuinely ambiguous,
+                        needs a human look, not an automatic keep or drop
+  NOT_NOVEL             strong other-medium signal, no narrative-work
+                        categories
 
+Split from an original three-state design (NOVEL/MULTI_MEDIA/NOT_NOVEL)
+after a 100-wiki hand review the owner ran in parallel (2026-08-16)
+found real novel serieses — Warriors, Dune, Agatha Christie, Nancy Drew —
+sitting in the undifferentiated MULTI_MEDIA bucket even though each
+wiki's own category structure already said "Books"/"Novels" outright.
 This mirrors the CONFIRMED/LIKELY/AMBIGUOUS discipline `prove_fandom.py`
 already established: never collapse "needs a look" into a firm yes or no.
 
@@ -114,6 +126,23 @@ _OTHER_MEDIUM_CATEGORY = re.compile(
     r"\b(video ?games?|tv ?series|television|anime|manga|films?"
     r"|movies?|comics?|soundtracks?|voice ?actors?|actors?"
     r"|episodes? guide|seasons?)\b", re.IGNORECASE)
+
+# A wiki with BOTH work-shaped and other-medium categories is genuinely
+# ambiguous by content alone -- Harry Potter's wiki is full of film
+# content and is still correctly a novel wiki. Found live in a 100-wiki
+# hand review the owner ran in parallel (2026-08-16): Warriors (Books,
+# 358 members), Dune (Novels, 44), Agatha Christie (Novels, 90), Nancy
+# Drew (Books, 586) all landed in the old undifferentiated MULTI_MEDIA
+# bucket despite each wiki stating outright, via its own category
+# structure, that it is a book series first. An explicit "Books"/
+# "Novels" category with real membership is a categorically stronger,
+# more specific signal than the generic _WORK_CATEGORY hits (which also
+# fire for any narrative work regardless of origin medium) -- worth
+# distinguishing from the wikis where no such category exists and origin
+# medium genuinely can't be told from category structure alone.
+_BOOK_CATEGORY = re.compile(
+    r"\b(books?|novels?|novellas?|light[- ]?novels?|web[- ]?novels?"
+    r"|bibliography)\b", re.IGNORECASE)
 
 # Name-level exclusion, checked BEFORE any network call -- classify()
 # costs two live API requests per wiki, and these two shapes are wrong
@@ -256,6 +285,29 @@ def classify(subdomain: str) -> tuple[str, dict]:
     except Unavailable:
         pass   # the random-page sample alone is enough to attempt a call
 
+    # Crossover-database check, BEFORE any work/other-medium scoring --
+    # found live (owner's hand review, 2026-08-16) against two wikis that
+    # otherwise scored NOVEL/LITERARY_MULTI_MEDIA on category-name content
+    # alone: "Yuna's Princess adventure" (really a giant Heroes/Villains
+    # crossover wiki -- 29 distinct `<X> Heroes`/`<X> Villains` categories
+    # including "Batman Heroes", "Adult Swim Heroes") and "Non-alien
+    # Creatures" (a cryptid/monster compendium -- 126 distinct `<X>
+    # Universe` categories). Both carry incidental "Characters" and even
+    # "Books" categories from the many unrelated franchises they catalog,
+    # which fooled the per-category signals above. A wiki about ONE work
+    # never organically produces 3+ *different* franchise-tagged
+    # Heroes/Villains/Universe categories -- at most one, self-referential.
+    # This reuses the SAME `sized` allcategories fetch already made above,
+    # no extra network call.
+    _franchise_tag = re.compile(r"\b(heroes|villains|universe)$", re.IGNORECASE)
+    franchise_tags = {c for c in sized
+                      if _franchise_tag.search(c) and sized.get(c, 0) >= 5}
+    if len(franchise_tags) >= 3:
+        return "NOT_NOVEL", {
+            "reason": "crossover database (Heroes/Villains/Universe "
+                      "categories span many unrelated franchises)",
+            "franchise_tag_sample": sorted(franchise_tags)[:8]}
+
     cats = [c.strip() for c in dict.fromkeys(cats) if c and c.strip()]
     specific = [c for c in cats if not _GENERIC_CATEGORY.match(c)]
     work_hits = [c for c in specific if _WORK_CATEGORY.search(c)]
@@ -265,14 +317,28 @@ def classify(subdomain: str) -> tuple[str, dict]:
                   # never carries a member count -- absence of size data
                   # is not evidence the category is empty.
                   and sized.get(c, 1) >= 2]
+    # Same size-floor reasoning as other_hits: require real membership,
+    # not a stub category someone created and never filled.
+    book_hits = [c for c in specific if _BOOK_CATEGORY.search(c)
+                 and sized.get(c, 1) >= 3]
 
     evidence = {"categories_seen": len(cats), "specific": len(specific),
                "work_shaped_sample": work_hits[:6],
-               "other_medium_sample": other_hits[:6]}
+               "other_medium_sample": other_hits[:6],
+               "book_category_sample": book_hits[:6]}
 
     if work_hits and not other_hits:
         return "NOVEL", evidence
+    if work_hits and other_hits and book_hits:
+        # Both signals present, but an explicit Books/Novels category
+        # with real membership settles the origin medium -- this is a
+        # novel series that also has adaptations (Warriors, Dune,
+        # Agatha Christie), not a genuinely ambiguous cross-media wiki.
+        return "LITERARY_MULTI_MEDIA", evidence
     if work_hits and other_hits:
+        # Ambiguous by content alone -- no explicit book category found
+        # to settle origin medium. Needs a human look, same discipline
+        # as before this split.
         return "MULTI_MEDIA", evidence
     if other_hits and not work_hits:
         return "NOT_NOVEL", evidence
@@ -333,31 +399,36 @@ def main() -> None:
         results.append({"title": name.removesuffix(" Wiki").removesuffix(" Wikia"),
                         "wiki_name": name, "subdomain": sub, "pages": pages,
                         "type": status, "evidence": ev})
-        print(f"  [{status:<12}] {name[:40]:<40} {pages:>6} pages")
+        print(f"  [{status:<20}] {name[:40]:<40} {pages:>6} pages")
         time.sleep(args.delay)
 
     tally: dict[str, int] = {}
     for r in results:
         tally[r["type"]] = tally.get(r["type"], 0) + 1
     print("\n" + "=" * 60)
-    for k in ("NOVEL", "MULTI_MEDIA", "NOT_NOVEL", "UNAVAILABLE"):
+    for k in ("NOVEL", "LITERARY_MULTI_MEDIA", "MULTI_MEDIA", "NOT_NOVEL",
+             "UNAVAILABLE"):
         if tally.get(k):
-            print(f"  {k:<12} {tally[k]:>4}")
+            print(f"  {k:<20} {tally[k]:>4}")
 
     with open(OUT_CSV, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
-        w.writerow(["title", "subdomain", "pages", "type", "work_shaped",
-                   "other_medium"])
+        w.writerow(["title", "subdomain", "url", "pages", "type",
+                   "work_shaped", "other_medium", "book_category"])
         for r in results:
-            w.writerow([r["title"], r["subdomain"], r["pages"], r["type"],
+            w.writerow([r["title"], r["subdomain"],
+                       f"https://{r['subdomain']}.fandom.com/",
+                       r["pages"], r["type"],
                        ";".join(r["evidence"].get("work_shaped_sample", [])),
-                       ";".join(r["evidence"].get("other_medium_sample", []))])
+                       ";".join(r["evidence"].get("other_medium_sample", [])),
+                       ";".join(r["evidence"].get("book_category_sample", []))])
     with open(OUT_JSON, "w", encoding="utf-8") as fh:
         json.dump({"results": results}, fh, ensure_ascii=False, indent=1)
 
-    novels = [r for r in results if r["type"] == "NOVEL"]
-    print(f"\n{len(novels)} classified NOVEL. Not written to "
-          f"akinator_fandom.json or FANDOM_WIKIS -- for review.")
+    novels = [r for r in results
+             if r["type"] in ("NOVEL", "LITERARY_MULTI_MEDIA")]
+    print(f"\n{len(novels)} classified NOVEL or LITERARY_MULTI_MEDIA. Not "
+          f"written to akinator_fandom.json or FANDOM_WIKIS -- for review.")
     if novels:
         print("\nsample:")
         for r in novels[:15]:
