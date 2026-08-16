@@ -422,10 +422,15 @@ FANDOM_WIKIS = {
         "author": "Shōgo Kinugasa",
         "cover_url": "https://covers.openlibrary.org/b/id/10166148-M.jpg"
     },
-    "omniscient-readers-point-of-view": {
-        "subdomain": "omniscient-readers-point-of-view",
-        "aliases": ["omniscient reader", "omniscient reader's viewpoint", "orvp"],
-        "author": "sing N song",
+    # CORRECTED 2026-08-14: the old subdomain "omniscient-readers-point-of-
+    # view" is a clean 404 -- verified directly (HTTP 404, no redirect)
+    # during scripts/akinator/discover_fandom.py's run. It had presumably
+    # been hand-typed and never checked against a live wiki. The real
+    # subdomain, found and proven (prove_fandom.py, CONFIRMED, 1,302
+    # articles): omniscient-readers-viewpoint.
+    "omniscient-readers-viewpoint": {
+        "subdomain": "omniscient-readers-viewpoint",
+        "aliases": ["omniscient reader", "omniscient reader's viewpoint", "orvp", "orv"],
         "cover_url": "https://covers.openlibrary.org/b/id/14321241-M.jpg"
     },
     "solo-leveling": {
@@ -433,6 +438,74 @@ FANDOM_WIKIS = {
         "aliases": ["solo leveling"],
         "author": "Chugong",
         "cover_url": "https://covers.openlibrary.org/b/id/10582298-M.jpg"
+    },
+    # 12 entries below added 2026-08-14 from scripts/akinator/
+    # discover_fandom.py's CONFIRMED results -- each individually proven
+    # (prove_fandom.py's five signals) against a live wiki, not guessed.
+    # `author` omitted where not independently grounded during proving
+    # (a book_data.py resolver reading a wrong author here would poison
+    # every book by that "author" it enriches, not just this one title —
+    # see CLAUDE.md's grounding rule). `cover_url` omitted throughout;
+    # nothing here sourced one.
+    "the-kings-avatar": {
+        "subdomain": "the-kings-avatar",
+        "aliases": ["the king's avatar", "quan zhi gao shou", "full-time master", "tka"]
+    },
+    "library-of-heavens-path": {
+        "subdomain": "library-of-heavens-path",
+        "aliases": ["library of heaven's path"]
+    },
+    "azarinth-healer": {
+        "subdomain": "azarinth-healer",
+        "aliases": ["azarinth healer", "azarinth"]
+    },
+    "bestspellever": {
+        # Legacy URL slug from whenever the wiki was first registered --
+        # unrelated to the title. Verified: sitename "Delve Wiki", 695
+        # articles, categories like "Chapters with Rain POVs" (the
+        # genre's standard character-POV chapter tagging). Not a
+        # mismatch; see the vault note dated 2026-08-14 for the evidence
+        # that cleared this exact-looking false positive.
+        "subdomain": "bestspellever",
+        "aliases": ["delve"]
+    },
+    "the-perfect-run": {
+        "subdomain": "the-perfect-run",
+        "aliases": ["the perfect run", "perfect run"]
+    },
+    "hpmor": {
+        "subdomain": "hpmor",
+        "aliases": ["hpmor", "harry potter and the methods of rationality",
+                     "methods of rationality"]
+    },
+    "thewanderinginn": {
+        "subdomain": "thewanderinginn",
+        "aliases": ["the wandering inn", "wandering inn"]
+    },
+    "worm": {
+        "subdomain": "worm",
+        "aliases": ["worm"]
+    },
+    "the-novels-extra": {
+        "subdomain": "the-novels-extra",
+        "aliases": ["the novel extra", "the novel's extra", "novel extra"]
+    },
+    "rezero": {
+        # The wiki's own sitename is short-form "Re:Zero Wiki"; its page
+        # for the novel itself carries the long original title exactly.
+        # Both aliased here for the same reason prove_fandom.py had to
+        # retry against the short form: a token-overlap match cannot
+        # bridge a six-word original title and its one-word common name.
+        "subdomain": "rezero",
+        "aliases": ["re:zero kara hajimeru isekai seikatsu", "re:zero", "rezero"]
+    },
+    "mysranks": {
+        # The wiki calls the work "The S-Ranks That I Raised" -- "also
+        # known as The S-Classes That I Raised" per its own description.
+        # A single-word translation variant ("Ranks" vs "Classes"), both
+        # aliased.
+        "subdomain": "mysranks",
+        "aliases": ["the s-classes that i raised", "the s-ranks that i raised"]
     }
 }
 
