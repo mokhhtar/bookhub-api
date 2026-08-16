@@ -125,7 +125,33 @@ _CATEGORY_REJECT = re.compile(
 _PAGE_REJECT = re.compile(
     r"\b(list|lists|chart|charts|reference|index|timeline|gallery"
     r"|template|characters|glossary|summary|continued|chapter|episode"
-    r"|volume|season|appendix|navigation)\b", re.IGNORECASE)
+    r"|volume|season|appendix|navigation|cosmology|mythos|wiki)\b",
+    re.IGNORECASE)
+
+# THE DISAMBIGUATOR PROBLEM, and it is not the one `characters.py` solves.
+# That module strips Open Library's qualifier vocabulary -- "(Fictitious
+# character)", "(Spirit)". Fandom's is entirely different, and left alone
+# it lands inside the name: the first run produced 'victor frankenstein
+# 2025 film', 'peter pan character' and 'hellraiser 1990 tv series' as
+# character names. Two different harms in one shape, so two rules.
+#
+# REJECTED, because the page is about another medium's version of the
+# character and not the novel's -- the same medium confusion the census
+# spends its whole classification budget avoiding. Found live on the
+# Frankenstein wiki: 'Victor Frankenstein (2025 film)', 'Elizabeth
+# Lavenza (2025 film)', 'Frankenstein (DC Comics)'; on Peter Pan:
+# 'Crocodile (Disney)', 'Captain Hook (Fox)'; on Stephen King:
+# 'Carrie White (1976 film)', 'It (films)'.
+_ADAPTATION_QUALIFIER = re.compile(
+    r"\((?=[^)]*\b(film|films|movie|tv|television|series|comics?|game|games"
+    r"|anime|manga|musical|disney|netflix|fox|hbo|\d{4})\b)[^)]*\)",
+    re.IGNORECASE)
+
+# STRIPPED, because the qualifier is only there to disambiguate a page
+# title and the name underneath is the real one: 'Peter Pan (character)'
+# is Peter Pan. Whatever survives both rules is deduped by name, which
+# also collapses the several spellings one wiki files separately.
+_BENIGN_QUALIFIER = re.compile(r"\s*\([^)]*\)\s*$")
 
 MAX_MEMBER_PAGES = 6      # 500 members per request; 3,000 is plenty to rank
 DEFAULT_CAP = 25          # vs. Open Library's p95 of 14 — generous, not absurd
@@ -218,19 +244,25 @@ def rank_cast(pages: dict[str, int], cap: int) -> list[dict]:
     remove what is not a person and keep the order.
     """
     out: list[dict] = []
+    seen: set[str] = set()
     for title, length in sorted(pages.items(), key=lambda t: -t[1]):
         if len(out) >= cap:
             break
         if length < MIN_ARTICLE_LENGTH or "/" in title:
             continue
+        if _ADAPTATION_QUALIFIER.search(title):
+            continue          # the film's character, not the book's
         if _PAGE_REJECT.search(title):
             continue
-        canon = canonical_name(title)
+        canon = canonical_name(_BENIGN_QUALIFIER.sub("", title))
         # The same bar the Open Library path applies: a name nobody would
         # say is not a character question. Reusing `usable_token` keeps
         # both sources answering to one definition.
         if not canon or not any(usable_token(t) for t in name_tokens(canon)):
             continue
+        if canon in seen:
+            continue          # longest article wins; sorted, so this is it
+        seen.add(canon)
         out.append({"name": canon, "page": title, "length": length})
     return out
 
