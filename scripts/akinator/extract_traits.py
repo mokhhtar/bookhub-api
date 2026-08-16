@@ -52,6 +52,16 @@ CORPUS_PATH = os.path.join(REPO_ROOT, "data", "akinator_corpus.jsonl")
 DESC_PATH = os.path.join(REPO_ROOT, "data", "akinator_descriptions.json")
 CALIBRATION_PATH = os.path.join(REPO_ROOT, "data", "akinator_calibration.json")
 
+# --source fandom. Same labeller, same vocabulary, same prompt — a
+# different shelf of books entirely, and a SEPARATE output file because
+# the two are keyed differently and must never merge by accident: Open
+# Library rows are keyed "/works/OL…W" and these have no such key, only a
+# title. Whether a Fandom label ends up beside an Open Library one is a
+# question for whatever wires these into the corpus, not for the
+# labeller.
+FANDOM_TEXT_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_text.json")
+FANDOM_OUT_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_traits.json")
+
 # Which of our editorial theme phrases assert which trait. Used ONLY by
 # --calibrate, to check the model against a human judgment — never to
 # produce labels, because it would inherit the sparsity that makes our
@@ -435,8 +445,15 @@ def main() -> None:
                          "to keep going after one is spent. A different model "
                          "is a different labeller: run --calibrate on it "
                          "before trusting a corpus labelled with it.")
-    ap.add_argument("--out", default=OUT_PATH)
+    ap.add_argument("--source", choices=["corpus", "fandom"], default="corpus",
+                    help="'fandom' labels data/akinator_fandom_text.json — "
+                         "the verified wiki prose harvested for books Open "
+                         "Library has no description for — and writes to "
+                         "akinator_fandom_traits.json instead.")
+    ap.add_argument("--out", default=None)
     args = ap.parse_args()
+    if args.out is None:
+        args.out = FANDOM_OUT_PATH if args.source == "fandom" else OUT_PATH
 
     global GROQ_MODEL_OVERRIDE
     GROQ_MODEL_OVERRIDE = args.groq_model
@@ -451,23 +468,47 @@ def main() -> None:
         calibrate(args.delay, args.provider)
         return
 
-    if not os.path.exists(DESC_PATH):
-        print("No descriptions yet — run harvest_descriptions.py first.")
-        return
-    with open(DESC_PATH, encoding="utf-8") as fh:
-        descriptions = json.load(fh)
+    if args.source == "fandom":
+        # Shaped into the same (docs, descriptions) pair the corpus path
+        # produces, so everything downstream -- batching, the provider
+        # fallback, resume, the failure stop -- runs unchanged. The key is
+        # the title because that is the only identifier these books have;
+        # see FANDOM_OUT_PATH on why they are kept in their own file.
+        if not os.path.exists(FANDOM_TEXT_PATH):
+            print("No Fandom text yet — run harvest_fandom_text.py first.")
+            return
+        with open(FANDOM_TEXT_PATH, encoding="utf-8") as fh:
+            harvested = json.load(fh)
+        descriptions = {t: r["text"] for t, r in harvested.items()
+                        if r.get("text")}
+        # No popularity number exists for these -- Open Library has no row
+        # for most of them, which is the whole reason this source exists.
+        # Longest verified prose first: it is the only ordering available
+        # that correlates with how much there is to label.
+        docs = sorted(({"key": t, "title": t, "author_name": [""]}
+                       for t in descriptions),
+                      key=lambda d: -len(descriptions[d["key"]]))
+        docs = docs[:args.limit]
+        print(f"Fandom source: {len(descriptions)} book(s) with verified "
+              f"prose\n")
+    else:
+        if not os.path.exists(DESC_PATH):
+            print("No descriptions yet — run harvest_descriptions.py first.")
+            return
+        with open(DESC_PATH, encoding="utf-8") as fh:
+            descriptions = json.load(fh)
 
-    docs = []
-    with open(CORPUS_PATH, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if line:
-                try:
-                    docs.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
-    docs.sort(key=lambda d: -(d.get("readinglog_count") or 0))
-    docs = docs[:args.limit]
+        docs = []
+        with open(CORPUS_PATH, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line:
+                    try:
+                        docs.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+        docs.sort(key=lambda d: -(d.get("readinglog_count") or 0))
+        docs = docs[:args.limit]
 
     out: dict[str, list[str]] = {}
     if os.path.exists(args.out):

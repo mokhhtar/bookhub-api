@@ -117,3 +117,8 @@ venv/
 # Library cannot supply for web novels
 # (scripts/akinator/harvest_fandom_text.py). Regenerable.
 /data/akinator_fandom_text.json
+
+# Trait labels for those books (extract_traits.py --source fandom). Kept
+# apart from akinator_traits.json because the two are keyed differently:
+# Open Library rows by /works/OL…W, these by title. Regenerable.
+/data/akinator_fandom_traits.json
