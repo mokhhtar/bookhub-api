@@ -59,7 +59,27 @@ elif len(GEMINI_API_KEYS) > 1:
 _clients = [genai.Client(api_key=key) for key in GEMINI_API_KEYS]
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip() or None
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
+
+# WAS llama-3.3-70b-versatile, WHICH NO LONGER EXISTS FOR THIS ACCOUNT.
+# Verified live 2026-08-17: that id and llama-3.1-8b-instant both answer
+# 404 "The model ... does not exist or you do not have access to it",
+# while `GET /v1/models` lists 13 models and none of them is a Llama chat
+# model. Groq removed them.
+#
+# This failed SILENTLY, which is the part worth remembering. The whole
+# point of this fallback is to carry the site when every Gemini key is
+# spent, and `_groq_generate` is deliberately fail-open — it logs a
+# warning and returns None. So a dead model does not look like an
+# outage; it looks exactly like "the AI had nothing to say", which is a
+# normal, expected answer everywhere in this codebase. Nothing surfaces.
+# Found only because an unrelated harvest script called the same path
+# directly and raised.
+#
+# gpt-oss-120b rather than the 20b: the fallback only ever runs after
+# every Gemini key has failed, so it is rare and quality matters more
+# than latency. Both the plain and the streaming path were re-verified
+# against it before this line changed.
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b").strip()
 GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 if GROQ_API_KEY:
