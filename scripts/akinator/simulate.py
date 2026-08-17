@@ -363,6 +363,10 @@ def main() -> None:
                          "since a paired test needs one outcome per book.")
     ap.add_argument("--sample", type=int, default=0,
                     help="test only the N most popular books (0 = all)")
+    ap.add_argument("--target-rank", default=None,
+                    help="MIN:MAX rank range to play, e.g. 3000:4900. "
+                         "Combine with --target-prefix to control for rank "
+                         "when measuring a supplement.")
     ap.add_argument("--target-prefix", default=None,
                     help="play only books whose key starts with this "
                          "(e.g. /fandom/). Measures what a supplement BUYS; "
@@ -398,7 +402,18 @@ def main() -> None:
         sys.exit(1)
 
     matrix = Matrix(books, questions, char_questions)
-    if args.target_prefix:
+    if args.target_rank:
+        # The honest control for a supplement measured with
+        # --target-prefix: how do books ALREADY in the corpus score at the
+        # same ranks? Without it, a low number for the added rows cannot be
+        # told apart from "books this obscure are simply hard".
+        lo, hi = (int(x) for x in args.target_rank.split(":"))
+        pref = args.target_prefix or ""
+        targets = [i for i in range(lo, min(hi, len(books)))
+                   if str(books[i].get("key") or "").startswith(pref)]
+        suffix = f" with prefix {pref!r}" if pref else ""
+        print(f"Targeting {len(targets)} book(s) at ranks {lo}-{hi}{suffix}\n")
+    elif args.target_prefix:
         # Measure the books the corpus was EXTENDED with, not the head of
         # it. A --sample run always targets the most popular N, and a
         # supplement slotted into a low popularity band is never among
