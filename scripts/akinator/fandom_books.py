@@ -57,6 +57,7 @@ TRAITS_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_traits.json")
 SUBJECTS_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_subjects.json")
 AUTHORS_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_authors.json")
 YEARS_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_years.json")
+TEXT_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_text.json")
 
 # Deeper into the corpus than site_books' (2000, 4800). Our own published
 # pages are books we host and must never fail to guess; these are books we
@@ -72,14 +73,40 @@ def _load(path: str, key: str | None = None):
     return data.get(key, data) if key else data
 
 
-def load_fandom_books() -> list[dict]:
-    """Census novels that carry at least a cast or a trait label."""
+def load_fandom_books(require_prose: bool = True) -> list[dict]:
+    """Census novels worth adding to the corpus.
+
+    `require_prose` KEEPS ONLY THE WIKIS THAT HAVE A REAL ARTICLE ABOUT
+    THEIR WORK, and it is on by default because of a measurement.
+
+    Every field harvested for these books was chased on the strength of
+    "books with X score higher than books without X". Paired testing —
+    same books, before and after — showed that comparison to be between
+    two different populations rather than about X. Books whose wiki
+    carries a verified article about the work hold a median of NINE
+    present features; the rest hold six. That gap is what predicted
+    success, and the individual fields were markers of it:
+
+        harvest_fandom_years.py raised years 37 -> 61,
+        and the paired result moved 14.6% -> 15.2%, p = 1.0.
+
+    So the useful cut is not "has a year" or "has an author", it is "does
+    this wiki document the work at all". `harvest_fandom_text.py` already
+    answers that: it accepted prose only from an article that names the
+    work AND describes a written one, rejecting author biographies, TV
+    adaptations and disambiguation pages. 97 of 228 pass.
+
+    Passing False adds all 228. The extra 131 are thin wikis that
+    contribute a title and a popularity guess, and the shipped game gets
+    131 rows it can rarely guess.
+    """
     census = _load(CENSUS_PATH)
     chars = _load(CHARS_PATH)
     traits = _load(TRAITS_PATH, "traits")
     subjects = _load(SUBJECTS_PATH)
     authors = _load(AUTHORS_PATH)
     years = _load(YEARS_PATH)
+    prose = {t for t, r in (_load(TEXT_PATH) or {}).items() if r.get("text")}
     if not census:
         return []
 
@@ -89,6 +116,8 @@ def load_fandom_books() -> list[dict]:
         if r.get("type") not in keep:
             continue
         title = r["title"]
+        if require_prose and title not in prose:
+            continue
         cast = [c["name"] for c in (chars.get(title, {}).get("characters") or [])]
         labels = traits.get(title) or []
         # Only the categories that already map to a feature -- see
@@ -126,9 +155,9 @@ def load_fandom_books() -> list[dict]:
 
 
 def supplement(docs: list[dict], band: tuple[int, int] = DEFAULT_BAND,
-               verbose: bool = True) -> list[dict]:
+               verbose: bool = True, require_prose: bool = True) -> list[dict]:
     """Add census novels the corpus has no row for. Never edits a row."""
-    books = load_fandom_books()
+    books = load_fandom_books(require_prose)
     if not books:
         return docs
 
