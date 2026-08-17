@@ -122,3 +122,8 @@ venv/
 # apart from akinator_traits.json because the two are keyed differently:
 # Open Library rows by /works/OL…W, these by title. Regenerable.
 /data/akinator_fandom_traits.json
+
+# Author and first-publish year per census novel, infobox first and the
+# model on verified prose second (harvest_fandom_authors.py). The 17.4pt
+# gap --target-rank identified. Regenerable.
+/data/akinator_fandom_authors.json
