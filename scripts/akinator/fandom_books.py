@@ -73,32 +73,35 @@ def _load(path: str, key: str | None = None):
     return data.get(key, data) if key else data
 
 
-def load_fandom_books(require_prose: bool = True) -> list[dict]:
+def load_fandom_books(require_prose: bool = False) -> list[dict]:
     """Census novels worth adding to the corpus.
 
-    `require_prose` KEEPS ONLY THE WIKIS THAT HAVE A REAL ARTICLE ABOUT
-    THEIR WORK, and it is on by default because of a measurement.
+    `require_prose` keeps only wikis with a verified article about their
+    work (97 of 228). IT DEFAULTS TO FALSE, and the reason is a
+    measurement that reversed the obvious answer.
 
-    Every field harvested for these books was chased on the strength of
-    "books with X score higher than books without X". Paired testing —
-    same books, before and after — showed that comparison to be between
-    two different populations rather than about X. Books whose wiki
-    carries a verified article about the work hold a median of NINE
-    present features; the rest hold six. That gap is what predicted
-    success, and the individual fields were markers of it:
+    The gate was built on `corpus_filter.py`'s principle — a row the game
+    cannot guess dilutes belief for everyone else — applied to the 131
+    thin wikis. Measured in absolute books, seed 7, paired against the
+    same no-Fandom baseline:
 
-        harvest_fandom_years.py raised years 37 -> 61,
-        and the paired result moved 14.6% -> 15.2%, p = 1.0.
+                       fandom books guessable   top-700 books lost   net
+        gated  ( 97)            +12                    -12            0
+        ungated (228)           +27                     -5          +22
 
-    So the useful cut is not "has a year" or "has an author", it is "does
-    this wiki document the work at all". `harvest_fandom_text.py` already
-    answers that: it accepted prose only from an article that names the
-    work AND describes a written one, rejecting author biographies, TV
-    adaptations and disambiguation pages. 97 of 228 pass.
+    Gating cost MORE, and lost popular books to buy obscure ones. The
+    principle was real and the case was wrong. `corpus_filter.py` drops
+    workbooks and summaries, which SHARE A TITLE AND AUTHOR with the real
+    book and therefore split a player's belief between rows. A thin
+    Fandom row shares nothing: every feature reads `unknown` (0.5), so it
+    never rises and never competes. It is inert, not diluting — while the
+    rich rows the gate kept are the ones that actually contend for
+    belief.
 
-    Passing False adds all 228. The extra 131 are thin wikis that
-    contribute a title and a popularity guess, and the shipped game gets
-    131 rows it can rarely guess.
+    Neither cost is significant (p = 0.73 ungated, p = 0.22 gated), so
+    the honest statement is that adding these rows does not measurably
+    harm the top 700 either way, and the ungated set delivers more than
+    twice the books.
     """
     census = _load(CENSUS_PATH)
     chars = _load(CHARS_PATH)
@@ -155,7 +158,7 @@ def load_fandom_books(require_prose: bool = True) -> list[dict]:
 
 
 def supplement(docs: list[dict], band: tuple[int, int] = DEFAULT_BAND,
-               verbose: bool = True, require_prose: bool = True) -> list[dict]:
+               verbose: bool = True, require_prose: bool = False) -> list[dict]:
     """Add census novels the corpus has no row for. Never edits a row."""
     books = load_fandom_books(require_prose)
     if not books:
