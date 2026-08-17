@@ -59,10 +59,30 @@ AUTHORS_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_authors.json")
 YEARS_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_years.json")
 TEXT_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_text.json")
 
-# Deeper into the corpus than site_books' (2000, 4800). Our own published
-# pages are books we host and must never fail to guess; these are books we
-# merely know exist. They should be findable without displacing anything.
-DEFAULT_BAND = (3000, 4900)
+# ENTIRELY BELOW site_books' band (2000, 4800). A hard constraint, not a
+# preference, and it costs most of these rows to honour.
+#
+# The corpus is truncated to SHIPPED_BOOKS by popularity. A band of
+# (3000, 4900) overlaps the site band, so inserting 178 rows there pushes
+# everything beneath them past the cut -- and what sits beneath them is
+# the published pages site_books.py promoted INTO the band. Measured:
+# 20 published pages lost their row, among them Silas Marner, Vanity
+# Fair, The Sea-Wolf and Moll Flanders. Those four are named in
+# site_books.py's own docstring as the exact failure that function was
+# written to prevent, and it was recreated here.
+#
+# Below the site floor, the truncation cuts these rows instead: 178
+# offered, 61 survive inside the 5,000. That is the correct side of the
+# trade. Our own pages are books we HOST and "a player must never be told
+# we don't know a book we host"; these are books we merely know exist.
+#
+# (An earlier pass moved this band, then reverted it after concluding the
+# displacement report was a false alarm. It was not. The false alarm was
+# only the EXAMPLE -- the Poe collection matches an existing corpus row
+# and is promoted rather than added, so it was never a /site/ row to
+# lose. Check published-page coverage by TITLE across the whole corpus,
+# never by key namespace.)
+DEFAULT_BAND = (4810, 4990)
 
 
 def _load(path: str, key: str | None = None):
