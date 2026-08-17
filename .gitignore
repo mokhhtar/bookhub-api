@@ -127,3 +127,8 @@ venv/
 # model on verified prose second (harvest_fandom_authors.py). The 17.4pt
 # gap --target-rank identified. Regenerable.
 /data/akinator_fandom_authors.json
+
+# First-publish year per census novel, Wikidata first and Open Library
+# behind it (harvest_fandom_years.py). The field measured at ~11 points.
+# Regenerable.
+/data/akinator_fandom_years.json
