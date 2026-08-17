@@ -58,6 +58,7 @@ if hasattr(sys.stdout, "reconfigure"):
 from author_traits import AUTHOR_QUESTIONS, book_traits, load_wikidata  # noqa: E402
 from characters import extract_characters, usable_token          # noqa: E402
 from corpus_filter import SHIPPED_BOOKS, filter_corpus           # noqa: E402
+from corrections import apply_corrections                         # noqa: E402
 from site_books import supplement as site_supplement              # noqa: E402
 from fandom_books import supplement as fandom_supplement           # noqa: E402
 from traits import TRAIT_QUESTIONS, apply_labels, load_traits     # noqa: E402
@@ -116,6 +117,11 @@ def load_docs(corpus_size: int = 0, with_fandom: bool = False) -> list[dict]:
     # really in the game.
     if with_fandom:
         docs = fandom_supplement(docs, verbose=False)
+    # After the supplements, matching build_matrix.load_corpus -- the
+    # artifact and the measurement of it must not disagree about a
+    # correction, which is the reason corrections live in one module
+    # both call.
+    apply_corrections(docs)
     return docs[:corpus_size] if corpus_size else docs
 
 

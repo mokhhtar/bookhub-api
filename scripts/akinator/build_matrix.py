@@ -54,6 +54,7 @@ from work_traits import (WORK_QUESTIONS, load_protagonists,         # noqa: E402
                          load_works, merge_into)
 from characters import extract_characters, usable_token             # noqa: E402
 from corpus_filter import SHIPPED_BOOKS, filter_corpus              # noqa: E402
+from corrections import apply_corrections                            # noqa: E402
 from site_books import supplement as site_supplement                # noqa: E402
 from fandom_books import supplement as fandom_supplement             # noqa: E402
 from traits import TRAIT_QUESTIONS, apply_labels, load_traits       # noqa: E402
@@ -126,6 +127,13 @@ def load_corpus(path: str) -> list[dict]:
     docs = site_supplement(docs)
     if WITH_FANDOM:
         docs = fandom_supplement(docs)
+    # AGAIN, AFTER THE SUPPLEMENTS. `filter_corpus` already applied
+    # corrections, but it runs before these rows exist -- so the whole
+    # correction mechanism was unreachable for exactly the rows most
+    # likely to need it, the ones built from noisier sources than Open
+    # Library's catalogue. Idempotent: it only writes when the value
+    # differs, so the corpus rows it already fixed are untouched.
+    apply_corrections(docs)
     return docs
 
 

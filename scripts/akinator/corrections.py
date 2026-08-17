@@ -43,7 +43,31 @@ CORRECTIONS: dict[str, dict] = {
     # 2001 on this work record contradicts its own OL24779727W (2016).
     # Verified 2026-08-10 against openlibrary.org/search.json.
     "/works/OL17360811W": {"first_publish_year": 2016},
+
+    # "Fifty Shades of Grey", E. L. James. Open Library's own row for this
+    # title and author carries first_publish_year 2000; the novel was
+    # published in 2011. Wikidata's work entity (not an edition —
+    # Q3331189 filtered) gives 2011 with the same author. Reached the game
+    # through harvest_fandom_years.py's Open Library fallback, which is
+    # exact-title matched and still cannot see past a wrong source row.
+    # Verified 2026-08-17 against query.wikidata.org (P577 on the work).
+    "/fandom/fiftyshadesofgrey": {"first_publish_year": 2011},
 }
+
+# NOT CORRECTED, and recorded here so the next audit does not re-open them:
+#
+#   /fandom/thesummeriturnedpretty — Open Library says 2000 and the book
+#     is 2009, but Wikidata returned no work entity under that label with
+#     that author, so there is no independent source to name. Rule 2 of
+#     the bar above is not met. Left for manual review rather than fixed
+#     from memory.
+#
+#   /fandom/renegadecats — flagged during an audit as "Erin Hunter, 2026,
+#     should be Marissa Meyer 2017" and that flag was WRONG. The wiki's
+#     own front page reads "Erin Hunter's new Renegades series"; the
+#     subdomain is `renegadecats`. The harvest was right and the audit was
+#     the error — a reminder that a plausible-looking correction is still
+#     a claim, and rule 2 exists to catch exactly this.
 
 
 def apply_corrections(docs: list[dict], verbose: bool = False) -> int:

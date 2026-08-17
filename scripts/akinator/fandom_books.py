@@ -56,6 +56,7 @@ CHARS_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_characters.json")
 TRAITS_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_traits.json")
 SUBJECTS_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_subjects.json")
 AUTHORS_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_authors.json")
+YEARS_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_years.json")
 
 # Deeper into the corpus than site_books' (2000, 4800). Our own published
 # pages are books we host and must never fail to guess; these are books we
@@ -78,6 +79,7 @@ def load_fandom_books() -> list[dict]:
     traits = _load(TRAITS_PATH, "traits")
     subjects = _load(SUBJECTS_PATH)
     authors = _load(AUTHORS_PATH)
+    years = _load(YEARS_PATH)
     if not census:
         return []
 
@@ -95,6 +97,15 @@ def load_fandom_books() -> list[dict]:
         # tell the engine these books are well documented.
         subs = (subjects.get(title) or {}).get("subjects") or []
         auth = authors.get(title) or {}
+        # Year precedence: the infobox/model pass first (it read the
+        # work's OWN wiki article), then the Wikidata/Open Library
+        # lookup. Audited 2026-08-17 -- all 16 Wikidata answers were
+        # correct and 3 of 8 Open Library ones were not, so the source is
+        # carried through rather than discarded: a wrong year is fixable
+        # by corrections.py only if you can see where it came from.
+        yr = years.get(title) or {}
+        year = auth.get("year") or yr.get("year")
+        year_src = ("wiki" if auth.get("year") else yr.get("source"))
         # Nothing harvested means nothing to contribute -- a row with no
         # cast and no labels is a title and a popularity guess, which is
         # all cost and no signal.
@@ -108,7 +119,8 @@ def load_fandom_books() -> list[dict]:
             "labels": labels,
             "subjects": subs,
             "author": auth.get("author"),
-            "year": auth.get("year"),
+            "year": year,
+            "year_source": year_src,
         })
     return out
 
@@ -193,6 +205,7 @@ def supplement(docs: list[dict], band: tuple[int, int] = DEFAULT_BAND,
             "readinglog_count": int(top_val - frac * (top_val - bot_val)),
             "ebook_access": "",
             "_fandom_wiki": b["subdomain"],
+            "_year_source": b["year_source"],
             "_fandom_traits": b["labels"],
         })
 
@@ -204,6 +217,10 @@ def supplement(docs: list[dict], band: tuple[int, int] = DEFAULT_BAND,
         with_subs = sum(1 for b in missing if b["subjects"])
         with_auth = sum(1 for b in missing if b["author"])
         with_year = sum(1 for b in missing if b["year"])
+        by_src: dict[str, int] = {}
+        for b in missing:
+            if b["year"]:
+                by_src[b["year_source"] or "?"] = by_src.get(b["year_source"] or "?", 0) + 1
         print(f"Fandom novels: +{len(added)} added ({with_cast} with a cast, "
               f"{with_labels} with trait labels, {with_subs} with mapped "
               f"subjects, {with_auth} with an author of which {borrowed} "
