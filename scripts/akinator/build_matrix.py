@@ -245,6 +245,27 @@ def build_books(docs: list[dict],
     return books, authors
 
 
+# The admin page's wording edits land here (`games/data/akinator/
+# question_overrides.json` in the bookhub repo — same "one file, both
+# readers" location as `excluded.json`/`admin_corrections.json`), so a
+# live text patch survives the NEXT full rebuild instead of being
+# silently regenerated away from source. Only wording, never an id: the
+# admin page cannot rename a question, only reword what a player sees.
+QUESTION_OVERRIDES_PATH = os.path.abspath(os.path.join(
+    REPO_ROOT, "..", "bookhub", "games", "data", "akinator", "question_overrides.json"))
+
+
+def _load_question_overrides() -> dict[str, str]:
+    if not os.path.exists(QUESTION_OVERRIDES_PATH):
+        return {}
+    try:
+        with open(QUESTION_OVERRIDES_PATH, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def question_text(q: str) -> str:
     """The wording a player sees, from whichever module owns the question.
 
@@ -255,8 +276,12 @@ def question_text(q: str) -> str:
     guard passed a build that shipped "Is there magic in it?" twice. The
     same shape as the bug the writer's own comment records: a wording
     chain that exists in one place and not another.
+
+    The admin overlay is checked FIRST, ahead of every source module, so
+    a rebuild does not quietly undo a wording fix nobody pushed to source.
     """
-    return (QUESTION_TEXT.get(q) or STRUCTURAL_QUESTIONS.get(q)
+    return (_load_question_overrides().get(q)
+            or QUESTION_TEXT.get(q) or STRUCTURAL_QUESTIONS.get(q)
             or AUTHOR_QUESTIONS.get(q) or WORK_QUESTIONS.get(q)
             or TRAIT_QUESTIONS.get(q, q))
 
