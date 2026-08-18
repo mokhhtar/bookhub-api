@@ -35,6 +35,9 @@ the artifact and the measurement of it cannot disagree about a correction.
 """
 from __future__ import annotations
 
+import json
+import os
+
 # work key -> {field: corrected value}
 CORRECTIONS: dict[str, dict] = {
     # "Harry Potter and the Cursed Child", Jack Thorne / John Tiffany /
@@ -70,11 +73,47 @@ CORRECTIONS: dict[str, dict] = {
 #     a claim, and rule 2 exists to catch exactly this.
 
 
+# WHERE ADMIN-PAGE CORRECTIONS LAND, and why not straight into CORRECTIONS
+# above. That dict is committed Python source with a 3-point bar and a
+# named source per entry — a web form should never commit text into a
+# .py file via the GitHub API; an admin typo there is a syntax error that
+# breaks the next `import corrections` on Render, with no review step.
+# `admin_corrections.json` is the same {work_key: {field: value}} shape,
+# written by `tools/akinator_admin.py` into the `bookhub` repo at
+# `games/data/akinator/admin_corrections.json` — the same location and
+# same "one file, both readers" reasoning as `exclusions.py`'s
+# `excluded.json`. It is layered ON TOP of the hand-curated dict here,
+# never replacing it.
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ADMIN_CORRECTIONS_PATH = os.path.abspath(os.path.join(
+    REPO_ROOT, "..", "bookhub", "games", "data", "akinator", "admin_corrections.json"))
+
+
+def _load_admin_corrections() -> dict[str, dict]:
+    if not os.path.exists(ADMIN_CORRECTIONS_PATH):
+        return {}
+    try:
+        with open(ADMIN_CORRECTIONS_PATH, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def apply_corrections(docs: list[dict], verbose: bool = False) -> int:
-    """Overwrite verified-wrong fields in place. Returns how many applied."""
+    """Overwrite verified-wrong fields in place. Returns how many applied.
+
+    Effective only at the next full `build_matrix.py` run, same as every
+    entry in `CORRECTIONS` today — neither source is consulted by anything
+    that runs live on Render. A correction that changes a matrix bit (an
+    era question's ladder, say) needs that bit recomputed, which only a
+    full rebuild does.
+    """
+    admin = _load_admin_corrections()
     applied = 0
     for doc in docs:
-        fix = CORRECTIONS.get(doc.get("key") or "")
+        fix = {**CORRECTIONS.get(doc.get("key") or "", {}),
+              **admin.get(doc.get("key") or "", {})}
         if not fix:
             continue
         for field, value in fix.items():
