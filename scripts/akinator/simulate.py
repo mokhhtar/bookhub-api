@@ -59,6 +59,7 @@ from author_traits import AUTHOR_QUESTIONS, book_traits, load_wikidata  # noqa: 
 from characters import extract_characters, usable_token          # noqa: E402
 from corpus_filter import SHIPPED_BOOKS, filter_corpus           # noqa: E402
 from corrections import apply_corrections                         # noqa: E402
+from exclusions import drop_excluded                               # noqa: E402
 from site_books import supplement as site_supplement              # noqa: E402
 from fandom_books import supplement as fandom_supplement           # noqa: E402
 from traits import TRAIT_QUESTIONS, apply_labels, load_traits     # noqa: E402
@@ -122,6 +123,7 @@ def load_docs(corpus_size: int = 0, with_fandom: bool = False) -> list[dict]:
     # correction, which is the reason corrections live in one module
     # both call.
     apply_corrections(docs)
+    docs = drop_excluded(docs)
     return docs[:corpus_size] if corpus_size else docs
 
 

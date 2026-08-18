@@ -38,6 +38,7 @@ from __future__ import annotations
 import re
 
 from corrections import apply_corrections
+from exclusions import drop_excluded
 
 # How many books ship, and therefore how many any measurement of the game
 # must use. Not a tuning knob: success was measured at 76% on 1,000 books,
@@ -152,6 +153,8 @@ def filter_corpus(docs: list[dict], verbose: bool = True) -> list[dict]:
     fixed = apply_corrections(docs, verbose=verbose)
     if fixed and verbose:
         print(f"Corrections: {fixed} verified-wrong field(s) fixed")
+
+    docs = drop_excluded(docs, verbose=verbose)
 
     richness = sorted(len(d.get("subject") or []) for d in docs)
     median = richness[len(richness) // 2] if richness else 0

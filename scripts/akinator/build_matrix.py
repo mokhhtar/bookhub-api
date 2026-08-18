@@ -55,6 +55,7 @@ from work_traits import (WORK_QUESTIONS, load_protagonists,         # noqa: E402
 from characters import extract_characters, usable_token             # noqa: E402
 from corpus_filter import SHIPPED_BOOKS, filter_corpus              # noqa: E402
 from corrections import apply_corrections                            # noqa: E402
+from exclusions import drop_excluded                                  # noqa: E402
 from site_books import supplement as site_supplement                # noqa: E402
 from fandom_books import supplement as fandom_supplement             # noqa: E402
 from traits import TRAIT_QUESTIONS, apply_labels, load_traits       # noqa: E402
@@ -134,6 +135,9 @@ def load_corpus(path: str) -> list[dict]:
     # Library's catalogue. Idempotent: it only writes when the value
     # differs, so the corpus rows it already fixed are untouched.
     apply_corrections(docs)
+    # Same reasoning as corrections: a book excluded via the admin page
+    # may be a /site/ or /fandom/ row that filter_corpus() never saw.
+    docs = drop_excluded(docs, verbose=True)
     return docs
 
 
