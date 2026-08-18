@@ -81,21 +81,51 @@ jobs:
             exit 0
           fi
 
-          # GET / with no Access assertion must NOT return the admin page.
-          CODE=$(curl -sS -m 30 -o body.txt -w '%{http_code}' "$BASE/")
-          echo "GET / (no Access header) -> $CODE"
-          if [ "$CODE" = "200" ] && grep -qi "Book Mind Reader" body.txt; then
-            echo "::error::the admin page rendered without an Access assertion."
+          # WHAT COUNTS AS CORRECTLY GUARDED, stated positively. "Not 200"
+          # was the original bar and it is too weak now that there is
+          # something real in front: a Worker that 500s on every request
+          # would pass it while guarding nothing. There are exactly two
+          # right answers, and both are checked for by name:
+          #
+          #   302 -> *.cloudflareaccess.com   Access intercepted it. This is
+          #                                   the expected state in production.
+          #   403                             Access is NOT in front, but the
+          #                                   Worker's own backstop refused
+          #                                   for want of the assertion header.
+          #
+          # The 403 is deliberately still a pass: it is the documented state
+          # between attaching the Custom Domain and creating the Access app,
+          # and it is a refusal, not a hole. Anything else fails.
+          guarded() {                      # $1 = label, $2 = code, $3 = body file
+            local loc
+            loc=$(grep -i '^location:' hdr.txt | tr -d '\r' | head -1)
+            echo "$1 -> $2 ${loc:+($loc)}"
+            case "$2" in
+              403) return 0 ;;
+              301|302|303|307|308)
+                case "$loc" in
+                  *cloudflareaccess.com*) return 0 ;;
+                  *) echo "::error::$1 redirected somewhere that is not Cloudflare Access."
+                     return 1 ;;
+                esac ;;
+              200) echo "::error::$1 answered 200 with no Access assertion."
+                   return 1 ;;
+              *)   echo "::error::$1 answered $2 — neither an Access redirect nor a refusal."
+                   return 1 ;;
+            esac
+          }
+
+          CODE=$(curl -sS -m 30 -o body.txt -D hdr.txt -w '%{http_code}' "$BASE/")
+          guarded "GET / (no Access header)" "$CODE" body.txt || exit 1
+          if grep -qi "Book Mind Reader" body.txt; then
+            echo "::error::the admin page's HTML was served without an Access assertion."
             exit 1
           fi
 
-          # Every /api/* relay must refuse an unauthenticated request the
-          # same way — no Access header means no page AND no write, so this
-          # should already 403 before even reaching the secret check.
+          # Every /api/* relay must refuse the same way — no Access header
+          # means no page AND no write.
           for p in exclude correction question book; do
-            CODE=$(curl -sS -m 30 -o rel.txt -w '%{http_code}' -X POST "$BASE/api/$p" \
+            CODE=$(curl -sS -m 30 -o rel.txt -D hdr.txt -w '%{http_code}' -X POST "$BASE/api/$p" \
                    -H "Content-Type: application/json" -d '{}')
-            echo "POST /api/$p (no Access header) -> $CODE $(cat rel.txt)"
-            [ "$CODE" != "200" ] || {
-              echo "::error::/api/$p accepted a write with no Access assertion."; exit 1; }
+            guarded "POST /api/$p (no Access header)" "$CODE" rel.txt || exit 1
           done

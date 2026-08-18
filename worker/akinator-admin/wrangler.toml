@@ -10,8 +10,42 @@ compatibility_date = "2026-08-01"
 # seo.litheca.com is for worker/seo-status/.
 workers_dev = false
 
+# STATED, NOT INFERRED, because the default has moved three times: before
+# wrangler 4.34 preview URLs were on regardless of workers_dev, from 4.34
+# they were off regardless, and from 4.44 they follow workers_dev. A
+# preview URL (`<version>-litheca-akinator-admin.<subdomain>.workers.dev`)
+# is exactly the unauthenticated back door workers_dev = false exists to
+# close, and Cloudflare's own changelog says it caught people out for the
+# same reason. Not a setting to leave to whichever wrangler the runner
+# happens to install.
+preview_urls = false
+
+# THE CUSTOM DOMAIN IS ATTACHED IN THE DASHBOARD, NOT DECLARED HERE — the
+# same choice worker/seo-status/wrangler.toml records, and for the same
+# reason: declaring it makes the deploy need zone-level DNS permission
+# that CLOUDFLARE_WORKERS_TOKEN was scoped narrowly to avoid.
+#
+# Every deploy therefore warns that the local config "differs from the
+# remote configuration" and lists the route under removals. That warning
+# is expected and has been safe in practice — games-stats.litheca.com and
+# seo.litheca.com have both survived many deploys this way, and so did
+# mindreader-admin.litheca.com on the deploy that first printed it.
+# Recorded here so nobody reads that warning as a fault and "fixes" it by
+# adding a route block the deploy token cannot apply.
+
 # ADMIN_SECRET is a SECRET, not a var:
 #   wrangler secret put ADMIN_SECRET      (or the dashboard, as type Secret)
+#
+# THIS ALREADY WENT WRONG ONCE, so it is worth saying what the difference
+# actually costs rather than just naming it. Added as a plain Variable in
+# the dashboard, the value was printed in full by the next deploy's
+# config-diff — into a public repo's Actions log, where anyone could read
+# it, and the secret had to be rotated. A real Secret never appears in
+# that diff; only its name does. The Var also does not survive: every
+# deploy overwrites the remote config with this file, so a Var set in the
+# dashboard is silently wiped on the next push while a Secret persists.
+# One wrong dropdown, both a leak and an outage.
+#
 # Must equal AKINATOR_ADMIN_SECRET on bookhub-api's Render environment —
 # this is the credential for the Worker -> Render hop. Cloudflare Access
 # authenticates the BROWSER; it says nothing about that server-to-server
