@@ -47,6 +47,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import urllib.parse
@@ -66,6 +67,42 @@ OUT_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_subjects.json")
 
 MAX_CATEGORY_PAGES = 4
 MIN_CATEGORY_PAGES = 3    # a category with two members organises nothing
+
+# WIKI VOCABULARY THAT COLLIDES WITH OPEN LIBRARY'S, MEANING SOMETHING
+# ELSE. Filtering on "does it map to a feature" was not enough: it asks
+# whether a string matches, never whether the match MEANS anything. Found
+# live by a player whose Lord of the Mysteries game was pushed down by
+# five wrong cells (2026-08-18):
+#
+#   "Pages using ISBN magic links" -> theme:magic     48 books
+#       A MediaWiki maintenance category about automatic ISBN linking.
+#       Half a hundred books were told they contain magic by a footnote
+#       about hyperlinks.
+#   "Non-Canon"                    -> form:classic
+#       In a wiki "canon" is whether a story counts; in a catalogue it is
+#       the literary canon. Same word, unrelated meaning, and it made a
+#       2018 web serial a classic.
+#   "Games"                        -> genre:sports    36 books
+#       In-story games, not sport.
+#
+# This is the substring trap features.py already documents ("Warsaw is a
+# war book") in a harder form: these ARE whole words, correctly matched,
+# from a vocabulary that uses them differently.
+_WIKI_MAINTENANCE = re.compile(
+    r"^(pages? using|pages? with|articles? using|articles? with|non[- ]canon"
+    r"|candidates for|.*needing|.*to be |browse|community|site |wiki )",
+    re.IGNORECASE)
+
+# How many mapped categories may reach `subject`. Not a tidiness cap --
+# `features.extract()` sets `richness = len(content_subjects)` and
+# `absence_confidence()` reads it: above 15 an absent feature is scored at
+# 0.15, i.e. "richly documented, so absence really means something".
+# Measured on this harvest: median 10, max 430, and 102 rows above 15.
+# A wiki with 430 filing categories is not a well-documented BOOK, and
+# telling the engine otherwise is what let three wrong cells eliminate
+# the right book with confidence. 12 keeps these rows at 0.25 -- real
+# evidence, never proof -- which is what they have actually earned.
+MAX_SUBJECTS = 12
 
 
 def wiki_subjects(subdomain: str) -> tuple[list[str], int]:
@@ -92,7 +129,7 @@ def wiki_subjects(subdomain: str) -> tuple[list[str], int]:
             if not name or c.get("pages", 0) < MIN_CATEGORY_PAGES:
                 continue
             seen += 1
-            if _GENERIC_CATEGORY.match(name):
+            if _GENERIC_CATEGORY.match(name) or _WIKI_MAINTENANCE.match(name):
                 continue
             n = normalize(name)
             if not n or is_stop_subject(n):
@@ -110,7 +147,11 @@ def wiki_subjects(subdomain: str) -> tuple[list[str], int]:
         if n not in seen_norm:
             seen_norm.add(n)
             out.append(name)
-    return out, seen
+    # Shortest first: a one- or two-word category ("Dragons", "Magic") is
+    # a topic; a long one ("Characters that appear in Kingdom Hearts") is
+    # a filing path that happens to contain a topical word.
+    out.sort(key=lambda s: (len(s.split()), len(s)))
+    return out[:MAX_SUBJECTS], seen
 
 
 def main() -> None:

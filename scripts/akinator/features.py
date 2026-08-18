@@ -373,6 +373,21 @@ SUBJECT_RULES: list[tuple[str, str, list[str]]] = [
       "world literature", "canon"]),
     ("form:series", "Is it part of a series?",
      ["series", "sequel", "trilogy", "saga"]),
+    # Owner's suggestion, from a game where "Is it famous around the
+    # world?" was asked of a Chinese web serial. That question is a
+    # catalogue artefact — it reads translation and edition counts, which
+    # is not something a reader holds in their head — and this is the
+    # opposite: anyone who reads web novels knows instantly, and anyone
+    # who does not knows just as instantly that theirs is not one.
+    #
+    # Rare in the corpus by construction, so it lives in FORCE_KEEP. That
+    # is the point rather than a problem: a "yes" narrows to a few dozen
+    # books at once, which is exactly the shape of question the engine's
+    # information gain rewards.
+    ("form:webnovel", "Is it a web novel or light novel?",
+     ["web novel", "web serial", "light novel", "webnovel", "webtoon",
+      "manhwa", "manhua", "xianxia", "wuxia", "litrpg", "isekai",
+      "cultivation novel", "progression fantasy"]),
 ]
 
 # Compound place names that a keyword match gets WRONG, checked before any
@@ -813,6 +828,11 @@ FORCE_KEEP = {
     "form:series",
     "setting:school",
     "genre:drama",
+    # Below the floor by construction — the corpus is a general catalogue
+    # and web novels are a sliver of it. Kept because the floor measures
+    # how MANY books a question applies to and cannot see how cleanly a
+    # reader answers it, which is the same reason the three above are here.
+    "form:webnovel",
 }
 
 

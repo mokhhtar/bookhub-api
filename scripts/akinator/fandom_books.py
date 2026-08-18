@@ -209,6 +209,7 @@ def load_fandom_books(require_prose: bool = False) -> list[dict]:
             "pages": r.get("pages") or 0,
             "cast": cast,
             "labels": labels,
+            "proven": r.get("subdomain") in proven_subs,
             "subjects": subs,
             "author": auth.get("author"),
             "year": year,
@@ -291,7 +292,14 @@ def supplement(docs: list[dict], band: tuple[int, int] = DEFAULT_BAND,
             # go through the same path as the Open Library labels rather
             # than being re-derived from strings. These strings are the
             # wiki's own categories, pre-filtered to the ones that map.
-            "subject": b["subjects"],
+            # The proven set IS the web-novel list: harvest_fandom.py and
+            # discover_fandom.py were built to find wikis for exactly that
+            # genre, and every pair in akinator_fandom.json was verified
+            # by hand. Saying so as a SUBJECT rather than a special case
+            # lets features.py's existing rule machinery read it, the same
+            # way it reads every other string.
+            "subject": (b["subjects"] + ["web novel"]
+                        if b.get("proven") else b["subjects"]),
             "person": b["cast"],
             "language": ["eng"],
             "readinglog_count": int(top_val - frac * (top_val - bot_val)),
