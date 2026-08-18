@@ -267,16 +267,14 @@ def _encode_row(book: dict, question_ids: list[str], bytes_per_row: int) -> byte
     return bytes(out)
 
 
-def sync(dry_run: bool = False) -> dict:
-    """Append newly published books to the shipped game artifacts."""
-    from features import extract, normalize                      # noqa: E402
-    from characters import extract_characters, usable_token      # noqa: E402
-    from authors import canonical_author, surname_token          # noqa: E402
-    from site_books import parse_page                            # noqa: E402
+def _load_live_artifacts() -> dict:
+    """Fetch meta/questions/books/matrix and run guards 1 & 2.
 
-    if not GITHUB_PAT:
-        return {"ok": False, "reason": "GITHUB_PAT not configured"}
-
+    Shared by `sync()` and `append_book_row()` — every caller that appends
+    to the live matrix needs the same self-consistency check and the same
+    question_hash check first, and needed it duplicated once already (this
+    function is the fix for that, not a hypothetical).
+    """
     meta_raw, _ = _get_file(f"{ARTIFACT_DIR}/meta.json")
     q_raw, _ = _get_file(f"{ARTIFACT_DIR}/questions.json")
     books_raw, _ = _get_file(f"{ARTIFACT_DIR}/books.json")
@@ -306,6 +304,107 @@ def sync(dry_run: bool = False) -> dict:
         return {"ok": False, "reason":
                 "question_hash mismatch — artifacts were rebuilt; run a full build"}
 
+    return {"ok": True, "meta": meta, "questions": questions, "books": books,
+            "matrix": matrix, "bpr": bpr,
+            "question_ids": [q["id"] for q in questions], "live_hash": live}
+
+
+def _build_book_row(doc: dict, question_ids: list[str], bpr: int, rank: int,
+                    prose: str = "") -> tuple[dict, bytes]:
+    """One OL-shaped doc -> (feature dict, packed row bytes).
+
+    Shared by `sync()`'s per-page loop and `append_book_row()` — the only
+    difference between a newly published site page and an admin-typed book
+    is where `doc` and `prose` come from; everything after that is the
+    same extract -> mark-unknown -> label -> pack pipeline either way.
+    """
+    from features import extract                              # noqa: E402
+    from characters import extract_characters, usable_token   # noqa: E402
+
+    book = extract(doc, rank, rank + 1)
+    _, tokens = extract_characters(book.pop("persons"))
+    book["char_tokens"] = sorted(t for t in tokens if usable_token(t))
+    _mark_uncomputed_unknown(book, question_ids)
+    # Called unconditionally: `_label_traits` returns on empty prose itself,
+    # and one owner of that rule is one place for it to be wrong.
+    _label_traits(book, {"title": doc.get("title"),
+                         "author": (doc.get("author_name") or [""])[0],
+                         "prose": prose}, question_ids)
+    row = _encode_row(book, question_ids, bpr)
+    return book, row
+
+
+def append_book_row(doc: dict, prose: str = "", commit_message: str = "") -> dict:
+    """Append ONE book to the live artifacts and commit immediately.
+
+    The admin add-book endpoint's whole implementation — one call, one
+    commit. `doc` must carry the fields `features.extract()` reads (title,
+    author_name, first_publish_year, subject, person, language,
+    readinglog_count); the caller decides `readinglog_count` since there is
+    no measured popularity for a book added this way, same caveat
+    `fandom_books.py` already documents for its own thin rows.
+    """
+    if not GITHUB_PAT:
+        return {"ok": False, "reason": "GITHUB_PAT not configured"}
+    live = _load_live_artifacts()
+    if not live["ok"]:
+        return live
+
+    meta, books, matrix = live["meta"], live["books"], live["matrix"]
+    bpr, question_ids = live["bpr"], live["question_ids"]
+
+    rank = meta["books"]
+    try:
+        book, row = _build_book_row(doc, question_ids, bpr, rank, prose)
+    except ValueError as exc:
+        # A row that packs to the wrong width is exactly the corruption this
+        # module exists to prevent. `sync()` already turns this into a
+        # refusal rather than a traceback; the admin path must too, or the
+        # one caller with a human watching is the one that 500s.
+        return {"ok": False, "reason": f"encoding {doc.get('title')}: {exc}"}
+
+    matrix = matrix + row
+    books = books + [{
+        "k": doc["key"], "t": doc["title"],
+        "a": (doc.get("author_name") or [""])[0],
+        "y": doc.get("first_publish_year"),
+        "p": doc.get("readinglog_count") or 0,
+        "r": book["richness"], "w": None, "c": None,
+    }]
+    meta = {**meta, "books": len(books), "question_hash": live["live_hash"]}
+
+    # Guard 3: the same size check, after. A row that packed to the right
+    # length individually can still leave the file wrong if anything else
+    # touched it.
+    if len(matrix) != meta["books"] * bpr:
+        return {"ok": False, "reason": "post-append size check failed; nothing written"}
+
+    wrote = _commit_files({
+        f"{ARTIFACT_DIR}/matrix.bin": matrix,
+        f"{ARTIFACT_DIR}/books.json": json.dumps(
+            books, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+        f"{ARTIFACT_DIR}/meta.json": json.dumps(
+            meta, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+    }, commit_message or f"mind reader: +1 admin-added book ({doc['title']})")
+    return {"ok": wrote, "key": doc["key"], "title": doc["title"]}
+
+
+def sync(dry_run: bool = False) -> dict:
+    """Append newly published books to the shipped game artifacts."""
+    from features import normalize                               # noqa: E402
+    from authors import canonical_author, surname_token          # noqa: E402
+    from site_books import parse_page                            # noqa: E402
+
+    if not GITHUB_PAT:
+        return {"ok": False, "reason": "GITHUB_PAT not configured"}
+
+    live = _load_live_artifacts()
+    if not live["ok"]:
+        return live
+    meta, books, matrix, bpr, question_ids, live_hash = (
+        live["meta"], live["books"], live["matrix"],
+        live["bpr"], live["question_ids"], live["live_hash"])
+
     def ident(title: str, author: str) -> tuple[str, str]:
         import re
         main = re.split(r"[:;]| - ", title, 1)[0]
@@ -314,7 +413,6 @@ def sync(dry_run: bool = False) -> dict:
     have = {ident(b.get("t") or "", b.get("a") or "") for b in books}
     have_titles = {normalize(b.get("t") or "") for b in books}
 
-    question_ids = [q["id"] for q in questions]
     added, skipped = [], 0
 
     for name in _list_book_pages():
@@ -348,14 +446,9 @@ def sync(dry_run: bool = False) -> dict:
         }
 
         rank = meta["books"] + len(added)
-        book = extract(doc, rank, rank + 1)
-        names_, tokens = extract_characters(book.pop("persons"))
-        book["char_tokens"] = sorted(t for t in tokens if usable_token(t))
-        _mark_uncomputed_unknown(book, question_ids)
-        _label_traits(book, page, question_ids)
-
         try:
-            row = _encode_row(book, question_ids, bpr)
+            book, row = _build_book_row(doc, question_ids, bpr, rank,
+                                        prose=(page.get("prose") or ""))
         except ValueError as exc:
             return {"ok": False, "reason": f"encoding {page['title']}: {exc}"}
 
@@ -371,7 +464,7 @@ def sync(dry_run: bool = False) -> dict:
         return {"ok": True, "added": 0, "skipped": skipped}
 
     meta["books"] = len(books)
-    meta["question_hash"] = live
+    meta["question_hash"] = live_hash
 
     # Guard 3: the same size check, after. A row that packed to the right
     # length individually can still leave the file wrong if anything else
