@@ -61,6 +61,7 @@ from prove_fandom import _GENERIC_CATEGORY, Unavailable, _fetch  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CENSUS_PATH = os.path.join(REPO_ROOT, "data", "fandom_novel_census.json")
+PROVEN_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom.json")
 OUT_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_subjects.json")
 
 MAX_CATEGORY_PAGES = 4
@@ -117,13 +118,32 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--delay", type=float, default=0.8)
     ap.add_argument("--refresh", action="store_true")
+    ap.add_argument("--source", choices=("census", "proven", "both"),
+                    default="both",
+                    help="'proven' is akinator_fandom.json — the 41 pairs "
+                         "verified by prove_fandom.py, which Category:"
+                         "Books_hub does not contain and the census "
+                         "therefore never sees. Lord of the Mysteries, the "
+                         "book that started the Fandom work, is one of them.")
     args = ap.parse_args()
 
-    with open(CENSUS_PATH, encoding="utf-8") as fh:
-        results = json.load(fh)["results"]
-    keep = {"NOVEL", "LITERARY_MULTI_MEDIA"}
-    targets = [(r["title"], r["subdomain"]) for r in results
-               if r["type"] in keep and r.get("subdomain")]
+    targets: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    if args.source in ("census", "both"):
+        with open(CENSUS_PATH, encoding="utf-8") as fh:
+            results = json.load(fh)["results"]
+        keep = {"NOVEL", "LITERARY_MULTI_MEDIA"}
+        for r in results:
+            if r["type"] in keep and r.get("subdomain"):
+                targets.append((r["title"], r["subdomain"]))
+                seen.add(r["subdomain"])
+    if args.source in ("proven", "both") and os.path.exists(PROVEN_PATH):
+        with open(PROVEN_PATH, encoding="utf-8") as fh:
+            for title, entry in json.load(fh).items():
+                sub = entry.get("subdomain")
+                if sub and sub not in seen:
+                    seen.add(sub)
+                    targets.append((title, sub))
 
     done: dict[str, dict] = {}
     if os.path.exists(OUT_PATH) and not args.refresh:

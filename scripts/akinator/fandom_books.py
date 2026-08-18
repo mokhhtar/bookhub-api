@@ -58,6 +58,7 @@ SUBJECTS_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_subjects.json")
 AUTHORS_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_authors.json")
 YEARS_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_years.json")
 TEXT_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_text.json")
+PROVEN_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom.json")
 
 # ENTIRELY BELOW site_books' band (2000, 4800). A hard constraint, not a
 # preference, and it costs most of these rows to honour.
@@ -133,11 +134,50 @@ def load_fandom_books(require_prose: bool = False) -> list[dict]:
     if not census:
         return []
 
-    keep = {"NOVEL", "LITERARY_MULTI_MEDIA"}
+    # TWO SOURCES, AND THE SECOND IS THE ONE THAT MATTERS MOST.
+    #
+    # The census enumerates `Category:Books_hub` — Fandom's own shelf of
+    # book wikis, which is mainstream and does NOT contain the web novels
+    # this whole effort started for. `akinator_fandom.json` holds 41
+    # hand-proven (title, subdomain) pairs from harvest_fandom.py and
+    # discover_fandom.py, every one verified by prove_fandom.py, and it
+    # includes Lord of the Mysteries — the book whose miss started the
+    # Fandom work — along with Solo Leveling, Shadow Slave and Reverend
+    # Insanity.
+    #
+    # The first shipped build read the census alone and put 61 rows in
+    # the game while 39 of those 41 stayed out. Found by a player looking
+    # up why Lord of the Mysteries was missed, which returned three
+    # unpooled VOLUME rows from published pages and no series or wiki row
+    # at all.
+    proven = _load(PROVEN_PATH)
+    proven_subs = {e.get("subdomain") for e in proven.values() if e.get("subdomain")}
+
+    # PROVEN BEATS ARTICLE COUNT, wherever the row came from.
+    #
+    # `pages` only ever orders these rows against each other, and the
+    # truncation to SHIPPED_BOOKS cuts from the bottom of that ordering.
+    # A first version gave the boost only to proven wikis the census did
+    # NOT already list — so Shadow Slave, which appears in both, kept its
+    # 847-article weight, sorted with the crowd and was cut. A wiki
+    # somebody verified by hand is not less wanted for also being on
+    # Fandom's shelf.
+    PROVEN_WEIGHT = 10 ** 6
+    rows = [{"title": r["title"], "subdomain": r.get("subdomain"),
+             "pages": (PROVEN_WEIGHT if r.get("subdomain") in proven_subs
+                       else (r.get("pages") or 0))}
+            for r in census.get("results", [])
+            if r.get("type") in {"NOVEL", "LITERARY_MULTI_MEDIA"}]
+    seen_subs = {r["subdomain"] for r in rows if r.get("subdomain")}
+    for title, entry in proven.items():
+        sub = entry.get("subdomain")
+        if sub and sub not in seen_subs:
+            seen_subs.add(sub)
+            rows.append({"title": title, "subdomain": sub,
+                         "pages": PROVEN_WEIGHT})
+
     out = []
-    for r in census.get("results", []):
-        if r.get("type") not in keep:
-            continue
+    for r in rows:
         title = r["title"]
         if require_prose and title not in prose:
             continue
