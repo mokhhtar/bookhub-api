@@ -142,8 +142,8 @@ def refresh(page: dict, client: httpx.Client) -> tuple[str, bool]:
         return (f"NOT HEALED {_describe(fe)} — was an Archive scan", False)
 
     if (fe or {}).get("source") == "project_gutenberg":
-        return f"{_describe(fe)} → expect quiz_source: gutenberg_text", True
-    return f"{_describe(fe)} → stays fandom_summary, regenerated", True
+        return f"{_describe(fe)} -> expect quiz_source: gutenberg_text", True
+    return f"{_describe(fe)} -> stays fandom_summary, regenerated", True
 
 
 def main() -> int:

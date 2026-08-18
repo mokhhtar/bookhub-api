@@ -132,3 +132,8 @@ venv/
 # behind it (harvest_fandom_years.py). The field measured at ~11 points.
 # Regenerable.
 /data/akinator_fandom_years.json
+
+# Wiki categories mapped to Open Library-shaped subjects, per census novel
+# (harvest_fandom_subjects.py). Its own docstring already calls itself
+# gitignored — this is the line that makes that true.
+/data/akinator_fandom_subjects.json
