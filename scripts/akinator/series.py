@@ -171,6 +171,29 @@ def series_for_docs(docs: list[dict], works: dict[str, dict] | None = None,
         for i in idx:
             out[i] = sid
 
+    # THE PARENT JOINS ITS OWN GROUP.
+    #
+    # `_volume_groups` only ever sees titles carrying a volume marker, so
+    # a row titled plainly "Lord of the Mysteries" was excluded from the
+    # group named after it — three volumes pooled together and the series
+    # row standing outside, which a player sees as the volumes appearing
+    # beside the book rather than folded into it. Reported from live play.
+    #
+    # Matched on the normalized title alone, with no author test, because
+    # the row that names a series often carries no author at all: the
+    # /fandom/ rows are wikis, and a wiki has no single author to record.
+    # Safe because the prefix must already have produced a real group of
+    # its own — this can add a member to an existing group, never invent
+    # one.
+    by_prefix = {sid[len("title:"):]: sid for sid in names
+                 if sid.startswith("title:")}
+    for i, doc in enumerate(docs):
+        if out[i]:
+            continue
+        sid = by_prefix.get(normalize(doc.get("title") or ""))
+        if sid:
+            out[i] = sid
+
     return out, names
 
 
