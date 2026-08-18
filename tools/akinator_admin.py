@@ -53,8 +53,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "akinator"))
 
-from fastapi import APIRouter, Header, HTTPException  # noqa: E402
-from pydantic import BaseModel, Field                  # noqa: E402
+from fastapi import APIRouter, Depends, Header, HTTPException  # noqa: E402
+from pydantic import BaseModel, Field                           # noqa: E402
 
 from tools.akinator_sync import (                       # noqa: E402
     ARTIFACT_DIR,
@@ -65,9 +65,31 @@ from tools.akinator_sync import (                       # noqa: E402
 
 log = logging.getLogger("bookhub-api.akinator_admin")
 
-router = APIRouter(prefix="/akinator/admin", tags=["akinator"])
-
 ADMIN_SECRET = os.environ.get("AKINATOR_ADMIN_SECRET", "")
+
+
+def _require_admin(x_admin_secret: str = Header(default="")) -> None:
+    """The secret gate, as a ROUTER dependency rather than a line in each
+    handler.
+
+    Two reasons it belongs here. It cannot be forgotten on a fifth endpoint
+    — the guard is a property of the router, not something a future handler
+    has to remember to call. And FastAPI solves dependencies before it
+    validates the body, so an unauthenticated caller now gets 403 rather
+    than a 422 listing every field the endpoint expects; checked against
+    the live deploy, where `POST /akinator/admin/book {}` was answering
+    with the whole request schema.
+
+    An unset secret closes the endpoint, it does not open it — the same
+    rule /akinator/sync states, and the reason these were already 403 on
+    Render before AKINATOR_ADMIN_SECRET was configured at all.
+    """
+    if not ADMIN_SECRET or x_admin_secret != ADMIN_SECRET:
+        raise HTTPException(status_code=403, detail="forbidden")
+
+
+router = APIRouter(prefix="/akinator/admin", tags=["akinator"],
+                   dependencies=[Depends(_require_admin)])
 
 EXCLUDED_PATH = f"{ARTIFACT_DIR}/excluded.json"
 ADMIN_CORRECTIONS_PATH = f"{ARTIFACT_DIR}/admin_corrections.json"
@@ -79,7 +101,7 @@ QUESTIONS_PATH = f"{ARTIFACT_DIR}/questions.json"
 #
 # THE SLUG LENGTH IS MEASURED, NOT GUESSED. A 64-character cap was the first
 # thing written here and it rejected a book that actually ships: the longest
-# /site/ key in books.json is 82 characters ("resumen-de-mas-agudo-mas-
+# /site/ key in books.json is 85 characters ("resumen-de-mas-agudo-mas-
 # rapido-y-mejor-…", a Spanish summary page whose title became its slug).
 # A validator that refuses to act on a row the game already serves is worse
 # than no validator — the whole point of this page is fixing what playing
@@ -93,11 +115,6 @@ _QUESTION_ID = re.compile(r"^[a-z]+:[a-z0-9_]{1,40}$")
 # about"). Extend this set only when a new field genuinely needs it, the
 # same discipline that file's docstring asks of a human editor.
 _CORRECTABLE_FIELDS = {"first_publish_year"}
-
-
-def _require_admin(x_admin_secret: str) -> None:
-    if not ADMIN_SECRET or x_admin_secret != ADMIN_SECRET:
-        raise HTTPException(status_code=403, detail="forbidden")
 
 
 def _get_json(path: str, default):
@@ -138,8 +155,7 @@ class ExcludeRequest(BaseModel):
 
 
 @router.post("/exclude")
-def exclude(body: ExcludeRequest, x_admin_secret: str = Header(default="")):
-    _require_admin(x_admin_secret)
+def exclude(body: ExcludeRequest):
     if not _WORK_KEY.match(body.work_key):
         raise HTTPException(status_code=400, detail="malformed work key")
 
@@ -174,8 +190,7 @@ class CorrectionRequest(BaseModel):
 
 
 @router.post("/correction")
-def correction(body: CorrectionRequest, x_admin_secret: str = Header(default="")):
-    _require_admin(x_admin_secret)
+def correction(body: CorrectionRequest):
     if not _WORK_KEY.match(body.work_key):
         raise HTTPException(status_code=400, detail="malformed work key")
     if body.field not in _CORRECTABLE_FIELDS:
@@ -210,8 +225,7 @@ class QuestionRequest(BaseModel):
 
 
 @router.post("/question")
-def question(body: QuestionRequest, x_admin_secret: str = Header(default="")):
-    _require_admin(x_admin_secret)
+def question(body: QuestionRequest):
     if not _QUESTION_ID.match(body.question_id):
         raise HTTPException(status_code=400, detail="malformed question id")
 
@@ -291,8 +305,7 @@ def _first_publish_year(title: str, author: str) -> int | None:
 
 
 @router.post("/book")
-def book(body: BookRequest, x_admin_secret: str = Header(default="")):
-    _require_admin(x_admin_secret)
+def book(body: BookRequest):
 
     from book_data import resolve_book                    # noqa: E402
     from features import normalize                         # noqa: E402
