@@ -109,6 +109,12 @@ tr.excluded{opacity:.5}
 td.title{white-space:normal;min-width:220px}
 .badge{font-size:11px;font-weight:600;padding:1px 7px;border-radius:3px;background:var(--line)}
 .badge.off{color:var(--work)}
+.badge.dup{color:var(--wait);cursor:pointer;border:1px solid transparent}
+.badge.dup:hover{border-color:var(--wait)}
+td.rich{font-variant-numeric:tabular-nums;text-align:right}
+td.rich.thin{color:var(--work);font-weight:600}
+.toolbar{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--mut)}
+.toolbar label{display:flex;gap:5px;align-items:center;cursor:pointer}
 .status{font-size:12px;color:var(--mut);margin-top:6px;min-height:1.4em}
 .status.ok{color:var(--good)}.status.err{color:var(--work)}
 .card{background:var(--card);border:1px solid var(--line);border-radius:3px;padding:16px 18px;max-width:560px}
@@ -126,9 +132,17 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
 
 <section id="books" class="on">
   <input type="search" id="bookSearch" placeholder="Search by title or author…">
+  <div class="toolbar">
+    <label><input type="checkbox" id="dupOnly"> Only duplicate candidates (<span id="dupCount">0</span>)</label>
+    <span id="shownCount"></span>
+  </div>
   <div class="scroll"><table>
-    <thead><tr><th>Title</th><th>Author</th><th>Year</th><th>Rank</th><th></th><th></th></tr></thead>
-    <tbody id="bookRows"><tr><td colspan="6">Loading…</td></tr></tbody>
+    <thead><tr>
+      <th>Title</th><th>Author</th><th>Year</th><th>Rank</th>
+      <th title="Richness: how many content subjects the row has. It decides how much an 'absent' answer is worth, so r=0 is a row that can barely answer anything.">r</th>
+      <th></th><th></th>
+    </tr></thead>
+    <tbody id="bookRows"><tr><td colspan="7">Loading…</td></tr></tbody>
   </table></div>
   <p class="status" id="bookStatus"></p>
 </section>
@@ -163,7 +177,7 @@ A fact correction (year) reaches nobody until the next full <code>build_matrix.p
 <script>
 ${ESC_FN}
 const DATA = "https://litheca.com/games/data/akinator";
-let books = [], questions = [], excluded = new Set();
+let books = [], questions = [], excluded = new Set(), dupFlag = [];
 
 function tab(name){
   document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("on", b.dataset.tab===name));
@@ -178,25 +192,74 @@ async function post(path, body){
   return data;
 }
 
+// WHY THIS FLAG EXISTS, and what it deliberately does not claim.
+//
+// The owner excluded 人間失格 (rank 65, r=10, 1948) because a Japanese
+// title looked wrong in an English game — without being able to see that
+// "No Longer Human" (rank 4751, r=0, dated 2024) is the SAME book, and is
+// the worse row of the two: it answers almost nothing and its year is an
+// edition reprint, so five of the six era questions answer wrongly. The
+// page showed title, author, year and rank, which is enough to feel sure
+// and not enough to choose correctly.
+//
+// The rule is r = 0 AND the author has a richer row. Measured over the
+// shipped 5,000: r = 0 alone fires on 406 rows (8%, noise), "r = 0 and the
+// author has another row" on 106, and this on 80 (1.6%). The extra
+// condition is what makes it actionable — if every row by that author is
+// also empty there is no better row to prefer, so there is nothing to
+// decide and a badge would only cry wolf.
+//
+// It does NOT name the twin. Pointing at the author's richest other row
+// was tried and it lies: for "White Nights" that is Игрокъ, which is The
+// Gambler, a different book. So the badge filters to the author instead
+// and lets the owner read the list — a hint that a duplicate may be here,
+// never an assertion about which row it is.
+function computeDupFlags(){
+  const byAuthor = {};
+  books.forEach((b,i) => {
+    const a = (b.a||"").trim();
+    if (!a) return;
+    (byAuthor[a] = byAuthor[a] || []).push(i);
+  });
+  dupFlag = books.map((b,i) => {
+    if ((b.r||0) !== 0) return false;
+    const a = (b.a||"").trim();
+    if (!a) return false;
+    return (byAuthor[a]||[]).some(j => j !== i && (books[j].r||0) > 0);
+  });
+  document.getElementById("dupCount").textContent = dupFlag.filter(Boolean).length;
+}
+
 function renderBooks(filter){
   const rows = document.getElementById("bookRows");
   const f = (filter||"").toLowerCase();
-  const shown = books
+  const dupOnly = document.getElementById("dupOnly").checked;
+  const matching = books
     .map((b,i)=>({b,i}))
-    .filter(({b}) => !f || (b.t||"").toLowerCase().includes(f) || (b.a||"").toLowerCase().includes(f))
-    .slice(0, 300);
+    .filter(({b,i}) => (!dupOnly || dupFlag[i])
+      && (!f || (b.t||"").toLowerCase().includes(f) || (b.a||"").toLowerCase().includes(f)));
+  const shown = matching.slice(0, 300);
+  document.getElementById("shownCount").textContent =
+    matching.length > shown.length
+      ? \`showing \${shown.length} of \${matching.length} — narrow the search to see the rest\`
+      : \`\${matching.length} row\${matching.length===1?"":"s"}\`;
   rows.innerHTML = shown.map(({b,i}) => {
     const isOff = excluded.has(b.k);
+    const r = b.r||0;
+    const dup = dupFlag[i]
+      ? \`<span class="badge dup dupBtn" data-author="\${esc(b.a||"")}" title="Empty row (r=0) by an author who has a better-described one. Often a translation or reprint of a book already in the game — click to see everything by this author and judge.">check duplicate</span>\`
+      : "";
     return \`<tr class="\${isOff?"excluded":""}" data-key="\${esc(b.k)}">
       <td class="title">\${esc(b.t)}</td><td>\${esc(b.a||"—")}</td>
       <td>\${b.y ?? "—"}</td><td>\${i+1}</td>
-      <td>\${isOff ? '<span class="badge off">excluded</span>' : ""}</td>
+      <td class="rich \${r===0?"thin":""}" title="\${r===0?"answers almost nothing":r+" content subjects"}">\${r}</td>
+      <td>\${isOff ? '<span class="badge off">excluded</span> ' : ""}\${dup}</td>
       <td class="row">
         <button class="act ghost excludeBtn" data-key="\${esc(b.k)}" data-off="\${isOff}">\${isOff?"Restore":"Exclude"}</button>
         <input type="text" class="yearFix" placeholder="fix year" style="width:80px">
         <button class="act ghost fixYearBtn" data-key="\${esc(b.k)}">Fix</button>
       </td></tr>\`;
-  }).join("") || "<tr><td colspan=6>No matches.</td></tr>";
+  }).join("") || "<tr><td colspan=7>No matches.</td></tr>";
 }
 
 function setStatus(id, msg, ok){
@@ -205,8 +268,21 @@ function setStatus(id, msg, ok){
 }
 
 document.getElementById("bookSearch").addEventListener("input", (e)=>renderBooks(e.target.value));
+document.getElementById("dupOnly").addEventListener("change", ()=>
+  renderBooks(document.getElementById("bookSearch").value));
 
 document.getElementById("bookRows").addEventListener("click", async (e)=>{
+  // Clicking the flag searches the author, so the owner compares the whole
+  // shelf rather than trusting a guess about which row is the twin.
+  if (e.target.classList.contains("dupBtn")){
+    document.getElementById("dupOnly").checked = false;
+    const box = document.getElementById("bookSearch");
+    box.value = e.target.dataset.author;
+    renderBooks(box.value);
+    setStatus("bookStatus", "Everything by " + e.target.dataset.author +
+      " — compare r before excluding; the emptiest row is usually the one to drop.");
+    return;
+  }
   const key = e.target.dataset.key;
   if (!key) return;
   if (e.target.classList.contains("excludeBtn")){
@@ -289,6 +365,7 @@ document.getElementById("addSubmit").addEventListener("click", async ()=>{
       fetch(DATA+"/excluded.json").then(r=>r.ok?r.json():[]).catch(()=>[]),
     ]);
     books = b; questions = q; excluded = new Set(x);
+    computeDupFlags();
     renderBooks(""); renderQuestions();
   } catch (e) {
     setStatus("bookStatus", "failed to load live artifacts: "+e.message, false);
