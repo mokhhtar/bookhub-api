@@ -222,6 +222,72 @@ def build_books(docs: list[dict]) -> tuple[list[dict], AuthorIndex]:
     return books, authors
 
 
+def question_text(q: str) -> str:
+    """The wording a player sees, from whichever module owns the question.
+
+    ONE lookup chain, called by everything that needs it. It used to live
+    inline in the questions.json writer, and the duplicate-wording guard
+    below was written against `QUESTION_TEXT` alone — so every trait
+    question fell back to its own id, collided with nothing, and the
+    guard passed a build that shipped "Is there magic in it?" twice. The
+    same shape as the bug the writer's own comment records: a wording
+    chain that exists in one place and not another.
+    """
+    return (QUESTION_TEXT.get(q) or STRUCTURAL_QUESTIONS.get(q)
+            or AUTHOR_QUESTIONS.get(q) or WORK_QUESTIONS.get(q)
+            or TRAIT_QUESTIONS.get(q, q))
+
+
+def _drop_duplicate_wordings(books: list[dict], kept: list[str]) -> list[str]:
+    """Never ship two questions a player cannot tell apart.
+
+    FOUND BY A PLAYER, 2026-08-18, in the first build that carried the
+    trait questions: "Is there magic in it?" was asked TWICE in one game,
+    as `theme:magic` at Q20 and `t:magic` at Q22. `t:school` and
+    `setting:school` are the same collision. Both pairs are two ids with
+    byte-identical player-facing text, because `traits.py`'s authored
+    vocabulary overlaps `features.py`'s subject rules by design and
+    nothing compared the WORDING.
+
+    Which one survives is measured, not preferred. `apply_labels` marks a
+    trait present or UNKNOWN and never absent, so a trait question cannot
+    answer "no" at all:
+
+        theme:magic     441 present   (8.8%)      0 unknown
+        t:magic         602 present  (12.0%)   4398 unknown
+
+    The trait finds more books saying yes and gives away nothing when the
+    player says no — every unlabelled book stays at 0.5. The subject
+    version discriminates in both directions. So the tie breaks on fewest
+    unknowns, and on a true tie by id, so the choice is deterministic
+    across builds rather than dependent on dict ordering.
+    """
+    unknown_counts: dict[str, int] = {}
+    for b in books:
+        for k in b["unknown"]:
+            unknown_counts[k] = unknown_counts.get(k, 0) + 1
+
+    by_text: dict[str, list[str]] = {}
+    for k in kept:
+        by_text.setdefault(question_text(k), []).append(k)
+
+    dropped: list[tuple[str, str]] = []
+    for text, ids in by_text.items():
+        if len(ids) < 2:
+            continue
+        winner = sorted(ids, key=lambda k: (unknown_counts.get(k, 0), k))[0]
+        for k in ids:
+            if k != winner:
+                dropped.append((k, winner))
+    if dropped:
+        for k, winner in dropped:
+            print(f"  ! duplicate wording: dropped {k} "
+                  f"(kept {winner}, fewer unknowns) — "
+                  f"{question_text(k)!r}")
+    losers = {k for k, _ in dropped}
+    return [k for k in kept if k not in losers]
+
+
 def select_features(books: list[dict]) -> list[str]:
     n = len(books)
     counts: dict[str, int] = {}
@@ -234,7 +300,7 @@ def select_features(books: list[dict]) -> list[str]:
         freq = counts.get(k, 0) / n
         if MIN_FREQ <= freq <= MAX_FREQ or (k in FORCE_KEEP and freq > 0):
             kept.append(k)
-    return kept
+    return _drop_duplicate_wordings(books, kept)
 
 
 def pack_matrix(books: list[dict], questions: list[str]) -> bytes:
@@ -359,9 +425,7 @@ def main() -> None:
         # would have carried the key — a divergence no offline run could
         # show, because only the builder writes questions.json.
         {"id": q,
-         "text": (QUESTION_TEXT.get(q) or STRUCTURAL_QUESTIONS.get(q)
-                  or AUTHOR_QUESTIONS.get(q) or WORK_QUESTIONS.get(q)
-                  or TRAIT_QUESTIONS.get(q, q)),
+         "text": question_text(q),
          "base": round(present_counts.get(q, 0) / max(1, len(books)), 4)}
         for q in questions
     ])
