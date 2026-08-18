@@ -53,17 +53,29 @@ jobs:
           set -uo pipefail
           HOST=${BASE#https://}; HOST=${HOST%%/*}
 
-          # A first deploy legitimately has nowhere to answer FROM — same
-          # documented setup order as the SEO Worker's own check. Only the
-          # DNS case (curl exit 6) is forgiven; a hostname that resolves
-          # gets the full interrogation below.
-          curl -sS -m 20 -o /dev/null "$BASE/" 2>/tmp/probe.err
-          if [ $? -eq 6 ]; then
-            echo "::notice title=Custom Domain not attached yet::$HOST does not resolve. The Worker uploaded fine; attach $HOST to it (Workers & Pages -> litheca-akinator-admin -> Settings -> Domains & Routes), then re-run this workflow to verify the guards."
+          # A first deploy legitimately has nowhere to answer FROM: the
+          # Custom Domain is attached by hand afterwards, so until then
+          # there is no host to interrogate. What is forgiven is "curl could
+          # not complete a request at all", whatever the reason — and the
+          # reason is always printed, because the first run of this workflow
+          # failed here and the log did not say why. Exit 6 (DNS) was the
+          # only forgiven code and something else happened; a check that
+          # hides the one number needed to explain itself is worth less than
+          # the red build it produced.
+          #
+          # This still fails loudly on what actually matters. Unreachable
+          # proves nothing either way and must not be a red build; a host
+          # that ANSWERS gets the full interrogation below, so a Worker that
+          # is live and guarding nothing cannot pass.
+          rc=0
+          curl -sS -m 20 -o /dev/null "$BASE/" || rc=$?
+          echo "probe: curl exit $rc for $BASE/"
+          if [ "$rc" -ne 0 ]; then
+            echo "::notice title=Custom Domain not reachable yet::$HOST did not answer (curl exit $rc). The Worker uploaded fine; attach $HOST to it (Workers & Pages -> litheca-akinator-admin -> Settings -> Domains & Routes), then re-run this workflow to verify the guards."
             {
               echo "### Uploaded, not yet reachable"
               echo
-              echo "\`$HOST\` does not resolve, so there is nothing to verify yet."
+              echo "\`$HOST\` did not answer (curl exit $rc), so there is nothing to verify yet."
               echo "Attach the Custom Domain to **litheca-akinator-admin**, then re-run."
             } >> "$GITHUB_STEP_SUMMARY"
             exit 0
