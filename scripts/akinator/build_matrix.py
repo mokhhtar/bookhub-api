@@ -56,6 +56,7 @@ from characters import extract_characters, usable_token             # noqa: E402
 from corpus_filter import SHIPPED_BOOKS, filter_corpus              # noqa: E402
 from corrections import apply_corrections                            # noqa: E402
 from exclusions import drop_excluded                                  # noqa: E402
+from display_names import apply_display                               # noqa: E402
 from site_books import supplement as site_supplement                # noqa: E402
 from fandom_books import supplement as fandom_supplement             # noqa: E402
 from traits import TRAIT_QUESTIONS, apply_labels, load_traits       # noqa: E402
@@ -481,7 +482,13 @@ def main() -> None:
          "base": round(present_counts.get(q, 0) / max(1, len(books)), 4)}
         for q in questions
     ])
-    sizes["books.json"] = write("books.json", [
+    # The admin page's display renames, applied at the last possible moment
+    # — to the shipped rows, never to the corpus. A rename must not be able
+    # to reach anything the engine reasoned with on the way here; by this
+    # line every question has been chosen and every bit packed, so `t` and
+    # `a` are purely what gets printed. See display_names.py for why an
+    # `author_name` correction was the wrong shape for this.
+    book_rows = [
         {
             "k": b["key"],
             "t": b["title"],
@@ -496,7 +503,11 @@ def main() -> None:
             "c": covers.get(b["key"]),
         }
         for b in books
-    ])
+    ]
+    renamed = apply_display(book_rows, verbose=True)
+    if renamed:
+        print(f"Display overrides: {renamed} field(s) renamed for the reveal")
+    sizes["books.json"] = write("books.json", book_rows)
     sizes["matrix.bin"] = write("matrix.bin", pack_matrix(books, questions))
     # Index lookup must be a dict: `list.index()` inside this loop is
     # O(tokens x mentions), which at 20k books is ~100k tokens scanned

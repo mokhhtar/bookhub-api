@@ -258,6 +258,8 @@ function renderBooks(filter){
         <button class="act ghost excludeBtn" data-key="\${esc(b.k)}" data-off="\${isOff}">\${isOff?"Restore":"Exclude"}</button>
         <input type="text" class="yearFix" placeholder="fix year" style="width:80px">
         <button class="act ghost fixYearBtn" data-key="\${esc(b.k)}">Fix</button>
+        <button class="act ghost renameBtn" data-key="\${esc(b.k)}" data-i="\${i}"
+          title="Change only what the reveal prints — useful when the catalogue's title or author is in a script the player cannot read.">Rename</button>
       </td></tr>\`;
   }).join("") || "<tr><td colspan=7>No matches.</td></tr>";
 }
@@ -295,6 +297,34 @@ document.getElementById("bookRows").addEventListener("click", async (e)=>{
       setStatus("bookStatus", (off?"Restored ":"Excluded ")+key+" — effect: "+r.effect, true);
     } catch (err) { setStatus("bookStatus", String(err.message||err), false); }
     finally { e.target.disabled = false; }
+  }
+  // Rename swaps the title and author cells for inputs in place. An extra
+  // pair of always-visible boxes on all 5,000 rows would crowd out the two
+  // actions actually used every session, for one that is needed 33 times.
+  if (e.target.classList.contains("renameBtn")){
+    const tr = e.target.closest("tr"), i = +e.target.dataset.i;
+    if (e.target.textContent === "Rename"){
+      tr.children[0].innerHTML = '<input type="text" class="dispT">';
+      tr.children[1].innerHTML = '<input type="text" class="dispA" style="min-width:130px">';
+      tr.querySelector(".dispT").value = books[i].t || "";
+      tr.querySelector(".dispA").value = books[i].a || "";
+      e.target.textContent = "Save";
+      return;
+    }
+    const title = tr.querySelector(".dispT").value.trim();
+    const author = tr.querySelector(".dispA").value.trim();
+    if (!title){ setStatus("bookStatus", "a title cannot be blank", false); return; }
+    e.target.disabled = true;
+    try {
+      const r = await post("/api/display", {work_key:key, title, author});
+      books[i].t = title; books[i].a = author;
+      renderBooks(document.getElementById("bookSearch").value);
+      setStatus("bookStatus", "Renamed for display — effect: "+r.effect, true);
+    } catch (err) {
+      setStatus("bookStatus", String(err.message||err), false);
+      e.target.disabled = false;
+    }
+    return;
   }
   if (e.target.classList.contains("fixYearBtn")){
     const input = e.target.parentElement.querySelector(".yearFix");

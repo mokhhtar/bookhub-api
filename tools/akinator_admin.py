@@ -95,6 +95,7 @@ EXCLUDED_PATH = f"{ARTIFACT_DIR}/excluded.json"
 ADMIN_CORRECTIONS_PATH = f"{ARTIFACT_DIR}/admin_corrections.json"
 QUESTION_OVERRIDES_PATH = f"{ARTIFACT_DIR}/question_overrides.json"
 QUESTIONS_PATH = f"{ARTIFACT_DIR}/questions.json"
+DISPLAY_PATH = f"{ARTIFACT_DIR}/display_overrides.json"
 
 # Broader than akinator_learn.py's _WORK_KEY (works|site only) — the admin
 # page routinely acts on /fandom/ rows too.
@@ -252,6 +253,78 @@ def question(body: QuestionRequest):
     if not wrote:
         raise HTTPException(status_code=502, detail="commit failed")
     return {"ok": True, "effect": "instant, and survives the next rebuild"}
+
+
+# ── POST /akinator/admin/display ────────────────────────────────────────
+
+class DisplayRequest(BaseModel):
+    work_key: str = Field(..., max_length=220)
+    title: str | None = Field(default=None, max_length=200)
+    author: str | None = Field(default=None, max_length=120)
+
+
+@router.post("/display")
+def display(body: DisplayRequest):
+    """Rename what a player SEES. Never what the engine reasons with.
+
+    The reveal prints `books.json`'s `t` and `a` verbatim, and for 33 rows
+    that is a script the player cannot read — "you were thinking of 人間失格"
+    to someone who was thinking of "No Longer Human".
+
+    WHY THIS IS NOT A CORRECTION, having checked where a correction would
+    land. `author_name` looked like the right field until the joins were
+    traced: author facts come from `book_traits(doc["author_key"], …)`,
+    "prolific" counts by `author_key`, and `AuthorIndex` merges by OL id
+    before name. All fourteen Dostoyevsky rows already share `OL22242A`
+    under two spellings, so the engine had never split him — only the
+    printed name differed. A correction would have fixed the display, and
+    nothing else, after a full rebuild. This does the same job instantly.
+
+    Instant, and it survives: the client applies the overlay to the rows it
+    just loaded, and `build_matrix.py` applies it when writing books.json.
+    Same "one file, both readers" shape as excluded.json.
+
+    Sending `null` for a field leaves it alone; sending `""` clears the
+    override and restores the catalogue's own text.
+    """
+    if not _WORK_KEY.match(body.work_key):
+        raise HTTPException(status_code=400, detail="malformed work key")
+    if body.title is None and body.author is None:
+        raise HTTPException(status_code=400, detail="nothing to change")
+
+    books, _ = _get_json(f"{ARTIFACT_DIR}/books.json", None)
+    if books is None:
+        raise HTTPException(status_code=502, detail="live books.json unreadable")
+    if not any(b.get("k") == body.work_key for b in books):
+        # A rename keyed to nothing is invisible forever. Refuse it here
+        # rather than commit a file entry that will never match a row.
+        raise HTTPException(status_code=404, detail="no such book in the shipped game")
+
+    current, _ = _get_json(DISPLAY_PATH, {})
+    if not isinstance(current, dict):
+        current = {}
+    entry = dict(current.get(body.work_key) or {})
+    for field, value in (("t", body.title), ("a", body.author)):
+        if value is None:
+            continue
+        if value.strip():
+            entry[field] = value.strip()
+        else:
+            entry.pop(field, None)      # empty string = revert to source
+    if entry:
+        current[body.work_key] = entry
+    else:
+        current.pop(body.work_key, None)
+
+    wrote = _commit_files(
+        {DISPLAY_PATH: _dump(current)},
+        f"mind reader admin: display name for {body.work_key}")
+    if not wrote:
+        raise HTTPException(status_code=502, detail="commit failed")
+    return {"ok": True, "effect": "instant, and survives the next rebuild",
+            "display": entry or None,
+            "note": "changes only what the reveal prints — no question, "
+                    "no answer and no matrix bit reads these fields"}
 
 
 # ── POST /akinator/admin/book ────────────────────────────────────────────
