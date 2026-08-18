@@ -34,6 +34,7 @@ from tools import indexing as indexing_tool
 from tools import akinator_sync as akinator_sync_tool
 from tools import akinator_learn as akinator_learn_tool
 from tools import akinator_drain as akinator_drain_tool
+from tools import akinator_admin as akinator_admin_tool
 # from tools import recommend as recommend_tool   # pending rebuild
 # from tools import questions as questions_tool   # pending rebuild
 # from tools import compare as compare_tool       # pending rebuild
@@ -150,6 +151,7 @@ app.include_router(indexing_tool.router, tags=["indexing"])
 app.include_router(akinator_sync_tool.router)
 app.include_router(akinator_learn_tool.router)
 app.include_router(akinator_drain_tool.router)
+app.include_router(akinator_admin_tool.router)
 
 
 @app.get("/health")
