@@ -151,7 +151,9 @@ def load_covers(path: str = COVERS_PATH) -> dict[str, int]:
     return saved.get("covers", saved)
 
 
-def build_books(docs: list[dict]) -> tuple[list[dict], AuthorIndex]:
+def build_books(docs: list[dict],
+                series_of: list[str | None] | None = None
+                ) -> tuple[list[dict], AuthorIndex]:
     n = len(docs)
     authors = AuthorIndex()
     books = []
@@ -188,6 +190,23 @@ def build_books(docs: list[dict]) -> tuple[list[dict], AuthorIndex]:
                 present.add(key)
             else:
                 known_false.add(key)
+        # BEING IN A SERIES GROUP IS THE ANSWER TO "is it part of a
+        # series?", and it is better evidence than the subject string the
+        # question was reading. `form:series` came only from the words
+        # "series"/"trilogy"/"saga" appearing in Open Library's subjects,
+        # which features.py already records as a data failure: 4.2% of the
+        # corpus reads yes because OL seldom writes it down, not because
+        # series books are rare.
+        #
+        # Meanwhile series.py has been grouping volumes all along — from
+        # Wikidata P179 and from titles that say "Volume 3" — and that
+        # grouping is direct evidence the book is part of one. Lord of the
+        # Mysteries sat in a named group of four and still answered
+        # `unknown` to the question.
+        if series_of and rank < len(series_of) and series_of[rank]:
+            present.add("form:series")
+            unknown.discard("form:series")
+            known_false.discard("form:series")
         book["present"] = sorted(present)
         book["unknown"] = sorted(unknown)
         book["known_false"] = sorted(known_false)
@@ -359,7 +378,11 @@ def main() -> None:
     print(f"Corpus: {len(docs)} books")
 
     covers = load_covers()
-    books, authors = build_books(docs)
+    # BEFORE build_books, because a book's series membership is evidence
+    # about the book and `extract()` needs it. It used to be computed
+    # after the questions were selected, purely for naming a guess.
+    series_of, series_names = series_for_docs(docs)
+    books, authors = build_books(docs, series_of)
     if covers:
         have = sum(1 for b in books if covers.get(b["key"]))
         print(f"Covers: {have}/{len(books)} books have one "
@@ -462,7 +485,7 @@ def main() -> None:
     })
     # Series grouping, so the page can name "Harry Potter" instead of
     # picking one of its twelve volumes. Index-aligned with books.json.
-    series_of, series_names = series_for_docs(docs)
+    # Computed above, before build_books, because it is also evidence.
     grouped = sum(1 for s in series_of if s)
     print(f"Series: {grouped} books in {len(series_names)} named groups")
     sizes["series.json"] = write("series.json", {
