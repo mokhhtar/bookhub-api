@@ -1,0 +1,24 @@
+name = "litheca-akinator-admin"
+main = "index.js"
+compatibility_date = "2026-08-01"
+
+# NO workers.dev URL. Cloudflare Access protects a hostname on the zone, so a
+# live *.workers.dev address would be an unauthenticated route into the same
+# script — and one where the Cf-Access-Jwt-Assertion header could be forged,
+# because nothing upstream would be stripping it. The Custom Domain (owner
+# picks it, e.g. mindreader-admin.litheca.com) is the only way in, exactly as
+# seo.litheca.com is for worker/seo-status/.
+workers_dev = false
+
+# ADMIN_SECRET is a SECRET, not a var:
+#   wrangler secret put ADMIN_SECRET      (or the dashboard, as type Secret)
+# Must equal AKINATOR_ADMIN_SECRET on bookhub-api's Render environment —
+# this is the credential for the Worker -> Render hop. Cloudflare Access
+# authenticates the BROWSER; it says nothing about that server-to-server
+# call, which needs its own credential regardless of who is signed in.
+# While it is unset every /api/* route answers 503 rather than relaying an
+# unauthenticated write, the same refusal shape as seo-status's INGEST_SECRET
+# and the games Worker's TURNSTILE_SECRET.
+
+[observability]
+enabled = true

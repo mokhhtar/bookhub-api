@@ -1,0 +1,89 @@
+# Deploy the Book Mind Reader admin Worker.
+#
+# REQUIRES (already present for the SEO/games Workers):
+#   CLOUDFLARE_ACCOUNT_ID
+#   CLOUDFLARE_WORKERS_TOKEN — "Workers Scripts: Edit"
+#
+# AFTER THE FIRST DEPLOY, by hand and once:
+#   1. wrangler secret put ADMIN_SECRET       (same value as bookhub-api's
+#                                              AKINATOR_ADMIN_SECRET env var
+#                                              on Render)
+#   2. Attach a Custom Domain to this Worker (owner's choice — the plan
+#      suggested mindreader-admin.litheca.com, matching seo.litheca.com's
+#      naming).
+#   3. Put Cloudflare Access in front of that domain.
+# Until step 3 the page shows nothing at all: GET / requires the Access
+# assertion header and fails closed without it.
+name: Deploy Book Mind Reader admin Worker
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "worker/akinator-admin/**"
+      - ".github/workflows/deploy-akinator-admin-worker.yml"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy
+        working-directory: worker/akinator-admin
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -uo pipefail
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "::error::CLOUDFLARE_WORKERS_TOKEN is not set."
+            exit 1
+          fi
+          npx --yes wrangler@latest deploy
+
+      # A deploy that reports success and guards nothing is the failure this
+      # project has already paid for once (see deploy-seo-worker.yml). Ask
+      # the Worker to prove it refuses what it should.
+      - name: Prove the deployed Worker refuses what it should
+        env:
+          BASE: ${{ vars.AKINATOR_ADMIN_URL || 'https://mindreader-admin.litheca.com' }}
+        run: |
+          set -uo pipefail
+          HOST=${BASE#https://}; HOST=${HOST%%/*}
+
+          # A first deploy legitimately has nowhere to answer FROM — same
+          # documented setup order as the SEO Worker's own check. Only the
+          # DNS case (curl exit 6) is forgiven; a hostname that resolves
+          # gets the full interrogation below.
+          curl -sS -m 20 -o /dev/null "$BASE/" 2>/tmp/probe.err
+          if [ $? -eq 6 ]; then
+            echo "::notice title=Custom Domain not attached yet::$HOST does not resolve. The Worker uploaded fine; attach $HOST to it (Workers & Pages -> litheca-akinator-admin -> Settings -> Domains & Routes), then re-run this workflow to verify the guards."
+            {
+              echo "### Uploaded, not yet reachable"
+              echo
+              echo "\`$HOST\` does not resolve, so there is nothing to verify yet."
+              echo "Attach the Custom Domain to **litheca-akinator-admin**, then re-run."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # GET / with no Access assertion must NOT return the admin page.
+          CODE=$(curl -sS -m 30 -o body.txt -w '%{http_code}' "$BASE/")
+          echo "GET / (no Access header) -> $CODE"
+          if [ "$CODE" = "200" ] && grep -qi "Book Mind Reader" body.txt; then
+            echo "::error::the admin page rendered without an Access assertion."
+            exit 1
+          fi
+
+          # Every /api/* relay must refuse an unauthenticated request the
+          # same way — no Access header means no page AND no write, so this
+          # should already 403 before even reaching the secret check.
+          for p in exclude correction question book; do
+            CODE=$(curl -sS -m 30 -o rel.txt -w '%{http_code}' -X POST "$BASE/api/$p" \
+                   -H "Content-Type: application/json" -d '{}')
+            echo "POST /api/$p (no Access header) -> $CODE $(cat rel.txt)"
+            [ "$CODE" != "200" ] || {
+              echo "::error::/api/$p accepted a write with no Access assertion."; exit 1; }
+          done
