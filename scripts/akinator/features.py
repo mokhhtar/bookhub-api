@@ -487,13 +487,33 @@ STRUCTURAL_QUESTIONS = {
     "fact:pre2000": "Was it written before 2000?",
     "fact:recent": "Was it published in the last 25 years?",
     "fact:verrecent": "Was it published in the last 10 years?",
-    "fact:short": "Is it a quick read (under 200 pages)?",
-    "fact:midshort": "Is it under 300 pages?",
-    "fact:long": "Is it a thick or long book (over 400 pages)?",
-    "fact:verylong": "Is it over 600 pages?",
+    # PAGE QUESTIONS REMOVED, 2026-08-18, on the owner's argument and the
+    # project's own rule. `published_year` in a published page is the
+    # EDITION year and the build plan already forbids it becoming a clue.
+    # A page count is the same kind of fact and was never held to it: the
+    # owner read Lord of the Mysteries as an Arabic PDF running past 2,000
+    # pages against 208 for the English volume, so the "length" of a work
+    # is a property of the translation somebody happened to hold.
+    #
+    # It is worse for a series. Asking how many pages Lord of the
+    # Mysteries has is asking about an object that does not exist.
+    #
+    # Measured before removing, and the measurement is why the earlier
+    # numbers were misleading. With the simulator's own player, who reads
+    # ground truth and therefore always knows a page count, dropping three
+    # of these cost 60.0% -> 56.1% (p=0.018, "significant"). Forcing that
+    # player to answer `unknown` instead — what a real player does — gave
+    # 55.0%, WORSE than removing them. A question the player cannot answer
+    # is not neutral: it spends one turn of thirty and multiplies every
+    # book by 0.5.
     "fact:famous": "Is it very widely read?",
     "fact:namedchars": "Does it have well-known named characters?",
-    "fact:highlyrated": "Is it very highly rated by readers?",
+    # REMOVED with the page questions and for the same reason: it asks
+    # about an AGGREGATE the player has no access to. A reader knows
+    # whether THEY liked a book; "is it rated 4.2+ by twenty or more
+    # people" is a database row. The owner's analogy for the whole family
+    # was exact -- it is Akinator asking whether the character appeared on
+    # page 54.
     # Was "Has it been translated into many languages?" — the underlying
     # signal is language count, but what a reader can actually answer is
     # whether the book is famous internationally.
@@ -508,9 +528,7 @@ def structural_features(doc: dict, popularity_rank: int, corpus_size: int) -> di
     "was it written before 1950?" with *unknown*, not with *no*.
     """
     year = doc.get("first_publish_year")
-    pages = doc.get("number_of_pages_median")
     ratings_n = doc.get("ratings_count") or 0
-    ratings_avg = doc.get("ratings_average")
     languages = doc.get("language") or []
 
     feats: dict[str, bool | None] = {}
@@ -521,10 +539,8 @@ def structural_features(doc: dict, popularity_rank: int, corpus_size: int) -> di
     feats["fact:recent"] = (year >= 2001) if year else None
     feats["fact:verrecent"] = (year >= 2016) if year else None
 
-    feats["fact:short"] = (pages < 200) if pages else None
-    feats["fact:midshort"] = (pages < 300) if pages else None
-    feats["fact:long"] = (pages > 400) if pages else None
-    feats["fact:verylong"] = (pages > 600) if pages else None
+    # See STRUCTURAL_QUESTIONS: page count is an edition fact, not a fact
+    # about the work, and is no longer asked.
 
     # Top decile of a popularity-sorted corpus.
     feats["fact:famous"] = popularity_rank < max(1, corpus_size // 10)
@@ -545,7 +561,8 @@ def structural_features(doc: dict, popularity_rank: int, corpus_size: int) -> di
     # decides both.
     feats["fact:namedchars"] = has_named_characters(doc.get("person") or [])
 
-    feats["fact:highlyrated"] = (ratings_avg >= 4.2) if (ratings_avg and ratings_n >= 20) else None
+    # See STRUCTURAL_QUESTIONS: an aggregate rating is not something a
+    # player can answer about the book in their head.
 
     # "English?" is useless — 96% of the corpus is in English. The number of
     # languages a book exists in is a decent proxy for international fame,
@@ -718,12 +735,7 @@ LADDERS: dict[str, list[tuple[str, str, float]]] = {
         ("fact:recent", ">=", 2001),
         ("fact:verrecent", ">=", 2016),
     ],
-    "pages": [
-        ("fact:short", "<", 200),
-        ("fact:midshort", "<", 300),
-        ("fact:long", ">", 400),
-        ("fact:verylong", ">", 600),
-    ],
+    # "pages" ladder removed with the questions it ordered.
 }
 
 # question -> (dimension, op, threshold)

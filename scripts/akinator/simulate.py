@@ -232,9 +232,23 @@ def select_character_questions(books: list[dict], verbose: bool = True) -> list[
     return [f"char:{t}" for t in kept]
 
 
+# Questions the simulated player will answer "unknown" to, whatever the
+# ground truth says. Set from --cannot-answer.
+CANNOT_ANSWER: set[str] = set()
+
+
 def answer_as_player(book: dict, question: str, rng: random.Random,
                      noise: float, miss_rate: float, char_tokens: set[str]) -> str:
     """What a human who knows this book would say — not what the matrix says."""
+    # THE HONEST TEST FOR A DATABASE-SHAPED QUESTION, and the one Phase 3
+    # established: this player answers from ground truth, so it can always
+    # say how many pages a book has and how readers rate it on aggregate.
+    # A real player cannot. Deleting the question measures the wrong thing
+    # -- it frees the turn for another question. Keeping it and answering
+    # `unknown` measures what actually happens: a turn is spent, belief is
+    # multiplied by 0.5 across the board, and nothing is learned.
+    if question in CANNOT_ANSWER:
+        return "unknown"
     if question.startswith("char:"):
         token = question.split(":", 1)[1]
         truth = token in char_tokens
@@ -369,6 +383,19 @@ def main() -> None:
                          "since a paired test needs one outcome per book.")
     ap.add_argument("--sample", type=int, default=0,
                     help="test only the N most popular books (0 = all)")
+    ap.add_argument("--cannot-answer", default="",
+                    help="comma-separated question ids the simulated player "
+                         "always answers `unknown` to. This is the honest "
+                         "test for a question only a database can answer: "
+                         "--drop frees the turn for a better question, this "
+                         "spends it exactly as a real player would.")
+    ap.add_argument("--drop", default="",
+                    help="comma-separated question ids to remove entirely. "
+                         "Phase 3 established that this simulator "
+                         "OVERVALUES questions only a database can answer — "
+                         "its player answers from ground truth and so can "
+                         "always answer them. Removing one and re-measuring "
+                         "is the honest test of whether it earns its turn.")
     ap.add_argument("--target-rank", default=None,
                     help="MIN:MAX rank range to play, e.g. 3000:4900. "
                          "Combine with --target-prefix to control for rank "
@@ -403,6 +430,18 @@ def main() -> None:
     char_questions = [] if args.no_characters else select_character_questions(books, verbose)
     if verbose:
         print()
+    if args.cannot_answer:
+        global CANNOT_ANSWER
+        CANNOT_ANSWER = {d.strip() for d in args.cannot_answer.split(",")
+                         if d.strip()}
+        print(f"Player cannot answer: {sorted(CANNOT_ANSWER)}\n")
+    if args.drop:
+        drop = {d.strip() for d in args.drop.split(",") if d.strip()}
+        before = len(questions)
+        questions = [q for q in questions if q not in drop]
+        char_questions = [q for q in char_questions if q not in drop]
+        print(f"Dropped {before - len(questions)} question(s): "
+              f"{sorted(drop)}\n")
     if len(questions) < 8:
         print("!! Too few usable features to play at all.")
         sys.exit(1)
