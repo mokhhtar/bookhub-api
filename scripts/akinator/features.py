@@ -371,7 +371,29 @@ SUBJECT_RULES: list[tuple[str, str, list[str]]] = [
     ("form:classic", "Is it considered a classic?",
      ["classic", "literature english", "english literature", "american literature",
       "world literature", "canon"]),
-    ("form:series", "Is it part of a series?",
+    # THE WORDING IS THE WHOLE FIX HERE, and the old one was worse than a
+    # missing question. "Is it part of a series?" cannot be answered by the
+    # player this game is built for.
+    #
+    # guessTarget() in book-mind-reader.html says it outright: a series is
+    # named when the group holds the belief but no volume does, because
+    # "Harry Potter is right for someone thinking of the series AND for
+    # someone thinking of any volume". So the intended player may well be
+    # holding the whole work in mind — and for them, "is it part of a
+    # series?" is honestly answered NO. Harry Potter is not part of a
+    # series; it is one.
+    #
+    # That answer is close to fatal. Every volume answers `present` (0.90),
+    # so a "no" multiplies each of them by 0.10 while a rich standalone is
+    # multiplied by 0.85 — an 8.5x relative penalty applied to the correct
+    # answer, in one question, for answering truthfully. The owner hit it
+    # in play and reported the game felt broken by it.
+    #
+    # The new wording is true for BOTH readings and needs no change to what
+    # the matrix stores: a volume and its series both have several books
+    # about the same characters, and a standalone has not. Same fact, no
+    # ambiguity about which level of the work is being asked about.
+    ("form:series", "Are there several books about the same characters or world?",
      ["series", "sequel", "trilogy", "saga"]),
     # Owner's suggestion, from a game where "Is it famous around the
     # world?" was asked of a Chinese web serial. That question is a
@@ -380,10 +402,28 @@ SUBJECT_RULES: list[tuple[str, str, list[str]]] = [
     # opposite: anyone who reads web novels knows instantly, and anyone
     # who does not knows just as instantly that theirs is not one.
     #
-    # Rare in the corpus by construction, so it lives in FORCE_KEEP. That
-    # is the point rather than a problem: a "yes" narrows to a few dozen
-    # books at once, which is exactly the shape of question the engine's
-    # information gain rewards.
+    # Rare in the corpus by construction, so it lives in FORCE_KEEP.
+    #
+    # THE CLAIM THAT USED TO BE HERE WAS MEASURED AND IS FALSE. It read: "a
+    # yes narrows to a few dozen books at once, which is exactly the shape
+    # of question the engine's information gain rewards." Information gain
+    # rewards a question that splits the CURRENT BELIEF near half, and it
+    # discounts a decisive-but-unlikely answer by exactly how unlikely it
+    # is. Scored against the shipped prior this question ranks **42nd of
+    # 49** (gain 0.039, splits 25.1%), so the chooser reaches it only after
+    # the useful questions are spent.
+    #
+    # Simulated over all 39 books that answer yes, with the player
+    # answering truthfully: it is asked in 22 of 39 games and never before
+    # **turn 14**, mostly at turn 19-20 — at the very end of a 20-25
+    # question game, far too late to have narrowed anything. The other 17
+    # games never reach it. So the question is not unreachable, which was
+    # the easy assumption; it is late, which is worse because it looks like
+    # it works.
+    #
+    # Fixing it means changing WHEN it can be asked, not how it is worded —
+    # the same unlock-on-condition treatment the character questions get in
+    # the endgame. Tracked, not done here.
     ("form:webnovel", "Is it a web novel or light novel?",
      ["web novel", "web serial", "light novel", "webnovel", "webtoon",
       "manhwa", "manhua", "xianxia", "wuxia", "litrpg", "isekai",
