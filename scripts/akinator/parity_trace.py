@@ -116,7 +116,23 @@ def main() -> None:
     books = books_from_artifacts(meta, questions, books_json, raw)
     qids = [q["id"] for q in questions]
 
-    matrix = Matrix(books, qids)
+    # The browser reads excluded.json out of this same directory before it
+    # computes its prior, so the trace has to as well or the two engines are
+    # not being asked the same question. Read from the artifacts dir rather
+    # than through exclusions.py, which resolves the sibling checkout: the
+    # point of this script is to model whatever is SHIPPED at `--artifacts`.
+    excluded_path = os.path.join(args.artifacts, "excluded.json")
+    excluded: set[str] = set()
+    if os.path.exists(excluded_path):
+        try:
+            with open(excluded_path, encoding="utf-8") as fh:
+                excluded = {k for k in json.load(fh) if isinstance(k, str)}
+        except (OSError, json.JSONDecodeError):
+            excluded = set()
+    if excluded:
+        print(f"excluded.json: {len(excluded)} book(s) zeroed in the prior")
+
+    matrix = Matrix(books, qids, excluded=excluded)
     engine = Engine(matrix)
 
     turns = []

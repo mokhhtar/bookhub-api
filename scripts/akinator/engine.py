@@ -163,7 +163,8 @@ class Matrix:
     def __init__(self, books: list[dict], questions: list[str],
                  char_questions: list[str] | None = None,
                  series_of: list[str | None] | None = None,
-                 series_names: dict[str, str] | None = None):
+                 series_names: dict[str, str] | None = None,
+                 excluded: set[str] | None = None):
         self.books = books
         # Series membership per book index, for guess-time pooling. Absent
         # is fine — the engine simply never guesses a series.
@@ -227,8 +228,30 @@ class Matrix:
         # Prior: popularity, log-compressed. Raw readinglog_count spans
         # 62,023 (Atomic Habits) to single digits; used linearly it would
         # make the top few books unbeatable regardless of answers.
-        priors = [math.log1p(b["popularity"]) + 1.0 for b in books]
+        #
+        # Books the admin page has excluded get a prior of zero, which under
+        # a multiplicative update is permanent — the same rule, and the same
+        # arithmetic, as `applyPriorWhenReady` in book-mind-reader.html.
+        #
+        # IT HAS TO BE HERE, not in whatever calls this. The client started
+        # zeroing excluded books and parity-check.js caught the drift within
+        # the hour: identical questions, every belief off by ~1e-4, because
+        # one book's mass was redistributed on one side only. Python is what
+        # every offline measurement runs on, so a Python engine that does
+        # not know about exclusions means simulate.py's success rate stops
+        # describing the game people actually play — the precise failure
+        # that check exists to make loud.
+        excluded = excluded or set()
+        priors = [0.0 if b.get("key") in excluded
+                  else math.log1p(b["popularity"]) + 1.0 for b in books]
         total = sum(priors)
+        if total <= 0:
+            # Everything excluded would divide by zero and yield a belief of
+            # NaN — a game that guesses nothing, failing as silence rather
+            # than as an error. Refuse the exclusions instead, exactly as
+            # the client does.
+            priors = [math.log1p(b["popularity"]) + 1.0 for b in books]
+            total = sum(priors)
         self.prior = [p / total for p in priors]
 
 
