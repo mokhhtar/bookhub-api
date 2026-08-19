@@ -64,10 +64,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from prove_fandom import (  # noqa: E402
     _IS_OTHER_MEDIUM,
+    _IS_OTHER_MEDIUM_CLAIM,
     _IS_WRITTEN_WORK,
+    _PARENTHETICAL,
     Unavailable,
     _fetch,
     _same_work,
+    _tokens,
 )
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -79,6 +82,27 @@ PROVEN_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom.json")
 OUT_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_text.json")
 
 MIN_TEXT = 300        # below this there is nothing for a labeller to judge
+
+# Page names a single-work wiki uses for the work itself. Deliberately
+# short: every entry can only mean "the written thing this wiki is about",
+# and anything vaguer ("Story", "Plot", "Main Page") describes the contents
+# rather than the work and is left out.
+#
+# COMPARED AS PLAIN TEXT, NOT THROUGH `_tokens`, which was the first attempt
+# and silently could not work: `_tokens` drops title stopwords, and "novel"
+# is one of them — correctly, since it is what makes "Dune (novel)" match
+# "Dune". So `_tokens("Light Novel")` is `{"light"}` and no entry here could
+# ever have matched it.
+_CANONICAL_WORK_PAGES = frozenset({
+    "novel", "novels", "the novel", "the novels",
+    "light novel", "light novels", "web novel", "web novels", "webnovel",
+    "book", "books", "the books", "volume", "volumes", "the volumes",
+})
+
+
+def _canonical_work_page(page: str) -> bool:
+    return re.sub(r"[^a-z0-9 ]+", "", (page or "").lower()).strip() \
+        in _CANONICAL_WORK_PAGES
 MAX_TEXT = 4000       # traits.py judges an intro, not a whole wiki article
 LEAD_WINDOW = 400     # how much of the opening the written-work test reads
 
@@ -125,10 +149,26 @@ _DISAMBIGUATION = re.compile(
 # Lead-only, like every other test here: a birth date in parentheses or
 # an "is/was a … novelist" copula is a biography's opening and nothing
 # else's.
+# THE TWO FORMS IT MISSED, both live on the Stephen King wiki — whose
+# biography this harvest ACCEPTED, and whose life was therefore available to
+# be labelled against his novels, which is precisely what the Agatha
+# Christie note above says must not happen. Christie was caught and King was
+# not, for reasons that are pure notation:
+#
+#   "(born September 21, 1947)"       month-first, and with no dash after it.
+#                                     The second branch demanded a dash, which
+#                                     only a dead author's dates carry.
+#   "is an European-American author"  the intervening words were `\w+`, and a
+#                                     hyphen is not a word character, so the
+#                                     copula branch could never reach "author".
+#
+# Same shape as the `song` false positive fixed in prove_fandom.py this
+# session: the rule was right about what it wanted and too narrow about how
+# the text actually writes it.
 _IS_PERSON = re.compile(
-    r"\(\s*(?:born\s+)?\d{1,2}\s+\w+\s+\d{4}"          # (15 September 1890
-    r"|\(\s*\w+\s+\d{1,2},\s*\d{4}\s*[–—-]"             # (August 20, 1890 –
-    r"|\b(?:is|was)\s+(?:an?\s+)?(?:\w+\s+){0,3}"
+    r"\(\s*(?:born\s+)?\d{1,2}\s+\w+\s+\d{4}"           # (15 September 1890
+    r"|\(\s*(?:born\s+)?\w+\s+\d{1,2},\s*\d{4}"         # (born September 21, 1947
+    r"|\b(?:is|was)\s+(?:an?\s+)?(?:[\w-]+\s+){0,3}"
     r"(?:writer|author|novelist|poet|playwright|journalist)\b",
     re.IGNORECASE)
 
@@ -146,10 +186,33 @@ def describes_a_written_work(text: str) -> tuple[bool, str]:
         return False, "disambiguation page"
     if _IS_PERSON.search(lead):
         return False, "lead describes the author, not a work"
-    if _IS_OTHER_MEDIUM.search(lead):
-        # A lead that positively names another medium is a finding, not a
-        # gap -- the Wheel of Time TV article is the live example.
-        return False, f"lead names another medium: {_IS_OTHER_MEDIUM.search(lead).group(0)!r}"
+    # An eastern adaptation only counts when the lead CLAIMS to be one --
+    # see _EASTERN_MEDIA for the four web novels a bare-mention test cost.
+    claim = _IS_OTHER_MEDIUM_CLAIM.search(lead)
+    if claim and not _IS_OTHER_MEDIUM.search(lead):
+        return False, f"lead claims another medium: {claim.group(0)!r}"
+    other = _IS_OTHER_MEDIUM.search(lead)
+    if other:
+        # A lead that names another medium is a finding, not a gap -- the
+        # Wheel of Time TV article is the live example.
+        #
+        # THIS STAYS A BARE MENTION, AND THAT WAS TESTED THE OTHER WAY. It
+        # over-rejects: "Omniscient Reader's Viewpoint" is thrown away
+        # because its authors' pen name renders as "sing N song" and `song`
+        # is on the list. Anchoring the test on a copula ("is a film") fixes
+        # that one case and was measured across all 228 wikis -- it let in
+        # "Frankenstein (1910 film)", "Jack Reacher (2012 film)", "The Dark
+        # Tower (film)" and "The Work and the Glory (film)" as though they
+        # were the books, because a film article's lead does not always use
+        # the copula. Seven of eleven newly accepted pages were adaptations.
+        #
+        # One web novel lost against four films admitted is the wrong trade
+        # in this module: recall is worth very little here and precision is
+        # worth almost everything, because a wrong text is labelled with
+        # confidence and removes the right book from the game. So the crude
+        # test stands, and ORV stays missing until something sharper than a
+        # word list can tell a pen name from a claim.
+        return False, f"lead names another medium: {other.group(0)!r}"
     if not _IS_WRITTEN_WORK.search(lead):
         return False, "lead never says it is a written work"
     return True, ""
@@ -199,7 +262,49 @@ def harvest_one(title: str, subdomain: str) -> dict:
     # stripped, so "Dune" accepts "Dune (novel)" and rejects every one of
     # the above for carrying an extra significant word. Its docstring
     # documents this being learned the hard way twice already.
+    # THE DISAMBIGUATOR IS EVIDENCE, and throwing it away was a real cost.
+    # `_same_work` strips a trailing parenthetical so "Dune" can match "Dune
+    # (novel)" — necessary, and it also discards the one part of the title
+    # that says what the page IS. Loosening the lead test earlier this
+    # session made that hole visible immediately: the harvest came back
+    # holding "Frankenstein (1910 film)", "Jack Reacher (2012 film)", "The
+    # Dark Tower (film)" and "The Work and the Glory (film)" as though they
+    # were the books. Every one announces itself in the title.
+    #
+    # Read before stripping, and only for a medium — "(novel)", "(web
+    # serial)" and "(2019)" stay as harmless as they were.
+    candidates = [(p, raw) for p, raw in candidates
+                  if not _IS_OTHER_MEDIUM.search(
+                      " ".join(_PARENTHETICAL.findall(p) or []))]
+
     named = [(p, raw) for p, raw in candidates if _same_work(title, p)]
+
+    # WHERE A WEB-NOVEL WIKI ACTUALLY PUTS THE WORK, which is not under the
+    # work's name. A wiki that IS about one novel has no reason to repeat
+    # its own title: it describes the book on a page called "Light Novel",
+    # "Books", "Novel" or "Volumes" and spends the rest of itself on
+    # characters and chapters. Measured on the 153 works this harvest left
+    # empty, 47 were refused here, at the title, having never been read —
+    # and "Light Novel" on the Mushoku Tensei wiki (1,204 words) passes the
+    # written-work test comfortably once it is allowed through.
+    #
+    # THE GUARD IS WHAT MAKES THIS SAFE, because `_same_work` is strict for
+    # good reasons its own docstring records twice over. An author wiki also
+    # has a "Novels" page and it is a LIST — sixty-six Christie mysteries,
+    # from which traits.py would happily label one book with all of them. So
+    # a canonical page counts only when its own lead names the work we asked
+    # about. A list page opens by naming the author or nothing; the Mushoku
+    # Tensei "Light Novel" page opens "Mushoku Tensei: Jobless Reincarnation
+    # … is a series of high fantasy light novel".
+    if not named:
+        wanted = _tokens(_PARENTHETICAL.sub("", title))
+        for page, raw in candidates:
+            if not _canonical_work_page(page):
+                continue
+            lead = clean_wikitext(raw)[:LEAD_WINDOW]
+            if wanted and wanted <= _tokens(lead):
+                named.append((page, raw))
+
     if not named:
         return {"subdomain": subdomain, "text": None,
                 "reason": "no article names this work",

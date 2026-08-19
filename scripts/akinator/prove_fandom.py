@@ -137,9 +137,51 @@ _IS_WRITTEN_WORK = re.compile(
 
 # A lead that positively names a different medium is stronger evidence than
 # a lead that merely fails to mention a book — worth telling apart.
-_IS_OTHER_MEDIUM = re.compile(
-    r"\b(film|movie|video game|television series|tv series|album|song"
-    r"|band|audio drama|board game|painting|opera)\b", re.IGNORECASE)
+# WESTERN MEDIA, TESTED BY BARE MENTION. An adaptation article names its
+# medium somewhere in the lead and a novel's lead almost never says "film",
+# so mention is a good enough proxy and its bluntness costs little.
+_OTHER_MEDIA = (r"film|movie|video game|television series|tv series|album|song"
+                r"|band|audio drama|board game|painting|opera")
+
+# EASTERN MEDIA, TESTED BY CLAIM ONLY, and the split is measured rather than
+# stylistic. These belong on the list — the harvest was accepting the anime
+# article for "7th Time Loop" and labelling the novel with it. But putting
+# them in the bare-mention test above rejected four real web novels
+# (Overlord, Release That Witch, The Greatest Estate Developer, The
+# Legendary Mechanic) for the crime of mentioning their own adaptations,
+# which every web-novel lead does.
+#
+# The two cases separate cleanly on grammar, which is why this works:
+#
+#   anime article   "…is a Japanese anime series adapted from…"   a claim
+#   novel article   "…is a light novel series. A manga adaptation" a mention
+_EASTERN_MEDIA = r"anime|manga|manhwa|manhua|webtoon|donghua|drama cd"
+
+# MENTIONS a medium. Kept broad because that is the right shape for naming
+# what a page seems to be about — it is what fills `other_medium` in the
+# evidence below, which is a description, not a verdict.
+_IS_OTHER_MEDIUM = re.compile(r"\b(" + _OTHER_MEDIA + r")\b", re.IGNORECASE)
+
+# CLAIMS to be a medium — anchored on the copula, the shape `_IS_PERSON`
+# uses for "is/was a novelist".
+#
+# TRIED AS A REPLACEMENT FOR THE ABOVE AND REJECTED ON MEASUREMENT, kept
+# only because the result is worth not rediscovering. The bare-mention test
+# over-rejects: it drops "Omniscient Reader's Viewpoint", 1,340 words of
+# exactly the prose we want, because the authors' pen name renders as
+# "sing N song". Anchoring fixes that and was run over all 228 census wikis
+# — it admitted "Frankenstein (1910 film)", "Jack Reacher (2012 film)",
+# "The Dark Tower (film)" and "The Work and the Glory (film)" as the books
+# themselves, seven adaptations among eleven newly accepted pages, because
+# an adaptation's lead does not reliably use the copula either.
+#
+# In `harvest_fandom_text.py` precision is worth almost everything and
+# recall very little, so the crude test stands there. Anything reaching for
+# this one should first say why a false accept is cheaper than a false
+# reject in ITS context, because here it was not.
+_IS_OTHER_MEDIUM_CLAIM = re.compile(
+    r"\b(?:is|was|are|were)\s+(?:an?\s+|the\s+)?(?:\w+\s+){0,3}"
+    r"(?:" + _OTHER_MEDIA + r"|" + _EASTERN_MEDIA + r")\b", re.IGNORECASE)
 
 
 # ── plumbing ──────────────────────────────────────────────────────────────
