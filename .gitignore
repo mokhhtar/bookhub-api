@@ -60,6 +60,12 @@ venv/
 # Question-review dump, regenerated on demand for the owner review pass.
 /data/akinator_questions_review.json
 
+# Web-novel year review sheet, same idea in CSV: regenerated on demand by
+# scripts/akinator/webnovel_years_review.py, then filled in by hand. The
+# ANSWERS are what matter and they land in admin_corrections.json through
+# the admin page, so the sheet itself is scratch.
+/data/akinator_webnovel_years_review.csv
+
 # Wikidata series names, regenerable by harvest_series_labels.py.
 /data/akinator_series_labels.json
 
