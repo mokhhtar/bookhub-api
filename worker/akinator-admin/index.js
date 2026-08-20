@@ -140,6 +140,12 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
 .sg-cmp dd{margin:0}
 .sg-new{font-weight:600;color:var(--good)}
 .sg-none{color:var(--mut);font-style:italic}
+.sg-dupe{font-size:12px;color:var(--wait);margin:0 0 6px;padding:7px 10px;
+  border-left:2px solid var(--wait);background:var(--bg)}
+.sg-dupe--sure{color:var(--work);border-left-color:var(--work);font-weight:600}
+.sg-dupe--clear{color:var(--mut);border-left-color:var(--line)}
+.sg-near{margin:0 0 11px;padding:0 0 0 22px;font-size:13px}
+.sg-near li{margin-bottom:2px}
 </style></head><body><div class="wrap">
 <h1>Book Mind Reader — admin</h1>
 <p class="sub">Every action here commits directly to the live game. Nothing is automatic — nothing applies without you clicking it.</p>
@@ -458,6 +464,61 @@ function when(ts){
   return new Date(ts * 1000).toISOString().slice(0, 10);
 }
 
+// ── "is this book already here under another name?" ──────────────────────
+//
+// THE INTAKE CHECK CANNOT ANSWER THIS, and the number is measured, not
+// feared. Eight books that ARE in the game were resolved the way a reader
+// would have typed them: the exact-normalised-title check the server uses
+// caught five. The other three — "The Brothers Karamazov" (we ship
+// "Brothers Karamazov"), "Alice in Wonderland" (we ship "Alice's Adventures
+// in Wonderland"), "Harry Potter and the Sorcerer's Stone" (we ship
+// "Philosopher's Stone") — would arrive here labelled "not in the game".
+//
+// The Open Library work key does not rescue it either: every one of the
+// eight resolved to a work key, and only four matched our row, because OL
+// holds several work entities per book (Crime and Punishment came back as
+// OL21062236W, not the row we ship). A match is conclusive; a miss means
+// nothing.
+//
+// SO WHY NOT LOOSEN THE SERVER CHECK? Because the two errors are not
+// symmetric. A false negative costs one queue entry a human closes in a
+// second. A false positive tells a reader with a genuinely missing book
+// "good news — the game does know it", and they never report it again. The
+// fuzzy signal belongs where a person is already looking, and this is that
+// place. It is a HINT, labelled as one; it never blocks anything.
+const STOP = {the:1, a:1, an:1, of:1, and:1, in:1, to:1, "&":1};
+
+function titleTokens(s){
+  return String(s || "").toLowerCase()
+    .normalize("NFKD").replace(/[\\u0300-\\u036f]/g, "")
+    .replace(/[^a-z0-9 ]+/g, " ").split(/\\s+/)
+    .filter((t) => t && !STOP[t]);
+}
+
+// Containment in EITHER direction, which is what these cases need: our
+// "Brothers Karamazov" is inside their "The Brothers Karamazov", and their
+// omnibus "Alice in Wonderland (Alice's Adventures... / Snark / ...)"
+// contains our short one. Dividing by the smaller side scores both 1.0,
+// where dividing by the query's length would score the omnibus 0.17.
+function similarRows(title, limit){
+  const a = titleTokens(title);
+  if (!a.length) return [];
+  const setA = new Set(a);
+  const out = [];
+  for (let i = 0; i < books.length; i++){
+    const b = titleTokens(books[i].t);
+    if (!b.length) continue;
+    let shared = 0;
+    const seen = new Set();
+    for (const t of b) if (setA.has(t) && !seen.has(t)) { shared++; seen.add(t); }
+    if (!shared) continue;
+    const score = shared / Math.min(setA.size, new Set(b).size);
+    if (score >= 0.6) out.push({ i, score, shared });
+  }
+  out.sort((x, y) => y.score - x.score || (books[y.i].r || 0) - (books[x.i].r || 0));
+  return out.slice(0, limit || 4);
+}
+
 function renderSuggestions(){
   const host = document.getElementById("sgList");
   document.getElementById("sgCount").textContent = suggestions.length || "";
@@ -487,6 +548,46 @@ function renderSuggestions(){
       proposed = '<span class="sg-new">' + esc(s.title) + "</span>" +
         (s.author ? " — " + esc(s.author)
                   : ' <span class="sg-none">(no author found)</span>');
+      // The year the row would actually get if added. Six era questions read
+      // it, so "no year" is a real cost and worth seeing BEFORE approving —
+      // it was invisible until it was already committed.
+      if (s.reason === "missing"){
+        proposed += s.year_hint
+          ? ' <span class="badge">first published ' + esc(s.year_hint) + "</span>"
+          : ' <span class="badge off" title="Open Library has no work-level year.'
+            + ' Six era questions will answer &quot;unknown&quot; for this row.">no year found</span>';
+      }
+    }
+
+    // Duplicate hints, for a "missing" claim only — the other two reasons
+    // already name a row.
+    let dupes = "";
+    if (s.reason === "missing"){
+      const exact = s.ol_key ? byKey[s.ol_key] : null;
+      const near = similarRows(s.title, 4).filter((h) => books[h.i].k !== s.ol_key);
+      if (exact){
+        dupes += '<p class="sg-dupe sg-dupe--sure">Already in the game — same Open Library work '
+          + '<code>' + esc(s.ol_key) + '</code>: <strong>' + esc(exact.t) + "</strong> — "
+          + esc(exact.a || "unknown") + (exact.y ? " (" + exact.y + ")" : "")
+          + ". Adding it would duplicate a row.</p>";
+      }
+      if (near.length){
+        dupes += '<p class="sg-dupe">Possibly already here under another title — '
+          + 'the check that let this through only compares titles exactly, so read these first:</p><ul class="sg-near">'
+          + near.map((h) => {
+              const b = books[h.i];
+              return "<li><strong>" + esc(b.t) + "</strong> — " + esc(b.a || "unknown")
+                + (b.y ? " (" + b.y + ")" : "") + ' <span class="sg-none">r=' + (b.r || 0)
+                + ", #" + (h.i + 1) + ", " + Math.round(h.score * 100) + "% of the title words match</span></li>";
+            }).join("") + "</ul>";
+      }
+      if (!exact && !near.length){
+        dupes = '<p class="sg-dupe sg-dupe--clear">No row with a similar title, and '
+          + (s.ol_key ? "its Open Library work is not one we ship"
+                      : "Open Library gave no work key to compare")
+          + ". Nothing found is weaker evidence than something found — a title we hold "
+          + "under a different name would not show here.</p>";
+      }
     }
 
     const votes = (s.votes || 1) > 1
@@ -501,7 +602,7 @@ function renderSuggestions(){
         '<span class="sg-when">first seen ' + esc(when(s.first_seen)) +
         ((s.votes || 1) > 1 ? ", last " + esc(when(s.last_seen)) : "") + "</span></div>" +
       '<dl class="sg-cmp"><dt>Current</dt><dd>' + current + "</dd>" +
-        "<dt>Reader</dt><dd>" + proposed + "</dd></dl>" +
+        "<dt>Reader</dt><dd>" + proposed + "</dd></dl>" + dupes +
       '<div class="row">' + buttons +
         '<button class="act ghost sgAct" data-id="' + esc(s.id) +
         '" data-action="reject">Dismiss</button></div></div>';

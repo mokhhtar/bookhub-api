@@ -226,7 +226,7 @@ def _catalogue_reachable() -> bool:
         return False
 
 
-def _resolve_or_404(title: str, author: str) -> tuple[str, str]:
+def _resolve_or_404(title: str, author: str) -> tuple[str, str, str]:
     """A real book's catalogue title and author, or a refusal that is true.
 
     THIS IS THE LINE THE READER'S TEXT DOES NOT CROSS. What comes back is
@@ -253,7 +253,48 @@ def _resolve_or_404(title: str, author: str) -> tuple[str, str]:
             status_code=404,
             detail="no book by that title and author could be found — "
                    "check the spelling, or add the author")
-    return record.title, (record.author or "")
+    return record.title, (record.author or ""), (record.open_library_work_key or "")
+
+
+def _missing_book_hints(title: str, author: str, work_key: str = "") -> dict:
+    """Year and Open Library work key for a book being proposed as new.
+
+    WHY THE CARD NEEDS THESE, measured. Approving a `missing` suggestion is
+    a decision about a book the reviewer can see two facts about — a title
+    and an author — and that is not enough to judge either question they
+    actually have: is this the same book we already hold under another name,
+    and will the row be worth anything.
+
+    The year is the answer to the second: six era questions read it, and
+    `/akinator/admin/book` looks it up at approval time anyway, so gathering
+    it here costs one call on a request that is already talking to Open
+    Library and turns an invisible fact into a visible one. Work-level, via
+    the same `_first_publish_year` the add-book endpoint uses — never
+    `record.published_year`, which is the edition date that put 2008 on a
+    1995 novel.
+
+    The work key is a PARTIAL answer to the first, and its limits are
+    measured rather than assumed: over eight books that are genuinely in the
+    game, resolving them the way a reader would typed them produced a work
+    key every time but matched the shipped row only 4 times of 8 — Open
+    Library holds several work entities per book (Crime and Punishment came
+    back as OL21062236W, which is not the row we ship). So a match here is
+    conclusive and a miss means nothing at all, and the review page says so
+    rather than presenting absence as evidence.
+    """
+    out: dict = {}
+    try:
+        from tools.akinator_admin import _first_publish_year   # noqa: E402
+        year = _first_publish_year(title, author)
+        if year:
+            out["year_hint"] = year
+    except Exception as exc:                                   # noqa: BLE001
+        log.warning("year hint failed for %r: %s", title[:60], str(exc)[:90])
+    if work_key:
+        key = work_key if work_key.startswith("/works/") else f"/works/{work_key}"
+        if _WORK_KEY.match(key):
+            out["ol_key"] = key
+    return out
 
 
 def _entry_id(fields: dict) -> str:
@@ -318,7 +359,7 @@ def suggest(body: SuggestRequest, request: Request):
 
     # ── phase 2: the checks that cost something ──────────────────────────
     if body.reason == "missing":
-        title, author = _resolve_or_404(body.title, body.author)
+        title, author, ol_key = _resolve_or_404(body.title, body.author)
         # It resolved to a book the game already ships. That is not a
         # rejection of the reader — it is the answer to their question, and
         # a far better one than a queue entry: the search box matches raw
@@ -334,6 +375,16 @@ def suggest(body: SuggestRequest, request: Request):
                 detail=f"good news — the game does know it, as “{title}”")
         fields["title"] = title
         fields["author"] = author
+        # Two hints for the reviewer, gathered here because the resolve has
+        # already happened and the review page must not have to make network
+        # calls of its own.
+        #
+        # DELIBERATELY OUTSIDE `_entry_id`'s key tuple. Both are looked up
+        # live, so either can come back None on one request and populated on
+        # the next — folding them into the content hash would split one book
+        # into two queue entries the moment Open Library hiccupped, which is
+        # exactly the deduplication this feature relies on.
+        fields.update(_missing_book_hints(title, author, ol_key))
     else:
         index = _shipped_index()
         if not index:
@@ -353,7 +404,7 @@ def suggest(body: SuggestRequest, request: Request):
         if body.reason == "wrong_year":
             fields["year"] = body.year
         else:                                            # unreadable
-            title, author = _resolve_or_404(body.title, body.author)
+            title, author, _ = _resolve_or_404(body.title, body.author)
             fields["title"] = title
             fields["author"] = author
 
@@ -437,7 +488,7 @@ def _read_queue() -> tuple[list[dict], list[str]]:
         # pipeline endpoint hands back the array unfolded.
         entry = {flat[i]: flat[i + 1] for i in range(0, len(flat) - 1, 2)}
         entry["id"] = entry_id
-        for numeric in ("votes", "year", "first_seen", "last_seen"):
+        for numeric in ("votes", "year", "year_hint", "first_seen", "last_seen"):
             if numeric in entry:
                 try:
                     entry[numeric] = int(entry[numeric])
