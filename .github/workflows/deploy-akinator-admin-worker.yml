@@ -124,7 +124,16 @@ jobs:
 
           # Every /api/* relay must refuse the same way — no Access header
           # means no page AND no write.
-          for p in exclude correction question book; do
+          #
+          # THIS LIST MUST MATCH ROUTES IN index.js, and it had already
+          # drifted: `display` shipped without ever being interrogated here,
+          # and separately without being in ROUTES at all, so the one check
+          # that could have caught either was looking at four names while the
+          # client used five. `suggestions` and `suggestions/resolve` are
+          # added with the queue. A relay missing from this loop is a relay
+          # nothing proves is guarded.
+          for p in exclude correction question book display \
+                   suggestions suggestions/resolve; do
             CODE=$(curl -sS -m 30 -o rel.txt -D hdr.txt -w '%{http_code}' -X POST "$BASE/api/$p" \
                    -H "Content-Type: application/json" -d '{}')
             guarded "POST /api/$p (no Access header)" "$CODE" rel.txt || exit 1
