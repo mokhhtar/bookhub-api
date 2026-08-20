@@ -35,6 +35,7 @@ from tools import akinator_sync as akinator_sync_tool
 from tools import akinator_learn as akinator_learn_tool
 from tools import akinator_drain as akinator_drain_tool
 from tools import akinator_admin as akinator_admin_tool
+from tools import akinator_suggest as akinator_suggest_tool
 # from tools import recommend as recommend_tool   # pending rebuild
 # from tools import questions as questions_tool   # pending rebuild
 # from tools import compare as compare_tool       # pending rebuild
@@ -152,6 +153,12 @@ app.include_router(akinator_sync_tool.router)
 app.include_router(akinator_learn_tool.router)
 app.include_router(akinator_drain_tool.router)
 app.include_router(akinator_admin_tool.router)
+# Two routers from one module: the public, rate-limited intake and the
+# secret-gated review queue. They are separate because their guards are —
+# `admin_router` carries `_require_admin` as a router dependency so an
+# unauthenticated caller gets 403 rather than a 422 disclosing the schema.
+app.include_router(akinator_suggest_tool.router)
+app.include_router(akinator_suggest_tool.admin_router)
 
 
 @app.get("/health")
