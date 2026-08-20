@@ -68,6 +68,14 @@ const ROUTES = {
   "/api/correction": relay("/akinator/admin/correction"),
   "/api/question": relay("/akinator/admin/question"),
   "/api/book": relay("/akinator/admin/book"),
+  // Was missing, and the Rename button had been posting into a 404 since the
+  // display override shipped: the endpoint existed on the Python side and the
+  // client called it, but this table — the only thing that maps one to the
+  // other — never gained the row. Nothing logs a route that does not exist,
+  // so it failed silently and only in the browser.
+  "/api/display": relay("/akinator/admin/display"),
+  "/api/suggestions": relay("/akinator/admin/suggestions"),
+  "/api/suggestions/resolve": relay("/akinator/admin/suggestions/resolve"),
 };
 
 function page() {
@@ -120,6 +128,18 @@ td.rich.thin{color:var(--work);font-weight:600}
 .card{background:var(--card);border:1px solid var(--line);border-radius:3px;padding:16px 18px;max-width:560px}
 .effect{font-size:11px;color:var(--mut);margin-top:2px}
 footer{margin-top:30px;font-size:12px;color:var(--mut)}
+.pill{display:inline-block;min-width:17px;padding:0 5px;border-radius:9px;background:var(--work);
+  color:#fff;font-size:11px;line-height:17px;text-align:center;vertical-align:1px}
+.pill:empty{display:none}
+.sg{background:var(--card);border:1px solid var(--line);border-radius:3px;padding:14px 16px;margin-bottom:10px}
+.sg-head{display:flex;gap:9px;align-items:baseline;flex-wrap:wrap;margin-bottom:9px}
+.sg-reason{font-weight:600}
+.sg-when{color:var(--mut);font-size:12px;margin-left:auto}
+.sg-cmp{display:grid;grid-template-columns:74px 1fr;gap:3px 10px;font-size:13px;margin-bottom:11px}
+.sg-cmp dt{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.05em;padding-top:2px}
+.sg-cmp dd{margin:0}
+.sg-new{font-weight:600;color:var(--good)}
+.sg-none{color:var(--mut);font-style:italic}
 </style></head><body><div class="wrap">
 <h1>Book Mind Reader — admin</h1>
 <p class="sub">Every action here commits directly to the live game. Nothing is automatic — nothing applies without you clicking it.</p>
@@ -128,6 +148,7 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
   <button data-tab="books" class="on">Books</button>
   <button data-tab="questions">Questions</button>
   <button data-tab="add">Add a book</button>
+  <button data-tab="suggestions">Suggestions <span class="pill" id="sgCount"></span></button>
 </nav>
 
 <section id="books" class="on">
@@ -168,6 +189,18 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
     <button class="act" id="addSubmit">Add book</button>
     <p class="status" id="addStatus"></p>
   </div>
+</section>
+
+<section id="suggestions">
+  <p class="sub" style="margin-bottom:14px">Reported by readers on the give-up screen, and verified against
+  Google Books / Open Library before reaching this queue — a book that could not be found never arrives here.
+  Nothing a reader typed is stored: the title below is the catalogue's own, looked up from what they typed.
+  Approving runs the same action as doing it by hand on the other tabs.</p>
+  <div class="row" style="margin-bottom:12px">
+    <button class="act ghost" id="sgReload">Refresh</button>
+    <span class="status" id="sgStatus" style="margin:0"></span>
+  </div>
+  <div id="sgList"></div>
 </section>
 
 <footer>Verified against Google Books / Open Library before a row is added — this page cannot invent a book.
@@ -387,6 +420,133 @@ document.getElementById("addSubmit").addEventListener("click", async ()=>{
   finally { btn.disabled = false; }
 });
 
+// ── the reader suggestion queue ──────────────────────────────────────────
+//
+// WHAT EACH CARD MUST SHOW, and the reason is a real result from building
+// this. The one-click Rename approval sends the title AND author that the
+// catalogue returned — and for the 人間失格 case Open Library answers
+// "No Longer Human" with the author "太宰 治, Juliet Winters Carpenter".
+// So a blind Approve would fix the unreadable title and hand back an
+// unreadable author, which is half the bug the reader reported.
+//
+// The queue cannot fix that on its own: the alternative is storing the name
+// the reader typed, and stranger-written text is the one thing this feature
+// promises never to store. So the card prints CURRENT and PROPOSED side by
+// side and the owner reads both before clicking. When the proposed author is
+// no better, the Books tab's inline Rename is one search away and the owner
+// types it themselves — which is a person editing, not a stranger.
+let suggestions = [];
+
+const REASON_LABEL = {
+  missing: "Not in the game",
+  wrong_year: "Wrong year",
+  unreadable: "Unreadable title",
+};
+
+// Which resolutions each reason offers. Mirrors _ALLOWED in
+// tools/akinator_suggest.py — the server refuses anything else with a 400,
+// so this list decides what is OFFERED, never what is permitted.
+const REASON_ACTIONS = {
+  missing: [["book", "Add this book", "act"]],
+  wrong_year: [["correction", "Apply the year fix", "act"]],
+  unreadable: [["display", "Rename for display", "act"],
+               ["exclude", "Exclude the row instead", "act danger"]],
+};
+
+function when(ts){
+  if (!ts) return "";
+  return new Date(ts * 1000).toISOString().slice(0, 10);
+}
+
+function renderSuggestions(){
+  const host = document.getElementById("sgList");
+  document.getElementById("sgCount").textContent = suggestions.length || "";
+  if (!suggestions.length){
+    host.innerHTML = '<p class="status">Nothing pending. Reports arrive from the ' +
+      'give-up screen when a reader taps one of the three buttons there.</p>';
+    return;
+  }
+  const byKey = {};
+  books.forEach((b) => { byKey[b.k] = b; });
+
+  host.innerHTML = suggestions.map((s) => {
+    const row = s.work_key ? byKey[s.work_key] : null;
+    let current = "";
+    if (s.work_key){
+      current = row
+        ? esc(row.t) + " — " + esc(row.a || "unknown") + (row.y ? " (" + row.y + ")" : " (no year)")
+        : '<span class="sg-none">' + esc(s.work_key) + " — not in the loaded list</span>";
+    } else {
+      current = '<span class="sg-none">not in the game</span>';
+    }
+
+    let proposed;
+    if (s.reason === "wrong_year"){
+      proposed = '<span class="sg-new">' + esc(s.year) + "</span>";
+    } else {
+      proposed = '<span class="sg-new">' + esc(s.title) + "</span>" +
+        (s.author ? " — " + esc(s.author)
+                  : ' <span class="sg-none">(no author found)</span>');
+    }
+
+    const votes = (s.votes || 1) > 1
+      ? '<span class="badge">reported ' + esc(s.votes) + " times</span>" : "";
+    const buttons = (REASON_ACTIONS[s.reason] || []).map(([action, label, cls]) =>
+      '<button class="' + cls + ' sgAct" data-id="' + esc(s.id) + '" data-action="' +
+      action + '">' + label + "</button>").join("");
+
+    return '<div class="sg" data-id="' + esc(s.id) + '">' +
+      '<div class="sg-head"><span class="sg-reason">' +
+        esc(REASON_LABEL[s.reason] || s.reason) + "</span>" + votes +
+        '<span class="sg-when">first seen ' + esc(when(s.first_seen)) +
+        ((s.votes || 1) > 1 ? ", last " + esc(when(s.last_seen)) : "") + "</span></div>" +
+      '<dl class="sg-cmp"><dt>Current</dt><dd>' + current + "</dd>" +
+        "<dt>Reader</dt><dd>" + proposed + "</dd></dl>" +
+      '<div class="row">' + buttons +
+        '<button class="act ghost sgAct" data-id="' + esc(s.id) +
+        '" data-action="reject">Dismiss</button></div></div>';
+  }).join("");
+}
+
+async function loadSuggestions(){
+  setStatus("sgStatus", "Loading…");
+  try {
+    const r = await post("/api/suggestions", {});
+    suggestions = r.pending || [];
+    renderSuggestions();
+    setStatus("sgStatus", suggestions.length
+      ? suggestions.length + " waiting" : "Queue is empty.", true);
+  } catch (err) {
+    // "Unreadable" and "empty" are different answers and the server is
+    // careful to distinguish them (503 vs. an empty list). Do not collapse
+    // them here into a reassuring blank page.
+    setStatus("sgStatus", "Could not read the queue: " + String(err.message || err) +
+      " — this is NOT the same as it being empty.", false);
+  }
+}
+
+document.getElementById("sgReload").addEventListener("click", loadSuggestions);
+
+document.getElementById("sgList").addEventListener("click", async (e)=>{
+  if (!e.target.classList.contains("sgAct")) return;
+  const id = e.target.dataset.id, action = e.target.dataset.action;
+  const card = e.target.closest(".sg");
+  card.querySelectorAll("button").forEach(b => { b.disabled = true; });
+  setStatus("sgStatus", action === "reject" ? "Dismissing…" : "Applying…");
+  try {
+    const r = await post("/api/suggestions/resolve", {id, action});
+    suggestions = suggestions.filter(s => s.id !== id);
+    renderSuggestions();
+    const effect = (r.result && r.result.effect) ? " — effect: " + r.result.effect : "";
+    setStatus("sgStatus", (action === "reject" ? "Dismissed." : "Applied.") + effect +
+      (r.removed === false ? " (committed, but it could not be cleared from the "
+        + "queue — it will reappear on the next refresh)" : ""), true);
+  } catch (err) {
+    setStatus("sgStatus", String(err.message || err), false);
+    card.querySelectorAll("button").forEach(b => { b.disabled = false; });
+  }
+});
+
 (async function init(){
   try {
     const [b, q, x] = await Promise.all([
@@ -400,6 +560,13 @@ document.getElementById("addSubmit").addEventListener("click", async ()=>{
   } catch (e) {
     setStatus("bookStatus", "failed to load live artifacts: "+e.message, false);
   }
+  // Deliberately last, deliberately not awaited above, and deliberately not
+  // deferred to the tab click: the count badge is the only way the owner
+  // learns something is waiting without going looking. It also warms Render,
+  // which sleeps after ~15 minutes and takes 30-60s to answer the first
+  // request — better spent while the books table is being read than while
+  // the owner stares at the Suggestions tab.
+  loadSuggestions();
 })();
 </script>
 </body></html>`;
