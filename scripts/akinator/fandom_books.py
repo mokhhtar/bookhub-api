@@ -57,6 +57,7 @@ TRAITS_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_traits.json")
 SUBJECTS_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_subjects.json")
 AUTHORS_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_authors.json")
 YEARS_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_years.json")
+WIKIDATES_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_wikidates.json")
 TEXT_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_text.json")
 PROVEN_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom.json")
 
@@ -130,6 +131,7 @@ def load_fandom_books(require_prose: bool = False) -> list[dict]:
     subjects = _load(SUBJECTS_PATH)
     authors = _load(AUTHORS_PATH)
     years = _load(YEARS_PATH)
+    wikidates = _load(WIKIDATES_PATH)
     prose = {t for t, r in (_load(TEXT_PATH) or {}).items() if r.get("text")}
     if not census:
         return []
@@ -304,6 +306,11 @@ def supplement(docs: list[dict], band: tuple[int, int] = DEFAULT_BAND,
             "language": ["eng"],
             "readinglog_count": int(top_val - frac * (top_val - bot_val)),
             "ebook_access": "",
+            # When the wiki itself was made. NOT a publication year and
+            # never stored as one -- features.py uses it in one direction
+            # only, to settle "in the last 10 years" for a book whose own
+            # year nobody could find. See harvest_fandom_wikidates.py.
+            "wiki_created": ((wikidates or {}).get(b["title"]) or {}).get("created"),
             "_fandom_wiki": b["subdomain"],
             "_year_source": b["year_source"],
             "_fandom_traits": b["labels"],

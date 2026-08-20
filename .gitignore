@@ -143,3 +143,9 @@ venv/
 # (harvest_fandom_subjects.py). Its own docstring already calls itself
 # gitignored — this is the line that makes that true.
 /data/akinator_fandom_subjects.json
+
+# When each Fandom wiki was created (harvest_fandom_wikidates.py). Not a
+# publication year and never used as one — features.py reads it in one
+# direction only, to settle "in the last 10 years" for an undated web
+# novel. Regenerable in a few minutes.
+/data/akinator_fandom_wikidates.json

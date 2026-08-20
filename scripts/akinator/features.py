@@ -561,7 +561,8 @@ STRUCTURAL_QUESTIONS = {
 }
 
 
-def structural_features(doc: dict, popularity_rank: int, corpus_size: int) -> dict[str, bool | None]:
+def structural_features(doc: dict, popularity_rank: int, corpus_size: int,
+                        webnovel: bool = False) -> dict[str, bool | None]:
     """Facts we can state about a book, with `None` for genuinely unknown.
 
     `None` matters: a book with no `first_publish_year` must answer
@@ -578,6 +579,38 @@ def structural_features(doc: dict, popularity_rank: int, corpus_size: int) -> di
     feats["fact:pre2000"] = (year < 2000) if year else None
     feats["fact:recent"] = (year >= 2001) if year else None
     feats["fact:verrecent"] = (year >= 2016) if year else None
+
+    # A WEB NOVEL DATES ITSELF, mostly, without anyone finding its year.
+    #
+    # 33 of the 39 web novels ship with no `first_publish_year` — the wikis
+    # record chapters and characters, not publication dates, and a harvest
+    # plus a model plus a keyword rule between them recovered 4. So all six
+    # of the questions above answered `unknown`, which is not merely a gap:
+    # a reader answering "no, not before 2000" gives those books 0.5 where a
+    # properly dated book gets 0.85, so being undated actively pushed them
+    # DOWN against books that carry a date.
+    #
+    # Five of the six need no date at all. The form did not exist before the
+    # web: the earliest of these with a known year is 2008, and a serialised
+    # web novel from before 1900, 1950, 1970 or 2000 is not a thing that can
+    # be. Stating that is not a guess — it is the same kind of claim as
+    # "a play has no chapters".
+    #
+    # THE SIXTH IS DIFFERENT AND IS LEFT ALONE unless something dates it,
+    # because "in the last 10 years" is exactly what varies across this
+    # group. `wiki_created` is the honest source: a wiki is made after the
+    # book it is about, so a wiki that predates 2016 proves the book does
+    # too. The converse proves nothing — Solo Leveling's wiki is from 2018
+    # and the novel from 2014 — so a later wiki leaves the question unknown
+    # rather than answering it wrongly. Verified against the three of these
+    # whose year we do know: the wiki was never older than the book.
+    if webnovel and not year:
+        for q in ("fact:veryold", "fact:old", "fact:pre1970", "fact:pre2000"):
+            feats[q] = False
+        feats["fact:recent"] = True
+        wiki = doc.get("wiki_created")
+        if isinstance(wiki, int) and wiki < 2016:
+            feats["fact:verrecent"] = False
 
     # See STRUCTURAL_QUESTIONS: page count is an edition fact, not a fact
     # about the work, and is no longer asked.
@@ -679,7 +712,10 @@ def extract(doc: dict, popularity_rank: int, corpus_size: int) -> dict:
 
     unknown: set[str] = set()
     known_false: set[str] = set()
-    for key, value in structural_features(doc, popularity_rank, corpus_size).items():
+    # `present` is complete for subject-derived features by this line, which
+    # is why the web-novel era rule can be told whether this is one.
+    for key, value in structural_features(doc, popularity_rank, corpus_size,
+                                          webnovel="form:webnovel" in present).items():
         if value is None:
             unknown.add(key)
         elif value:
