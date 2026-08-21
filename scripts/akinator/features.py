@@ -590,11 +590,23 @@ def structural_features(doc: dict, popularity_rank: int, corpus_size: int,
     # properly dated book gets 0.85, so being undated actively pushed them
     # DOWN against books that carry a date.
     #
-    # Five of the six need no date at all. The form did not exist before the
-    # web: the earliest of these with a known year is 2008, and a serialised
-    # web novel from before 1900, 1950, 1970 or 2000 is not a thing that can
-    # be. Stating that is not a guess — it is the same kind of claim as
-    # "a play has no chapters".
+    # THREE of the six need no date at all, and the count used to be five.
+    # The owner corrected it: web novels written in the 1990s do exist — the
+    # web is older than this corpus's habits, and obscurity is not absence.
+    # So the line is drawn where physics draws it. Nothing serialised on the
+    # web predates 1900, 1950 or 1970, and saying so is the same kind of
+    # claim as "a play has no chapters".
+    #
+    # `fact:pre2000` and `fact:recent` are NOT on that footing and are left
+    # alone. They were the valuable pair — the corpus splits near half on
+    # them — and asserting them cost nothing visible, because no undated web
+    # novel in the corpus today is from the 1990s. That is exactly the shape
+    # of claim this codebase refuses: it happened to be true of the data we
+    # hold, not true of the category. And the cost of being wrong is not
+    # small, because a computed False becomes `known_false` at 0.03 — the
+    # strongest "no" the engine can say. One 1990s web serial arriving
+    # without a year would be eliminated with confidence by a rule that
+    # never looked at it.
     #
     # THE SIXTH IS DIFFERENT AND IS LEFT ALONE unless something dates it,
     # because "in the last 10 years" is exactly what varies across this
@@ -605,9 +617,8 @@ def structural_features(doc: dict, popularity_rank: int, corpus_size: int,
     # rather than answering it wrongly. Verified against the three of these
     # whose year we do know: the wiki was never older than the book.
     if webnovel and not year:
-        for q in ("fact:veryold", "fact:old", "fact:pre1970", "fact:pre2000"):
+        for q in ("fact:veryold", "fact:old", "fact:pre1970"):
             feats[q] = False
-        feats["fact:recent"] = True
         wiki = doc.get("wiki_created")
         if isinstance(wiki, int) and wiki < 2016:
             feats["fact:verrecent"] = False
