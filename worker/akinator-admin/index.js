@@ -147,6 +147,12 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
 .sg-near{margin:0 0 11px;padding:0 0 0 22px;font-size:13px}
 .sg-near li{margin-bottom:2px}
 .sg-themes{margin-top:6px;font-size:12px;color:var(--mut)}
+.sg-stats{border:1px solid var(--line);border-radius:3px;background:var(--card);
+  padding:12px 15px;margin-bottom:16px}
+.sg-stats summary{cursor:pointer;font-weight:600;font-size:13px}
+.sg-stats table{min-width:420px}
+.sg-stats .scroll{margin-top:10px}
+.sg-over{color:var(--work)}
 </style></head><body><div class="wrap">
 <h1>Book Mind Reader — admin</h1>
 <p class="sub">Every action here commits directly to the live game. Nothing is automatic — nothing applies without you clicking it.</p>
@@ -207,6 +213,7 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
     <button class="act ghost" id="sgReload">Refresh</button>
     <span class="status" id="sgStatus" style="margin:0"></span>
   </div>
+  <div id="sgStats"></div>
   <div id="sgList"></div>
 </section>
 
@@ -620,12 +627,71 @@ function renderSuggestions(){
   }).join("");
 }
 
+// ── what readers keep asking for ─────────────────────────────────────────
+//
+// RANKED BY WHAT STANDS OUT, NOT BY WHAT IS COMMON. A raw tick count would
+// put "Fiction" on top forever — true of most books, and no answer at all to
+// "which dimension are readers asking for?". Every row is therefore shown
+// against the share of the shipped 5,000 that answers YES to the same
+// question, and only a theme that clears all three server-side floors
+// (20 reports, 5 ticks, 2x, and a Wilson lower bound above the baseline) is
+// labelled over-represented.
+//
+// The floors matter more than they look. Measured while building this: three
+// reports all ticking "web novel" produce a 95% lower bound of 0.207, which
+// clears a 0.8% corpus share and printed "128x" — a headline off three
+// people. Small-sample overconfidence is failure shape #5 in this project,
+// and it has reversed two results already.
+function renderStats(st){
+  const host = document.getElementById("sgStats");
+  if (!st || st.available === false){
+    host.innerHTML = '<p class="sg-dupe">Tick counters unreadable right now — '
+      + 'this is not the same as nobody having ticked anything.</p>';
+    return;
+  }
+  const rows = (st.themes || []);
+  if (!rows.length){ host.innerHTML = ""; return; }
+
+  const pct = (v) => (v == null ? "—" : (v * 100).toFixed(1) + "%");
+  const enough = st.reports >= 20;
+  host.innerHTML =
+    '<details class="sg-stats" open><summary>What readers say the missing books are about '
+    + '<span class="sg-none">— ' + st.reports + " themed report"
+    + (st.reports === 1 ? "" : "s") + "</span></summary>"
+    + (enough ? ""
+        : '<p class="sg-dupe">Fewer than 20 themed reports, so nothing here is '
+          + 'called over-represented yet — the counts are real, the ratios '
+          + 'would not be.</p>')
+    + '<div class="scroll"><table><thead><tr><th>Theme</th><th>Ticks</th>'
+    + "<th>Of reports</th><th>Of the game</th><th>Stands out</th></tr></thead><tbody>"
+    + rows.map((r) =>
+        "<tr><td>" + esc(r.subject || r.id) + "</td>"
+        + '<td class="rich">' + esc(r.ticks) + "</td>"
+        + '<td class="rich">' + pct(r.reader_share) + "</td>"
+        + '<td class="rich">' + (r.corpus_share == null
+            ? '<span class="sg-none" title="Not a question the shipped game asks — '
+              + 'ticking it changes nothing today.">retired</span>'
+            : pct(r.corpus_share)) + "</td>"
+        + '<td class="rich">' + (r.over
+            ? '<strong class="sg-over">' + esc(r.over) + "\\u00d7</strong>"
+            : '<span class="sg-none">—</span>') + "</td></tr>").join("")
+    + "</tbody></table></div>"
+    + '<p class="effect">A ratio appears only when at least 20 reports and 5 ticks '
+    + "support it, the share is at least double the corpus, and the 95% lower bound "
+    + "still clears it. Everything else is listed without a claim.</p></details>";
+}
+
 async function loadSuggestions(){
   setStatus("sgStatus", "Loading…");
   try {
     const r = await post("/api/suggestions", {});
     suggestions = r.pending || [];
     renderSuggestions();
+    // Deliberately rendered even when the queue is EMPTY: the counters
+    // outlive the entries, so an empty backlog with 40 themed reports behind
+    // it is exactly the state where this panel is the only thing left to
+    // read. Clearing the queue must not clear what it taught.
+    renderStats(r.theme_stats);
     setStatus("sgStatus", suggestions.length
       ? suggestions.length + " waiting" : "Queue is empty.", true);
   } catch (err) {

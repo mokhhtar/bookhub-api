@@ -91,6 +91,21 @@ log = logging.getLogger("bookhub-api.akinator_suggest")
 SUGGEST_PREFIX = "akin:sg:"
 PENDING_SET = "akin:sg:pending"
 
+# Tick counts, kept SEPARATELY from the queue and deliberately outliving it.
+#
+# Aggregating the pending entries would have been free, and wrong: approving
+# or rejecting deletes the entry, so the moment the owner works through the
+# backlog the signal disappears — and the backlog is the one population that
+# says nothing about what readers ask for, only about what has not been
+# handled yet. The question is about the FLOW of reports over time, so the
+# counter is incremented at intake and never touched again.
+#
+# `__reports` is the denominator: how many themed reports there have been.
+# A double underscore cannot collide with a feature id, which always
+# contains a colon.
+THEME_STATS = "akin:sg:themestats"
+REPORTS_FIELD = "__reports"
+
 # Ninety days. Longer than akinator_learn's 45-day counts on purpose: a count
 # is one game's worth of evidence and there will be more next week, but a
 # reader who noticed the one wrong year in five thousand rows is not going to
@@ -414,6 +429,7 @@ def suggest(body: SuggestRequest, request: Request):
                                    "today — thank you, come back tomorrow")
 
     # ── phase 2: the checks that cost something ──────────────────────────
+    ticked_now: list = []          # only a "missing" report carries themes
     if body.reason == "missing":
         title, author, ol_key = _resolve_or_404(body.title, body.author)
         # It resolved to a book the game already ships. That is not a
@@ -441,9 +457,9 @@ def suggest(body: SuggestRequest, request: Request):
         # into two queue entries the moment Open Library hiccupped, which is
         # exactly the deduplication this feature relies on.
         fields.update(_missing_book_hints(title, author, ol_key))
-        picked = _clean_themes(body.themes)
-        if picked:
-            fields["themes"] = ",".join(picked)
+        ticked_now = _clean_themes(body.themes)
+        if ticked_now:
+            fields["themes"] = ",".join(ticked_now)
     else:
         index = _shipped_index()
         if not index:
@@ -495,6 +511,19 @@ def suggest(body: SuggestRequest, request: Request):
     for name, value in fields.items():
         flat += [name, str(value)]
 
+    # THIS reader's ticks, not the merged set. `fields["themes"]` has just
+    # been unioned with everything earlier reporters chose, so counting from
+    # it would re-count their picks on every repeat and inflate whichever
+    # theme happened to be ticked first. Counted per REPORT rather than per
+    # book, because two readers asking for the same kind of book is exactly
+    # the agreement this is meant to surface.
+    stats_cmds: list = []
+    if ticked_now:
+        for fid in ticked_now:
+            stats_cmds.append(["HINCRBY", THEME_STATS, fid, 1])
+        stats_cmds.append(["HINCRBY", THEME_STATS, REPORTS_FIELD, 1])
+        stats_cmds.append(["EXPIRE", THEME_STATS, SUGGEST_TTL])
+
     # `first_seen` uses HSETNX so a second report of the same thing bumps the
     # vote without rewriting when it was first noticed — the two dates
     # together are what tell the owner whether this is one persistent reader
@@ -506,7 +535,7 @@ def suggest(body: SuggestRequest, request: Request):
         ["EXPIRE", key, SUGGEST_TTL],
         ["SADD", PENDING_SET, entry_id],
         ["EXPIRE", PENDING_SET, SUGGEST_TTL],
-    ])
+    ] + stats_cmds)
     if stored is None:
         log.warning("suggestion not stored: Redis unavailable")
         raise HTTPException(status_code=503,
@@ -515,6 +544,138 @@ def suggest(body: SuggestRequest, request: Request):
 
     log.info("queued suggestion %s (%s)", entry_id, body.reason)
     return {"ok": True, "id": entry_id, "reason": body.reason}
+
+
+# ── what readers keep asking for ─────────────────────────────────────────
+
+_CORPUS_SHARE: dict = {}
+
+
+def _corpus_share() -> dict:
+    """{feature_id: share of shipped books that ANSWER YES to it}.
+
+    THE BASELINE IS THE WHOLE POINT. A raw tick count answers "what are books
+    usually about?" and will rank `form:fiction` first forever — true, and
+    useless. What the owner asked for is which dimension readers ask for that
+    the game does not already have, and that is a COMPARISON: 60% of reports
+    ticking "web novel" means nothing until you know the corpus is 2%.
+
+    Read straight out of the shipped matrix, two bits per cell, counting only
+    state 1 (present). `unknown` is not absence and is excluded from the
+    numerator — the same distinction the engine draws everywhere, and getting
+    it wrong here would understate every sparse feature and so overstate how
+    unusual a reader asking for one is.
+    """
+    if _CORPUS_SHARE:
+        return _CORPUS_SHARE
+    from tools.akinator_learn import _artifacts            # noqa: E402
+    art = _artifacts()
+    if not art:
+        return {}
+    meta, qids, matrix = art["meta"], art["qids"], art["matrix"]
+    nq, bpr, nbooks = meta["questions"], meta["bytes_per_row"], meta["books"]
+    present = [0] * nq
+    for i in range(nbooks):
+        off = i * bpr
+        for k in range(nq):
+            if ((matrix[off + (k >> 2)] >> ((k & 3) * 2)) & 3) == 1:
+                present[k] += 1
+    if nbooks:
+        _CORPUS_SHARE.update({qids[k]: present[k] / nbooks for k in range(nq)})
+    return _CORPUS_SHARE
+
+
+def _wilson_low(hits: int, n: int) -> float:
+    """Wilson 95% lower bound on a proportion.
+
+    Small-sample overconfidence is failure shape #5 in this project's tally,
+    and it has already reversed two results that were quoted early. A ratio
+    computed from three ticks would read "13x over-represented" and mean
+    nothing. This is the cheapest honest guard: compare the LOWER BOUND of
+    what readers asked for against the corpus share, so a theme is only ever
+    called over-represented when the sample can carry the claim.
+    """
+    if n <= 0:
+        return 0.0
+    z = 1.96
+    p = hits / n
+    d = 1 + z * z / n
+    centre = p + z * z / (2 * n)
+    margin = z * ((p * (1 - p) / n + z * z / (4 * n * n)) ** 0.5)
+    return max(0.0, (centre - margin) / d)
+
+
+# THREE GUARDS, and the first two exist because the Wilson bound alone was
+# measured to be not enough. A theme ticked by 3 of 3 reporters has a 95%
+# lower bound of 0.207 — genuinely wide — and that still clears a corpus
+# share of 0.008, so `form:webnovel` printed "128x over-represented" off
+# three reports. The bound protects against a COMMON baseline; nothing but a
+# sample-size floor protects against a rare one.
+#
+# 20 and 5 are a judgement, not a derivation: at 20 reports the bound on a
+# quarter-share is about 0.11, still far above a 1% baseline, and 20 reports
+# is an amount of evidence a person would not feel silly acting on. Failure
+# shape #5 has cost this project two reversed results already.
+MIN_REPORTS_FOR_CLAIM = 20
+MIN_TICKS_FOR_CLAIM = 5
+
+# And a minimum effect. `form:fiction` at 85% of reports against a 55%
+# corpus is statistically over-represented and tells the owner nothing —
+# it is what books are. Only a doubling is a dimension being ASKED FOR
+# rather than merely present.
+MIN_RATIO_FOR_CLAIM = 2.0
+
+
+def _theme_stats() -> dict:
+    """Tick counts against the corpus baseline, ranked by what stands out."""
+    raw = cache.hgetall(THEME_STATS)
+    if raw is None:
+        return {"available": False, "reason": "counters unreadable"}
+    if not raw:
+        return {"available": True, "reports": 0, "themes": []}
+
+    try:
+        reports = int(raw.get(REPORTS_FIELD, 0))
+    except (TypeError, ValueError):
+        reports = 0
+
+    share = _corpus_share()
+    rows = []
+    for fid, count in raw.items():
+        if fid == REPORTS_FIELD:
+            continue
+        try:
+            ticks = int(count)
+        except (TypeError, ValueError):
+            continue
+        if ticks <= 0:
+            continue
+        corpus = share.get(fid)
+        reader = ticks / reports if reports else 0.0
+        low = _wilson_low(ticks, reports) if reports else 0.0
+        ratio = (reader / corpus) if corpus else None
+        # Only a claim the sample can carry AND that means something. None
+        # means "not enough to say", which the page prints rather than hides.
+        over = None
+        if (corpus and ratio
+                and reports >= MIN_REPORTS_FOR_CLAIM
+                and ticks >= MIN_TICKS_FOR_CLAIM
+                and ratio >= MIN_RATIO_FOR_CLAIM
+                and low > corpus):
+            over = round(ratio, 1)
+        rows.append({
+            "id": fid,
+            "subject": (_subject_words([fid]) or [""])[0],
+            "ticks": ticks,
+            "reader_share": round(reader, 4),
+            "corpus_share": round(corpus, 4) if corpus is not None else None,
+            "over": over,
+        })
+    # Standouts first, then the merely frequent. A theme with no corpus
+    # figure (a retired question) sorts last rather than being dropped —
+    # readers ticking it is still information.
+    rows.sort(key=lambda r: (-(r["over"] or 0), -r["ticks"]))
+    return {"available": True, "reports": reports, "themes": rows}
 
 
 # ── the review queue ─────────────────────────────────────────────────────
@@ -593,7 +754,10 @@ def list_suggestions():
     if stale:
         cache.pipeline([["SREM", PENDING_SET, i] for i in stale])
         log.info("swept %d expired suggestion ids", len(stale))
-    return {"ok": True, "pending": entries, "count": len(entries)}
+    # Counted over every themed report ever filed, not over `entries` — see
+    # THEME_STATS. Resolving the queue must not erase what it taught us.
+    return {"ok": True, "pending": entries, "count": len(entries),
+            "theme_stats": _theme_stats()}
 
 
 class ResolveRequest(BaseModel):
