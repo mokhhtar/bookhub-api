@@ -76,6 +76,7 @@ const ROUTES = {
   "/api/display": relay("/akinator/admin/display"),
   "/api/suggestions": relay("/akinator/admin/suggestions"),
   "/api/suggestions/resolve": relay("/akinator/admin/suggestions/resolve"),
+  "/api/suggestions/theme": relay("/akinator/admin/suggestions/theme"),
   "/api/taught": relay("/akinator/admin/taught"),
   "/api/taught/apply": relay("/akinator/admin/taught/apply"),
 };
@@ -233,6 +234,7 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
     <button class="act ghost" id="sgReload">Refresh</button>
     <span class="status" id="sgStatus" style="margin:0"></span>
   </div>
+  <div id="sgAsks"></div>
   <div id="sgStats"></div>
   <div id="sgList"></div>
 </section>
@@ -737,6 +739,61 @@ document.getElementById("tgRows").addEventListener("click", async (e)=>{
   }
 });
 
+// ── dimensions the tick-list does not offer ──────────────────────────────
+//
+// WHAT ACCEPTING DOES, and the label has to be honest because the button
+// looks like it does more. It does NOT create a question. A question is a
+// column in matrix.bin, which needs a full build_matrix.py run against a
+// corpus that is gitignored and has never been on Render — and it would then
+// have to cover 5% of that corpus (250 books) or the build retires it the
+// same day. What accepting writes is a reviewed, committed list for whoever
+// next edits features.SUBJECT_RULES by hand.
+//
+// The count shown is Open Library's WHOLE catalogue, not our 5,000, and the
+// panel says so. A big number here is evidence the subject is real; it is
+// not evidence it would clear the floor.
+function renderAsks(asks){
+  const host = document.getElementById("sgAsks");
+  if (!asks.length){ host.innerHTML = ""; return; }
+  host.innerHTML =
+    '<details class="sg-stats" open><summary>Dimensions readers asked for that '
+    + 'the tick-list does not offer <span class="sg-none">— ' + asks.length
+    + "</span></summary>"
+    + '<div class="scroll"><table><thead><tr><th>Subject</th><th>Readers asked</th>'
+    + '<th title="Works catalogued under this subject in Open Library as a whole — '
+    + 'NOT in our 5,000. Whether it clears the 5% question floor (250 of our books) '
+    + 'can only be found by a local build.">In Open Library</th><th></th></tr></thead><tbody>'
+    + asks.map((a) =>
+        "<tr><td>" + esc(a.subject) + "</td>"
+        + '<td class="rich">' + esc(a.asks) + "</td>"
+        + '<td class="rich">' + esc(a.ol_works.toLocaleString()) + "</td>"
+        + '<td class="row"><button class="act ghost askBtn" data-s="' + esc(a.subject)
+        + '" data-a="1">Record it</button>'
+        + '<button class="act ghost askBtn" data-s="' + esc(a.subject)
+        + '" data-a="0">Dismiss</button></td></tr>').join("")
+    + "</tbody></table></div>"
+    + '<p class="effect">Recording does not create a question. It commits the subject '
+    + "to theme_requests.json for whoever next edits features.SUBJECT_RULES — a new "
+    + "question needs a full local rebuild and must then cover 250 of the 5,000 books "
+    + "to survive the frequency floor.</p></details>";
+}
+
+document.getElementById("sgAsks").addEventListener("click", async (e)=>{
+  if (!e.target.classList.contains("askBtn")) return;
+  const subject = e.target.dataset.s, accept = e.target.dataset.a === "1";
+  e.target.closest("tr").querySelectorAll("button").forEach(b => { b.disabled = true; });
+  setStatus("sgStatus", accept ? "Recording…" : "Dismissing…");
+  try {
+    const r = await post("/api/suggestions/theme", {subject, accept});
+    setStatus("sgStatus", (accept ? "Recorded — " : "Dismissed. ") + r.effect
+      + (r.note ? " (" + r.note + ")" : ""), true);
+    await loadSuggestions();
+  } catch (err) {
+    setStatus("sgStatus", String(err.message || err), false);
+    await loadSuggestions();
+  }
+});
+
 // ── what readers keep asking for ─────────────────────────────────────────
 //
 // RANKED BY WHAT STANDS OUT, NOT BY WHAT IS COMMON. A raw tick count would
@@ -802,6 +859,7 @@ async function loadSuggestions(){
     // it is exactly the state where this panel is the only thing left to
     // read. Clearing the queue must not clear what it taught.
     renderStats(r.theme_stats);
+    renderAsks(r.theme_asks || []);
     setStatus("sgStatus", suggestions.length
       ? suggestions.length + " waiting" : "Queue is empty.", true);
   } catch (err) {

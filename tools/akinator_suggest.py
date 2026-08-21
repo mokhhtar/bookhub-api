@@ -75,10 +75,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request    # noqa: E402
 from pydantic import BaseModel, Field                             # noqa: E402
 
 from tools.akinator_admin import (                                # noqa: E402
+    ARTIFACT_DIR,
     BookRequest,
     CorrectionRequest,
     DisplayRequest,
     ExcludeRequest,
+    _commit_files,
+    _dump,
+    _get_json,
     _require_admin,
     book as admin_book,
     correction as admin_correction,
@@ -105,6 +109,17 @@ PENDING_SET = "akin:sg:pending"
 # contains a colon.
 THEME_STATS = "akin:sg:themestats"
 REPORTS_FIELD = "__reports"
+
+# Dimensions readers asked for that the tick-list does not offer.
+# {canonical Open Library subject: "asks:ol_work_count"}
+THEME_ASKS = "akin:sg:themeasks"
+
+# An Open Library subject with three works behind it is a typo somebody
+# else made, not a dimension. Fifty is low enough to admit a genuinely
+# niche subject (OL puts "dystopia" at 144) and high enough that noise
+# does not reach the owner. It is a floor on REALITY, not on demand — how
+# many readers want it is counted separately.
+MIN_SUBJECT_WORKS = 50
 
 # Ninety days. Longer than akinator_learn's 45-day counts on purpose: a count
 # is one game's worth of evidence and there will be more next week, but a
@@ -160,6 +175,11 @@ class SuggestRequest(BaseModel):
     # validated against features.SUBJECT_RULES server-side — the client's
     # copy decides what is OFFERED, never what is accepted.
     themes: list[str] = Field(default_factory=list, max_length=12)
+    # A dimension the tick-list does not offer. Typed, therefore a QUERY:
+    # resolved against Open Library's subject index and stored as the
+    # canonical subject name it matched, never as the words that were typed.
+    # See `_resolve_subject`.
+    new_theme: str = Field(default="", max_length=60)
 
 
 def _client_id(request: Request) -> str:
@@ -327,6 +347,53 @@ def _clean_themes(raw: list[str]) -> list[str]:
     return out[:12]
 
 
+def _resolve_subject(query: str) -> tuple[str, int]:
+    """A typed theme -> a real Open Library subject, or a refusal.
+
+    THE SAME MOVE AS `_resolve_or_404`, one level down. A reader may name a
+    dimension the tick-list does not offer, and that has to be typed — but
+    what is typed is a QUERY. Open Library's subject index answers with a
+    canonical name and a work count, and it is the canonical name that is
+    stored. So the promise holds unchanged: nothing a stranger wrote reaches
+    Redis, the admin page, or a commit.
+
+    A nonsense string is not a subject: OL answers 200 with `work_count: 0`
+    and a name echoing the slug, which is why the count is checked rather
+    than the status. Verified live against five queries including one made
+    up on the spot.
+
+    WHAT THIS COUNT IS NOT. It is Open Library's whole catalogue, not our
+    5,000. Whether a subject clears the game's 5% question floor — 250 of
+    our books — cannot be known from here at all: the corpus is gitignored
+    and Render has never held it. The admin page says so rather than letting
+    a big number imply an answer it does not have.
+    """
+    import httpx                                          # noqa: E402
+    slug = re.sub(r"[^a-z0-9]+", "_", query.strip().lower()).strip("_")
+    if not slug:
+        raise HTTPException(status_code=400, detail="that is not a theme")
+    try:
+        r = httpx.get(f"https://openlibrary.org/subjects/{slug}.json",
+                      params={"limit": 0}, timeout=15.0,
+                      headers={"User-Agent": "Litheca/1.0 (https://litheca.com; "
+                                             "hello@litheca.com)"})
+        r.raise_for_status()
+        data = r.json()
+    except Exception as exc:                              # noqa: BLE001
+        log.warning("subject lookup failed for %r: %s", query[:40], str(exc)[:110])
+        raise HTTPException(status_code=503,
+                            detail="could not check that theme just now — "
+                                   "please try again in a minute")
+    works = data.get("work_count") or 0
+    name = (data.get("name") or "").strip()
+    if not isinstance(works, int) or works < MIN_SUBJECT_WORKS or not name:
+        raise HTTPException(
+            status_code=404,
+            detail="that is not a subject books are catalogued under — try "
+                   "the wording a library would use")
+    return name, works
+
+
 def _missing_book_hints(title: str, author: str, work_key: str = "") -> dict:
     """Year and Open Library work key for a book being proposed as new.
 
@@ -430,6 +497,7 @@ def suggest(body: SuggestRequest, request: Request):
 
     # ── phase 2: the checks that cost something ──────────────────────────
     ticked_now: list = []          # only a "missing" report carries themes
+    asked_subject, asked_works = "", 0
     if body.reason == "missing":
         title, author, ol_key = _resolve_or_404(body.title, body.author)
         # It resolved to a book the game already ships. That is not a
@@ -460,6 +528,8 @@ def suggest(body: SuggestRequest, request: Request):
         ticked_now = _clean_themes(body.themes)
         if ticked_now:
             fields["themes"] = ",".join(ticked_now)
+        if body.new_theme.strip():
+            asked_subject, asked_works = _resolve_subject(body.new_theme)
     else:
         index = _shipped_index()
         if not index:
@@ -523,6 +593,21 @@ def suggest(body: SuggestRequest, request: Request):
             stats_cmds.append(["HINCRBY", THEME_STATS, fid, 1])
         stats_cmds.append(["HINCRBY", THEME_STATS, REPORTS_FIELD, 1])
         stats_cmds.append(["EXPIRE", THEME_STATS, SUGGEST_TTL])
+    if asked_subject:
+        # HSET rather than HINCRBY: the value carries the OL work count too,
+        # and the ask count is read-modify-written just above the pipeline so
+        # both numbers stay in one field. Two readers naming the same subject
+        # converge on the same field, which is the whole point of storing the
+        # CANONICAL name rather than what either of them typed.
+        prior_asks = 0
+        existing = cache.hgetall(THEME_ASKS) or {}
+        try:
+            prior_asks = int(str(existing.get(asked_subject, "0:0")).split(":")[0])
+        except (TypeError, ValueError):
+            prior_asks = 0
+        stats_cmds.append(["HSET", THEME_ASKS, asked_subject,
+                           f"{prior_asks + 1}:{asked_works}"])
+        stats_cmds.append(["EXPIRE", THEME_ASKS, SUGGEST_TTL])
 
     # `first_seen` uses HSETNX so a second report of the same thing bumps the
     # vote without rewriting when it was first noticed — the two dates
@@ -572,16 +657,29 @@ def _corpus_share() -> dict:
     art = _artifacts()
     if not art:
         return {}
-    meta, qids, matrix = art["meta"], art["qids"], art["matrix"]
-    nq, bpr, nbooks = meta["questions"], meta["bytes_per_row"], meta["books"]
-    present = [0] * nq
-    for i in range(nbooks):
-        off = i * bpr
-        for k in range(nq):
-            if ((matrix[off + (k >> 2)] >> ((k & 3) * 2)) & 3) == 1:
-                present[k] += 1
-    if nbooks:
+    # A half-filled artifact set must leave the baseline EMPTY rather than
+    # half-computed: a share derived from a truncated matrix is a wrong
+    # number, and this whole panel exists to compare against it. Empty means
+    # "no baseline", which the page prints as such. Seen for real — the
+    # local network drops Open Library mid-fetch often enough that this ran
+    # against a partial `meta` once.
+    try:
+        meta, qids, matrix = art["meta"], art["qids"], art["matrix"]
+        nq, bpr, nbooks = meta["questions"], meta["bytes_per_row"], meta["books"]
+        if not (nq and bpr and nbooks) or len(matrix) != nbooks * bpr:
+            log.warning("artifacts incomplete; no corpus baseline")
+            return {}
+        present = [0] * nq
+        for i in range(nbooks):
+            off = i * bpr
+            for k in range(nq):
+                if ((matrix[off + (k >> 2)] >> ((k & 3) * 2)) & 3) == 1:
+                    present[k] += 1
         _CORPUS_SHARE.update({qids[k]: present[k] / nbooks for k in range(nq)})
+    except Exception as exc:                              # noqa: BLE001
+        log.warning("corpus baseline failed: %s", str(exc)[:110])
+        _CORPUS_SHARE.clear()
+        return {}
     return _CORPUS_SHARE
 
 
@@ -757,7 +855,86 @@ def list_suggestions():
     # Counted over every themed report ever filed, not over `entries` — see
     # THEME_STATS. Resolving the queue must not erase what it taught us.
     return {"ok": True, "pending": entries, "count": len(entries),
-            "theme_stats": _theme_stats()}
+            "theme_stats": _theme_stats(), "theme_asks": _theme_asks()}
+
+
+def _theme_asks() -> list:
+    """Dimensions readers named that the tick-list does not offer."""
+    raw = cache.hgetall(THEME_ASKS)
+    if not raw:
+        return []
+    out = []
+    for subject, packed in raw.items():
+        asks, _, works = str(packed).partition(":")
+        try:
+            out.append({"subject": subject, "asks": int(asks),
+                        "ol_works": int(works or 0)})
+        except (TypeError, ValueError):
+            continue
+    out.sort(key=lambda r: (-r["asks"], -r["ol_works"]))
+    return out
+
+
+THEME_REQUESTS_PATH = f"{ARTIFACT_DIR}/theme_requests.json"
+
+
+class ThemeDecision(BaseModel):
+    subject: str = Field(..., max_length=80)
+    accept: bool
+
+
+@admin_router.post("/theme")
+def decide_theme(body: ThemeDecision):
+    """Accept a requested dimension into the permanent record, or drop it.
+
+    WHAT ACCEPTING DOES, STATED HONESTLY, because the temptation is to imply
+    more. It does NOT create a question. A question needs a column in
+    `matrix.bin`, which needs a full `build_matrix.py` run, which needs the
+    corpus — gitignored, and never on Render. And it would then have to clear
+    `MIN_FREQ`: **5% of the corpus, 250 books**, or the build retires it
+    again the same day.
+
+    So what this writes is the thing that IS durable and IS useful: a
+    reviewed list, committed to the bookhub repo, of subjects readers asked
+    for and the evidence behind each. `features.SUBJECT_RULES` is a
+    hand-maintained table, and whoever next edits it should be editing it
+    against this file rather than against a hunch.
+    """
+    subject = body.subject.strip()
+    if not subject or len(subject) > 80:
+        raise HTTPException(status_code=400, detail="malformed subject")
+
+    asks = {r["subject"]: r for r in _theme_asks()}
+    row = asks.get(subject)
+    if row is None:
+        raise HTTPException(status_code=404, detail="no such requested theme")
+
+    if body.accept:
+        current, _ = _get_json(THEME_REQUESTS_PATH, [])
+        if not isinstance(current, list):
+            current = []
+        current = [c for c in current
+                   if isinstance(c, dict) and c.get("subject") != subject]
+        current.append({"subject": subject, "readers_asked": row["asks"],
+                        "open_library_works": row["ol_works"],
+                        "accepted": time.strftime("%Y-%m-%d")})
+        current.sort(key=lambda c: -(c.get("readers_asked") or 0))
+        wrote = _commit_files(
+            {THEME_REQUESTS_PATH: _dump(current)},
+            f"mind reader admin: readers want a '{subject}' question "
+            f"({row['asks']} asked)")
+        if not wrote:
+            raise HTTPException(status_code=502, detail="commit failed")
+
+    cache.pipeline([["HDEL", THEME_ASKS, subject]])
+    return {
+        "ok": True, "accepted": body.accept, "subject": subject,
+        "effect": ("recorded for the next rebuild — this does NOT create a "
+                   "question today" if body.accept else "dropped"),
+        "note": ("a new question needs a full build_matrix.py run with the "
+                 "corpus, and must then cover 5% of it (250 books) to survive "
+                 "the frequency floor" if body.accept else ""),
+    }
 
 
 class ResolveRequest(BaseModel):
