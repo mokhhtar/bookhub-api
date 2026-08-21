@@ -346,8 +346,61 @@ SUBJECT_RULES: list[tuple[str, str, list[str]]] = [
       "middle earth", "narnia", "wonderland", "oz"]),
 
     # --- themes ---
-    ("theme:magic", "Is there magic in it?",
-     ["magic*", "witch*", "sorcer*", "spells", "supernatural", "enchant*"]),
+    # WIDENED 2026-08-21, from "Is there magic in it?". The old wording was
+    # too narrow for what readers actually mean: a book with vampires, a
+    # ghost or a dragon has no "magic" in it and a reader still answers yes.
+    #
+    # EVERY KEYWORD BELOW WAS MINED FROM THE SHIPPED CORPUS, not invented —
+    # the counts are the books in the shipped 5,000 carrying that subject.
+    # Guessing produced a list half of which matched nothing.
+    #
+    #   magic 309 · supernatural 113 · vampires 107 · paranormal 87
+    #   dragons 86 · witches 82 · monsters 80 · wizards 69 · ghosts 48
+    #   witchcraft 36 · prophecies 30 · demonology 26 · psychic ability 20
+    #   mythical animals 20 · occultism 18 · occult 18 · magicians 18
+    #   elves 17
+    #
+    # WHAT IT DELIBERATELY DOES NOT CLAIM. The owner asked for "a power
+    # system" — cultivation, quirks, nen, levelling. That vocabulary was
+    # searched for in BOTH sources and is not there: Open Library yields 33
+    # apparent hits on the shipped 5,000 of which nearly all are
+    # `nervous system`, `limbic system`, `system analysis` and `esperanto`,
+    # and the Fandom subject harvest yields 3 books, two of them false
+    # ("planets in the frogstar system"). So this question asks what the
+    # data can answer — supernatural elements — and a real power-system
+    # question needs a prose harvest first.
+    #
+    # `elves` and not `elf`: **self**-help, **self**-esteem and
+    # **self**-actualization all match a bare `elf`, which is failure shape
+    # #1 in this project's tally and was reproduced live while mining this
+    # very list. Every entry here goes through `_compile`, which is
+    # whole-word unless it ends in `*`.
+    # THREE KEYWORDS WERE CUT AFTER MEASURING, not before. The first list
+    # made *Pride and Prejudice*, *The Da Vinci Code* and *Misery* answer
+    # YES, which is the Moby Dick failure again — one stray subject carrying
+    # a claim:
+    #   prophec*  -> P&P has a stray `prophecies` subject and no prophecy
+    #   occult*   -> Da Vinci Code has `occultisme`; nothing supernatural
+    #                is real in it, the theme is a secret society
+    #   ghost*    -> Misery has `horror & ghost stories`, a bookstore shelf
+    #                applied to all horror, and Misery has no ghost
+    # `ghosts` (whole word) keeps the 48 books actually tagged with ghosts
+    # and stops matching the shelf phrase.
+    #
+    # GENRE_MIN_SUPPORT was tried here first and is the WRONG tool: at two
+    # signals it correctly drops all three, and also drops **The Lord of
+    # the Rings**, which carries exactly one matching subject. A rule that
+    # cannot call LOTR supernatural is not a rule worth having, so the fix
+    # is a cleaner vocabulary at one signal, not a blunter threshold.
+    #
+    # Verified on a 12-book probe: Harry Potter 16 signals, Hobbit 8,
+    # Shining 7, Dracula 3, Game of Thrones 3, It 2, LOTR 1 -> all YES;
+    # P&P, Da Vinci Code, Misery, Jane Eyre, Gatsby -> all 0, no.
+    ("theme:magic", "Does it have supernatural elements?",
+     ["magic*", "witch*", "sorcer*", "spells", "supernatural", "enchant*",
+      "vampire*", "paranormal", "dragon*", "monster*", "wizard*", "ghosts",
+      "demon*", "magician*", "psychic*", "mythical", "elves", "undead",
+      "necromanc*", "werewol*", "shapeshift*"]),
     ("theme:family", "Is family central to the story?",
      ["family", "mothers", "fathers", "brothers", "sisters", "siblings",
       "parent", "marriage", "married people", "domestic fiction"]),

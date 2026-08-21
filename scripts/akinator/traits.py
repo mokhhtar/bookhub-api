@@ -55,9 +55,19 @@ TRAITS: dict[str, tuple[str, str]] = {
         "Does it take place at sea?",
         "A substantial part of the story happens on a ship, a boat, an "
         "ocean voyage, an island reached by sea, or among sailors."),
+    # WORDED IDENTICALLY TO features.py's `theme:magic` ON PURPOSE, and it
+    # has to be kept that way. `_drop_duplicate_wordings` in build_matrix.py
+    # only fires on byte-identical player-facing text, and it is what stops
+    # a player being asked about magic twice in one game (found by a player,
+    # 2026-08-18). Reword one side alone and the guard silently stops
+    # firing: this question comes back as a 50th column that answers
+    # "present" for 602 books and `unknown` for 4,398 — a trait can never
+    # assert "no" — which is exactly the near-useless question the dedup
+    # was written to suppress. Change both or neither.
     "t:magic": (
-        "Is there magic in it?",
-        "Magic, sorcery, spellcasting or supernatural powers are real "
+        "Does it have supernatural elements?",
+        "Magic, sorcery, spellcasting, or supernatural beings and powers — "
+        "vampires, ghosts, demons, dragons, witches, monsters — are real "
         "within the story's world."),
     "t:secretorg": (
         "Is there a secret organisation in it?",
