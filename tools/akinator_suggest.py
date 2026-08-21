@@ -139,6 +139,12 @@ class SuggestRequest(BaseModel):
     title: str = Field(default="", max_length=200)
     author: str = Field(default="", max_length=120)
     year: int | None = Field(default=None, ge=1, le=2100)
+    # Feature ids the reader ticked ("theme:magic", "genre:fantasy"), NOT
+    # words they typed. A closed vocabulary is the only way to accept "what
+    # is this book about?" without accepting free text, and the list is
+    # validated against features.SUBJECT_RULES server-side — the client's
+    # copy decides what is OFFERED, never what is accepted.
+    themes: list[str] = Field(default_factory=list, max_length=12)
 
 
 def _client_id(request: Request) -> str:
@@ -254,6 +260,56 @@ def _resolve_or_404(title: str, author: str) -> tuple[str, str, str]:
             detail="no book by that title and author could be found — "
                    "check the spelling, or add the author")
     return record.title, (record.author or ""), (record.open_library_work_key or "")
+
+
+_FEATURE_ID = re.compile(r"^[a-z]+:[a-z0-9_]{1,40}$")
+
+
+def _subject_words(feature_ids: list[str]) -> list[str]:
+    """Feature ids a reader ticked -> subject strings the pipeline reads.
+
+    THE VOCABULARY IS DERIVED, NOT DUPLICATED. `features.SUBJECT_RULES` is
+    the single place that decides which subject words imply which feature,
+    so this reads the first keyword of the matching rule rather than keeping
+    a second table that would silently drift from it. An id with no rule is
+    dropped, which is what makes the whole field safe: nothing a reader
+    sends can become a subject string that `extract()` does not already
+    recognise, so there is no path from this input to arbitrary text landing
+    in `books.json`.
+
+    Trailing `*` is a glob in the rule's matcher ("magic*" catches
+    "magical"); the literal stem is what belongs in a subject list.
+    """
+    try:
+        from features import SUBJECT_RULES                # noqa: E402
+    except Exception as exc:                              # noqa: BLE001
+        log.warning("SUBJECT_RULES unavailable: %s", str(exc)[:90])
+        return []
+    rules = {fid: kws for fid, _text, kws in SUBJECT_RULES}
+    out = []
+    for fid in feature_ids:
+        kws = rules.get(fid)
+        if kws:
+            word = kws[0].replace("*", "").strip()
+            if word and word not in out:
+                out.append(word)
+    return out
+
+
+def _clean_themes(raw: list[str]) -> list[str]:
+    """The subset of what was ticked that names a real feature rule."""
+    try:
+        from features import SUBJECT_RULES                # noqa: E402
+        known = {fid for fid, _t, _k in SUBJECT_RULES}
+    except Exception:                                     # noqa: BLE001
+        return []
+    seen, out = set(), []
+    for fid in raw:
+        fid = (fid or "").strip()
+        if _FEATURE_ID.match(fid) and fid in known and fid not in seen:
+            seen.add(fid)
+            out.append(fid)
+    return out[:12]
 
 
 def _missing_book_hints(title: str, author: str, work_key: str = "") -> dict:
@@ -385,6 +441,9 @@ def suggest(body: SuggestRequest, request: Request):
         # into two queue entries the moment Open Library hiccupped, which is
         # exactly the deduplication this feature relies on.
         fields.update(_missing_book_hints(title, author, ol_key))
+        picked = _clean_themes(body.themes)
+        if picked:
+            fields["themes"] = ",".join(picked)
     else:
         index = _shipped_index()
         if not index:
@@ -417,6 +476,21 @@ def suggest(body: SuggestRequest, request: Request):
 
     entry_id = _entry_id(fields)
     key = SUGGEST_PREFIX + entry_id
+
+    # Themes are UNIONED across reports of the same book, not overwritten.
+    # `_entry_id` deliberately ignores them (two readers ticking different
+    # boxes must not become two entries for one book), and the consequence
+    # of that is this: the second report would otherwise erase the first
+    # reader's picks. Union is also the honest reading — each reader is
+    # asserting something true about the book, not replacing an opinion.
+    if fields.get("themes"):
+        existing = cache.hgetall(key) or {}
+        merged = _clean_themes(
+            (existing.get("themes", "").split(",") if existing.get("themes") else [])
+            + fields["themes"].split(","))
+        if merged:
+            fields["themes"] = ",".join(merged)
+
     flat: list = []
     for name, value in fields.items():
         flat += [name, str(value)]
@@ -488,6 +562,13 @@ def _read_queue() -> tuple[list[dict], list[str]]:
         # pipeline endpoint hands back the array unfolded.
         entry = {flat[i]: flat[i + 1] for i in range(0, len(flat) - 1, 2)}
         entry["id"] = entry_id
+        if entry.get("themes"):
+            # A list for the page, plus the subject strings each one becomes,
+            # so the reviewer sees what approving would actually write rather
+            # than an opaque feature id.
+            ids = entry["themes"].split(",")
+            entry["themes"] = ids
+            entry["theme_subjects"] = _subject_words(ids)
         for numeric in ("votes", "year", "year_hint", "first_seen", "last_seen"):
             if numeric in entry:
                 try:
@@ -573,8 +654,15 @@ def resolve(body: ResolveRequest):
         # Re-resolving is a second API call and worth it: it is the code path
         # the owner's own "Add a book" tab uses, so an approved suggestion and
         # a hand-typed book cannot land as different rows.
+        # Feature ids -> the subject strings `features.extract()` reads. A
+        # row built from the catalogue alone answers whatever Open Library
+        # happened to record; these are the questions a reader knew the
+        # answer to and the catalogue did not.
+        subjects = _subject_words(
+            entry["themes"].split(",") if entry.get("themes") else [])
         result = admin_book(BookRequest(title=title, author=author,
-                                        summary="", themes=[]))
+                                        summary="", themes=subjects))
+        result = {**(result or {}), "subjects_added": subjects}
     elif body.action == "correction":
         year = entry.get("year")
         try:

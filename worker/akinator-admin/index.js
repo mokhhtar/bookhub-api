@@ -146,6 +146,7 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
 .sg-dupe--clear{color:var(--mut);border-left-color:var(--line)}
 .sg-near{margin:0 0 11px;padding:0 0 0 22px;font-size:13px}
 .sg-near li{margin-bottom:2px}
+.sg-themes{margin-top:6px;font-size:12px;color:var(--mut)}
 </style></head><body><div class="wrap">
 <h1>Book Mind Reader — admin</h1>
 <p class="sub">Every action here commits directly to the live game. Nothing is automatic — nothing applies without you clicking it.</p>
@@ -556,6 +557,16 @@ function renderSuggestions(){
           ? ' <span class="badge">first published ' + esc(s.year_hint) + "</span>"
           : ' <span class="badge off" title="Open Library has no work-level year.'
             + ' Six era questions will answer &quot;unknown&quot; for this row.">no year found</span>';
+        // What the reader ticked, shown as the SUBJECT WORDS approving would
+        // actually write into books.json — not the raw feature ids. The id is
+        // an internal name; the subject is the thing being committed, and the
+        // reviewer should see the latter.
+        const subs = s.theme_subjects || [];
+        if (subs.length){
+          proposed += '<div class="sg-themes">reader also says it is about: '
+            + subs.map((t) => '<span class="badge">' + esc(t) + "</span>").join(" ")
+            + "</div>";
+        }
       }
     }
 
