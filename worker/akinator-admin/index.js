@@ -76,6 +76,8 @@ const ROUTES = {
   "/api/display": relay("/akinator/admin/display"),
   "/api/suggestions": relay("/akinator/admin/suggestions"),
   "/api/suggestions/resolve": relay("/akinator/admin/suggestions/resolve"),
+  "/api/taught": relay("/akinator/admin/taught"),
+  "/api/taught/apply": relay("/akinator/admin/taught/apply"),
 };
 
 function page() {
@@ -162,6 +164,7 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
   <button data-tab="questions">Questions</button>
   <button data-tab="add">Add a book</button>
   <button data-tab="suggestions">Suggestions <span class="pill" id="sgCount"></span></button>
+  <button data-tab="taught">Taught <span class="pill" id="tgCount"></span></button>
 </nav>
 
 <section id="books" class="on">
@@ -202,6 +205,23 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
     <button class="act" id="addSubmit">Add book</button>
     <p class="status" id="addStatus"></p>
   </div>
+</section>
+
+<section id="taught">
+  <p class="sub" style="margin-bottom:14px">What players answered about books they named, waiting on the
+  8-play floor. The nightly drain writes nothing below that on purpose — a handful of players must not move a cell.
+  <strong>You are not a handful of players.</strong> If you look the book up and decide, that is a different kind of
+  act, so it writes the verified bound (0.90 / 0.15) rather than a posterior computed from three answers — and the
+  drain then leaves that cell alone until you clear it.</p>
+  <div class="row" style="margin-bottom:12px">
+    <button class="act ghost" id="tgReload">Refresh</button>
+    <span class="status" id="tgStatus" style="margin:0"></span>
+  </div>
+  <div class="scroll"><table>
+    <thead><tr><th>Book</th><th>Question</th><th>Players said</th><th>Table says</th>
+    <th title="What tonight's drain would write, if the cell ever clears the 8-play floor.">Drain would</th><th></th></tr></thead>
+    <tbody id="tgRows"></tbody>
+  </table></div>
 </section>
 
 <section id="suggestions">
@@ -627,6 +647,96 @@ function renderSuggestions(){
   }).join("");
 }
 
+// ── taught cells: the owner's hand, ahead of the 8-play floor ────────────
+//
+// MIN_PLAYS stays at 8 and this does not lower it. It goes around it for the
+// one case the floor was never meant to catch: the floor exists because three
+// players agreeing is not evidence, and the owner looking a book up is not
+// three players agreeing — it is a different KIND of act. So the verdict
+// writes the clamp bound directly (0.90 / 0.15), never a posterior computed
+// from a handful of answers. Measured on a real cell: table says no, three
+// readers say yes, the drain would have written 0.4231 — a shrug — where a
+// hand verdict writes 0.90.
+let taught = [];
+
+function renderTaught(){
+  const rows = document.getElementById("tgRows");
+  document.getElementById("tgCount").textContent = taught.length || "";
+  if (!taught.length){
+    rows.innerHTML = '<tr><td colspan="6">Nothing waiting. Cells appear here when a '
+      + 'player taps "Teach it this book" on the give-up screen.</td></tr>';
+    return;
+  }
+  const byKey = {};
+  books.forEach((b) => { byKey[b.k] = b; });
+  const qText = {};
+  questions.forEach((q) => { qText[q.id] = q.text; });
+
+  rows.innerHTML = taught.map((c) => {
+    const b = byKey[c.work_key];
+    const said = Object.entries(c.tally)
+      .filter(([a]) => a !== "unknown")
+      .map(([a, n]) => n + "\\u00d7 " + a.replace("_", " ")).join(", ")
+      + (c.unknown ? ' <span class="sg-none">(+' + c.unknown + " don\\u2019t know)</span>" : "");
+    // Three states, not two: the table can also assert NOTHING about a cell,
+    // and that is the case most worth teaching, so it must not read as "no".
+    const table = c.matrix === true ? "yes"
+      : c.matrix === false ? "no"
+      : '<span class="sg-none">no record</span>';
+    return "<tr" + (c.locked ? ' class="excluded"' : "") + ">"
+      + '<td class="title">' + esc(b ? b.t : c.work_key)
+        + (c.locked ? ' <span class="badge off">set by hand</span>' : "")
+        + (c.below_floor ? ' <span class="badge">below the floor</span>' : "") + "</td>"
+      + "<td>" + esc(qText[c.question_id] || c.question_id) + "</td>"
+      + "<td>" + said + "</td>"
+      + "<td>" + table + "</td>"
+      + '<td class="rich">' + (c.drain_would_write == null ? "—" : c.drain_would_write) + "</td>"
+      + '<td class="row">'
+        + '<button class="act ghost tgSet" data-k="' + esc(c.work_key) + '" data-q="'
+          + esc(c.question_id) + '" data-v="yes">Yes</button>'
+        + '<button class="act ghost tgSet" data-k="' + esc(c.work_key) + '" data-q="'
+          + esc(c.question_id) + '" data-v="no">No</button>'
+        + (c.locked ? '<button class="act ghost tgSet" data-k="' + esc(c.work_key)
+            + '" data-q="' + esc(c.question_id) + '" data-v="clear">Clear</button>' : "")
+      + "</td></tr>";
+  }).join("");
+}
+
+async function loadTaught(){
+  setStatus("tgStatus", "Loading\\u2026");
+  try {
+    const r = await post("/api/taught", {});
+    taught = r.cells || [];
+    renderTaught();
+    setStatus("tgStatus", taught.length
+      ? taught.length + " cell(s) across " + r.books + " book(s); the drain writes at "
+        + r.min_plays + " plays"
+      : "Nothing taught yet.", true);
+  } catch (err) {
+    setStatus("tgStatus", "Could not read the play counts: "
+      + String(err.message || err) + " — this is NOT the same as there being none.", false);
+  }
+}
+
+document.getElementById("tgReload").addEventListener("click", loadTaught);
+
+document.getElementById("tgRows").addEventListener("click", async (e)=>{
+  if (!e.target.classList.contains("tgSet")) return;
+  const {k, q, v} = e.target.dataset;
+  const tr = e.target.closest("tr");
+  tr.querySelectorAll("button").forEach(b => { b.disabled = true; });
+  setStatus("tgStatus", "Writing\\u2026");
+  try {
+    const r = await post("/api/taught/apply", {work_key: k, question_id: q, verdict: v});
+    setStatus("tgStatus", (r.value == null
+      ? "Cleared — " : "Set to " + r.value + " — ") + r.note + " (" + r.effect + ")", true);
+    await loadTaught();
+  } catch (err) {
+    setStatus("tgStatus", String(err.message || err), false);
+    tr.querySelectorAll("button").forEach(b => { b.disabled = false; });
+  }
+});
+
 // ── what readers keep asking for ─────────────────────────────────────────
 //
 // RANKED BY WHAT STANDS OUT, NOT BY WHAT IS COMMON. A raw tick count would
@@ -745,6 +855,7 @@ document.getElementById("sgList").addEventListener("click", async (e)=>{
   // request — better spent while the books table is being read than while
   // the owner stares at the Suggestions tab.
   loadSuggestions();
+  loadTaught();
 })();
 </script>
 </body></html>`;

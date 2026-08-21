@@ -159,6 +159,8 @@ app.include_router(akinator_admin_tool.router)
 # unauthenticated caller gets 403 rather than a 422 disclosing the schema.
 app.include_router(akinator_suggest_tool.router)
 app.include_router(akinator_suggest_tool.admin_router)
+# The manual route around the drain's 8-play floor. Same secret gate.
+app.include_router(akinator_drain_tool.admin_router)
 
 
 @app.get("/health")

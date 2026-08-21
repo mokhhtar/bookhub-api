@@ -73,6 +73,16 @@ router = APIRouter(prefix="/akinator", tags=["akinator"])
 ARTIFACT_DIR = "games/data/akinator"
 OVERRIDES_PATH = f"{ARTIFACT_DIR}/overrides.json"
 
+# Cells the owner decided by hand, so the nightly drain leaves them alone.
+#
+# A SEPARATE FILE, NOT A FLAG INSIDE overrides.json, and that is deliberate:
+# overrides.json is loaded by every player and its shape is a flat
+# {work_key: {question_id: float}} the client reads directly. Adding
+# structure to mark a locked cell would mean touching the play path for
+# something only the drain needs to know. This file is never served to
+# anyone — only Render reads it.
+LOCKED_PATH = f"{ARTIFACT_DIR}/overrides_locked.json"
+
 DRAIN_SECRET = os.environ.get("AKINATOR_SYNC_SECRET", "")
 
 # How much the matrix's own value is worth, in units of players. Ten means
@@ -134,7 +144,9 @@ def drain(dry_run: bool = False) -> dict:
     except json.JSONDecodeError:
         return {"ok": False, "reason": "existing overrides.json is unparseable"}
 
-    written = skipped = 0
+    locked = _load_locked()
+
+    written = skipped = held = 0
     for work_key in touched:
         counts = cache.hgetall(COUNTS_PREFIX + work_key)
         if not counts:
@@ -153,6 +165,15 @@ def drain(dry_run: bool = False) -> dict:
                 continue
 
         for qid, tally in per_question.items():
+            # A cell the owner already decided by hand is not up for a vote.
+            # Play data may still be arriving on it, and it is still worth
+            # keeping, but it must not quietly soften a judgement made by
+            # someone who looked the book up — the whole reason the manual
+            # route exists is that a person can be right before eight
+            # players are.
+            if qid in locked.get(work_key, ()):
+                held += 1
+                continue
             # "Don't know" is excluded from the judgement entirely — it says
             # nothing about the answer. It is still recorded, because how
             # ANSWERABLE a question is, is worth knowing later.
@@ -169,12 +190,13 @@ def drain(dry_run: bool = False) -> dict:
             written += 1
 
     if not written:
-        return {"ok": True, "books": len(touched), "cells": 0,
-                "reason": f"{skipped} cells below the {MIN_PLAYS}-play floor"}
+        return {"ok": True, "books": len(touched), "cells": 0, "held": held,
+                "reason": f"{skipped} cells below the {MIN_PLAYS}-play floor"
+                          + (f", {held} held by a manual decision" if held else "")}
 
     if dry_run:
         return {"ok": True, "dry_run": True, "books": len(overrides),
-                "cells": written, "skipped": skipped}
+                "cells": written, "skipped": skipped, "held": held}
 
     payload = json.dumps(overrides, ensure_ascii=False,
                          separators=(",", ":")).encode("utf-8")
@@ -190,9 +212,216 @@ def drain(dry_run: bool = False) -> dict:
     # otherwise be dropped from the queue while its counts sat unread —
     # a silent partial loss, which is this project's most repeated bug.
     cache.pipeline([["SREM", TOUCHED_SET, k] for k in touched])
-    log.info("drained %d cells across %d books", written, len(touched))
+    log.info("drained %d cells across %d books (%d held by hand)",
+             written, len(touched), held)
     return {"ok": True, "books": len(touched), "cells": written,
-            "skipped": skipped}
+            "skipped": skipped, "held": held}
+
+
+def _load_locked() -> dict:
+    """{work_key: [question_id, ...]} the owner decided by hand.
+
+    An unreadable or malformed file returns {} — the drain then treats every
+    cell as open, which is the pre-existing behaviour and loses a lock rather
+    than losing the file. Refusing to drain at all because a lock list would
+    not parse would be a worse trade: the locks are a refinement, the drain
+    is the loop.
+    """
+    raw, _sha = _get_file(LOCKED_PATH)
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except json.JSONDecodeError:
+        log.warning("overrides_locked.json unparseable; treating all cells as open")
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: list(v) for k, v in data.items() if isinstance(v, list)}
+
+
+# ── the owner's own hand, ahead of the eight-play floor ──────────────────
+#
+# MIN_PLAYS stays at 8. This does not lower it; it goes around it, for the
+# one case the floor was never meant to catch.
+#
+# The floor exists because a handful of players must not move a cell — three
+# people agreeing is not evidence. But the owner reading a submission,
+# looking the book up and deciding is not three people agreeing; it is a
+# different KIND of act, and applying the statistical machinery to it would
+# be a category error. So a manual verdict does not compute a posterior from
+# the counts at all. It writes the clamp bound directly:
+#
+#     yes -> CLAMP_HIGH (0.90), the same value a VERIFIED fact gets
+#     no  -> CLAMP_LOW  (0.15), the strongest absence the system expresses
+#
+# That is exactly the ceiling play data may never exceed, which is the point:
+# the owner is allowed to assert what the catalogue is allowed to assert, and
+# no more. Nothing here can push a cell beyond what grounding permits.
+
+from pydantic import BaseModel, Field                      # noqa: E402
+
+MAX_TAUGHT_BOOKS = 60          # bounds the free tier's command budget
+
+
+def _taught_rows(limit: int = MAX_TAUGHT_BOOKS) -> tuple[list, int]:
+    """Every pending (book, question) tally, with what each side thinks."""
+    touched = cache.set_members(TOUCHED_SET)
+    if touched is None:
+        raise HTTPException(status_code=503,
+                            detail="play counts unreadable right now — this "
+                                   "is not the same as there being none")
+    total = len(touched)
+    if not touched:
+        return [], 0
+    touched = sorted(touched)[:limit]
+
+    replies = cache.pipeline([["HGETALL", COUNTS_PREFIX + k] for k in touched])
+    if replies is None:
+        raise HTTPException(status_code=503, detail="play counts unreadable right now")
+
+    locked = _load_locked()
+    art_ok = bool(_artifacts())
+    rows = []
+    for work_key, reply in zip(touched, replies):
+        flat = reply.get("result") if isinstance(reply, dict) else None
+        if not flat:
+            continue
+        counts = {flat[i]: flat[i + 1] for i in range(0, len(flat) - 1, 2)}
+        states = _book_states(work_key) if art_ok else {}
+
+        per_question: dict[str, dict[str, int]] = {}
+        for field, value in counts.items():
+            qid, _, answer = field.rpartition(":")
+            if not qid or answer not in ANSWER_WEIGHT and answer != "unknown":
+                continue
+            try:
+                per_question.setdefault(qid, {})[answer] = int(value)
+            except (TypeError, ValueError):
+                continue
+
+        for qid, tally in per_question.items():
+            judged = sum(n for a, n in tally.items() if a != "unknown")
+            yes = sum(ANSWER_WEIGHT.get(a, 0.0) * n
+                      for a, n in tally.items() if a != "unknown")
+            prior = _matrix_prior(work_key, qid, states) if art_ok else None
+            would = None
+            if prior is not None and judged:
+                would = round(max(CLAMP_LOW, min(CLAMP_HIGH,
+                              (yes + PRIOR_STRENGTH * prior)
+                              / (judged + PRIOR_STRENGTH))), 4)
+            rows.append({
+                "work_key": work_key,
+                "question_id": qid,
+                "tally": tally,
+                "judged": judged,
+                "unknown": tally.get("unknown", 0),
+                # What the SHIPPED table says today: True / False / None for
+                # "it does not assert anything", which is a third state and
+                # not a missing value.
+                "matrix": states.get(qid) if art_ok else None,
+                "prior": round(prior, 4) if prior is not None else None,
+                "drain_would_write": would,
+                "below_floor": judged < MIN_PLAYS,
+                "locked": qid in locked.get(work_key, ()),
+            })
+    # Readiest first: most judged answers, then biggest disagreement with
+    # what the table currently holds.
+    rows.sort(key=lambda r: (-r["judged"],
+                             -abs((r["drain_would_write"] or 0.5) - (r["prior"] or 0.5))))
+    return rows, total
+
+
+class TaughtApply(BaseModel):
+    work_key: str = Field(..., max_length=220)
+    question_id: str = Field(..., max_length=42)
+    # "clear" removes the override AND the lock, returning the cell to the
+    # matrix and to the drain's care.
+    verdict: str = Field(..., max_length=8)
+
+
+# Its own router, under the SAME secret gate as every other admin write and
+# for the same reason recorded in akinator_admin: `_require_admin` as a
+# ROUTER dependency, because FastAPI resolves dependencies before it
+# validates the body, so a caller without the secret gets 403 rather than a
+# 422 that lists the schema.
+from fastapi import Depends                                # noqa: E402
+from tools.akinator_admin import _require_admin            # noqa: E402
+
+admin_router = APIRouter(prefix="/akinator/admin/taught", tags=["akinator"],
+                         dependencies=[Depends(_require_admin)])
+
+
+@admin_router.post("")
+def list_taught():
+    """Everything players have taught that has not been written yet."""
+    rows, books = _taught_rows()
+    return {"ok": True, "cells": rows, "books": books, "min_plays": MIN_PLAYS}
+
+
+@admin_router.post("/apply")
+def apply_taught(body: TaughtApply) -> dict:
+    """Write one cell now, by hand, and hold it against the nightly drain."""
+    import re as _re
+    if not _re.match(r"^/(?:works|site|fandom)/[A-Za-z0-9_-]{1,200}$", body.work_key):
+        raise HTTPException(status_code=400, detail="malformed work key")
+    if not _re.match(r"^[a-z]+:[a-z0-9_]{1,40}$", body.question_id):
+        raise HTTPException(status_code=400, detail="malformed question id")
+    if body.verdict not in ("yes", "no", "clear"):
+        raise HTTPException(status_code=400,
+                            detail="verdict must be yes, no or clear")
+
+    raw, _sha = _get_file(OVERRIDES_PATH)
+    try:
+        overrides = json.loads(raw.decode("utf-8")) if raw else {}
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=502,
+                            detail="existing overrides.json is unparseable")
+    if not isinstance(overrides, dict):
+        overrides = {}
+    locked = _load_locked()
+
+    if body.verdict == "clear":
+        overrides.get(body.work_key, {}).pop(body.question_id, None)
+        if not overrides.get(body.work_key):
+            overrides.pop(body.work_key, None)
+        rest = [q for q in locked.get(body.work_key, []) if q != body.question_id]
+        if rest:
+            locked[body.work_key] = rest
+        else:
+            locked.pop(body.work_key, None)
+        value = None
+    else:
+        value = CLAMP_HIGH if body.verdict == "yes" else CLAMP_LOW
+        overrides.setdefault(body.work_key, {})[body.question_id] = value
+        held = locked.setdefault(body.work_key, [])
+        if body.question_id not in held:
+            held.append(body.question_id)
+
+    wrote = _commit_files({
+        OVERRIDES_PATH: json.dumps(overrides, ensure_ascii=False,
+                                   separators=(",", ":")).encode("utf-8"),
+        LOCKED_PATH: json.dumps(locked, ensure_ascii=False,
+                                indent=1).encode("utf-8"),
+    }, f"mind reader admin: {body.work_key} {body.question_id} "
+       f"-> {'cleared' if value is None else value} (reviewed by hand)")
+    if not wrote:
+        raise HTTPException(status_code=502, detail="commit failed")
+
+    # The counts have done their job for this cell. Dropping them keeps the
+    # review list showing only what is still undecided; a failure here is
+    # cosmetic (the cell is locked either way), so it does not fail the call.
+    cache.pipeline([["HDEL", COUNTS_PREFIX + body.work_key,
+                     f"{body.question_id}:{a}"]
+                    for a in ("yes", "probably_yes", "unknown",
+                              "probably_no", "no")])
+
+    log.info("admin set %s %s -> %s", body.work_key, body.question_id, value)
+    return {"ok": True, "value": value,
+            "effect": "instant — the page reads overrides.json on load",
+            "note": ("returned to the matrix and to the drain"
+                     if value is None else
+                     "held against the nightly drain until you clear it")}
 
 
 @router.post("/drain")
