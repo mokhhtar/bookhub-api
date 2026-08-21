@@ -216,6 +216,11 @@ def load_fandom_books(require_prose: bool = False) -> list[dict]:
             "author": auth.get("author"),
             "year": year,
             "year_source": year_src,
+            # When the WIKI was made, not the book. features.py reads it in
+            # one direction only — a wiki older than 2016 proves the book is
+            # too — so it is carried as its own field and never as a year.
+            "wiki_created": (wikidates.get(title) or {}).get("created")
+                            if wikidates else None,
         })
     return out
 
@@ -310,7 +315,7 @@ def supplement(docs: list[dict], band: tuple[int, int] = DEFAULT_BAND,
             # never stored as one -- features.py uses it in one direction
             # only, to settle "in the last 10 years" for a book whose own
             # year nobody could find. See harvest_fandom_wikidates.py.
-            "wiki_created": ((wikidates or {}).get(b["title"]) or {}).get("created"),
+            "wiki_created": b.get("wiki_created"),
             "_fandom_wiki": b["subdomain"],
             "_year_source": b["year_source"],
             "_fandom_traits": b["labels"],
