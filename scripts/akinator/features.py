@@ -599,7 +599,6 @@ STRUCTURAL_QUESTIONS = {
     # 55.0%, WORSE than removing them. A question the player cannot answer
     # is not neutral: it spends one turn of thirty and multiplies every
     # book by 0.5.
-    "fact:famous": "Is it very widely read?",
     "fact:namedchars": "Does it have well-known named characters?",
     # REMOVED with the page questions and for the same reason: it asks
     # about an AGGREGATE the player has no access to. A reader knows
@@ -607,10 +606,6 @@ STRUCTURAL_QUESTIONS = {
     # people" is a database row. The owner's analogy for the whole family
     # was exact -- it is Akinator asking whether the character appeared on
     # page 54.
-    # Was "Has it been translated into many languages?" — the underlying
-    # signal is language count, but what a reader can actually answer is
-    # whether the book is famous internationally.
-    "fact:translated": "Is it famous around the world?",
 }
 
 
@@ -679,8 +674,17 @@ def structural_features(doc: dict, popularity_rank: int, corpus_size: int,
     # See STRUCTURAL_QUESTIONS: page count is an edition fact, not a fact
     # about the work, and is no longer asked.
 
-    # Top decile of a popularity-sorted corpus.
-    feats["fact:famous"] = popularity_rank < max(1, corpus_size // 10)
+    # REMOVED 2026-08-22, on the owner's call, and it belongs with the
+    # ratings and page-count family removed above rather than apart from it.
+    # This was never "is this book famous" — it was `popularity_rank <
+    # corpus_size // 10`, the top decile of OUR readinglog ordering. A
+    # reader cannot answer that. They can answer whether a book is famous,
+    # which is a different question we were not asking, and the gap between
+    # the two is exactly the "aggregate the player has no access to" that
+    # took the ratings question out.
+    #
+    # It answered yes for exactly 500 of 5,000 books, which is the decile
+    # and not a fact about fame.
     # "Well-known NAMED characters" — and a name the character questions
     # would refuse to ask about is not one.
     #
@@ -701,12 +705,20 @@ def structural_features(doc: dict, popularity_rank: int, corpus_size: int,
     # See STRUCTURAL_QUESTIONS: an aggregate rating is not something a
     # player can answer about the book in their head.
 
-    # "English?" is useless — 96% of the corpus is in English. The number of
-    # languages a book exists in is a decent proxy for international fame,
-    # and fame is the half of it a reader can actually answer. Edition count
-    # crosses the same threshold in the data but not in a reader's head, so
-    # `ebook_access` and `edition_count` are both read here no longer.
-    feats["fact:translated"] = len(languages) >= 5 if languages else None
+    # REMOVED 2026-08-22, on the owner's call, and the file had already made
+    # the argument against itself: the note beside form:series calls this
+    # "a catalogue artefact — it reads translation and edition counts, which
+    # is not something a reader holds in their head". That note was written
+    # when the owner first hit it, and the response then was to add
+    # `form:webnovel` rather than to remove this. It survived by accident.
+    #
+    # It also collided with `fact:famous` in the only place that matters, a
+    # player's head: "Is it very widely read?" and "Is it famous around the
+    # world?" are one question to a reader, and they were two rows with
+    # different answers — 500 yes against 1,519. Anyone answering both
+    # honestly contradicted themselves.
+    #
+    # `doc["language"]` is now read by nothing here. Left in the corpus.
     return feats
 
 
