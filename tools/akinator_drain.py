@@ -371,6 +371,23 @@ def apply_taught(body: TaughtApply) -> dict:
         raise HTTPException(status_code=400,
                             detail="verdict must be yes, no or clear")
 
+    # THE ID MUST NAME A QUESTION THE GAME ACTUALLY ASKS. The regex above
+    # only proves the shape, so `theme:magik` passed it and would have
+    # written an override keyed to a question nobody ships — invisible
+    # forever, and indistinguishable from a change that simply did not work.
+    # Same guard, same reason, as /akinator/admin/display refusing a
+    # work_key that is in no shipped row.
+    #
+    # It matters more now than when only the taught queue reached this
+    # endpoint: that queue could only ever offer ids read out of the live
+    # question list, and the editor lets a person type one.
+    art = _artifacts()
+    live_ids = set(art.get("qids") or ())
+    if live_ids and body.question_id not in live_ids:
+        raise HTTPException(
+            status_code=404,
+            detail=f"'{body.question_id}' is not a question the game asks")
+
     raw, _sha = _get_file(OVERRIDES_PATH)
     try:
         overrides = json.loads(raw.decode("utf-8")) if raw else {}

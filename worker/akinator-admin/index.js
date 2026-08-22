@@ -166,6 +166,7 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
   <button data-tab="add">Add a book</button>
   <button data-tab="suggestions">Suggestions <span class="pill" id="sgCount"></span></button>
   <button data-tab="taught">Taught <span class="pill" id="tgCount"></span></button>
+  <button data-tab="edit">Edit a book</button>
 </nav>
 
 <section id="books" class="on">
@@ -206,6 +207,17 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
     <button class="act" id="addSubmit">Add book</button>
     <p class="status" id="addStatus"></p>
   </div>
+</section>
+
+<section id="edit">
+  <p class="sub" style="margin-bottom:14px">Everything about one book on one screen. Title and author change what the
+  reveal PRINTS and take effect as soon as GitHub Pages redeploys. Each question below writes the same verified bound a
+  catalogued fact gets (0.90 / 0.15) straight into overrides.json, and is then held against the nightly drain until you
+  clear it. The year is the exception and says so: it feeds a matrix bit only a full rebuild recomputes.</p>
+  <input type="search" id="edSearch" placeholder="Find a book by title or author…">
+  <div id="edPick"></div>
+  <div id="edPanel"></div>
+  <p class="status" id="edStatus"></p>
 </section>
 
 <section id="taught">
@@ -649,6 +661,136 @@ function renderSuggestions(){
   }).join("");
 }
 
+// ── edit one book, everything about it ───────────────────────────────────
+//
+// ALMOST NO NEW BACKEND. Every field here already had an endpoint; what was
+// missing was a place to see them together. Title and author go through
+// /api/display, the year through /api/correction, and each of the 48
+// questions through /api/taught/apply — which never required the cell to
+// have play counts, so it was already a general "set this cell by hand".
+//
+// THE THREE FIELDS LAND AT THREE DIFFERENT TIMES and the panel says so per
+// field rather than in a footnote. An admin page that implies a year change
+// is live is worse than one that cannot change the year at all:
+//
+//   title/author   overrides display only        as soon as Pages redeploys
+//   a question     overrides.json, clamp bound   same, and held from the drain
+//   the year       feeds a matrix bit            NEXT FULL REBUILD ONLY
+//
+// The matrix is fetched here and nowhere else on this page: showing what a
+// cell says today is the whole point, and "set it to yes" without showing
+// that it already says yes is how you get an override that changes nothing.
+let matrix = null, meta = null, overrides = {};
+
+function cellState(bookIndex, qIndex){
+  if (!matrix || !meta) return null;
+  const off = bookIndex * meta.bytes_per_row;
+  return (matrix[off + (qIndex >> 2)] >> ((qIndex & 3) * 2)) & 3;
+}
+
+function renderEditPanel(i){
+  const b = books[i], host = document.getElementById("edPanel");
+  const ov = overrides[b.k] || {};
+  const rows = questions.map((q, qi) => {
+    const st = cellState(i, qi);
+    // Three states, and "unknown" is NOT "no". The table asserting nothing
+    // is the case most worth editing, so it must not read as a denial.
+    const table = st === 1 ? '<span class="sg-new">yes</span>'
+      : st === 0 ? "no"
+      : '<span class="sg-none">no record</span>';
+    const o = ov[q.id];
+    const cur = o === undefined ? ""
+      : '<span class="badge off">set by hand: ' + esc(o) + "</span>";
+    return "<tr><td>" + esc(q.text) + '<br><span class="sg-none">' + esc(q.id) + "</span></td>"
+      + "<td>" + table + "</td><td>" + cur + "</td>"
+      + '<td class="row">'
+      + '<button class="act ghost edSet" data-q="' + esc(q.id) + '" data-v="yes">Yes</button>'
+      + '<button class="act ghost edSet" data-q="' + esc(q.id) + '" data-v="no">No</button>'
+      + (o === undefined ? ""
+         : '<button class="act ghost edSet" data-q="' + esc(q.id) + '" data-v="clear">Clear</button>')
+      + "</td></tr>";
+  }).join("");
+
+  host.innerHTML =
+    '<div class="card" style="max-width:none;margin-bottom:14px" data-key="' + esc(b.k) + '">'
+    + '<div class="field"><label>Title shown to the player</label>'
+      + '<input type="text" id="edTitle" value="' + esc(b.t) + '"></div>'
+    + '<div class="field"><label>Author shown to the player</label>'
+      + '<input type="text" id="edAuthor" value="' + esc(b.a || "") + '"></div>'
+    + '<button class="act" id="edSaveName">Save title and author</button>'
+    + '<p class="effect">Changes only what the reveal prints. No question and no '
+    + "matrix bit reads these.</p>"
+    + '<div class="field" style="margin-top:16px"><label>First published '
+      + "(feeds six era questions)</label>"
+      + '<input type="text" id="edYear" inputmode="numeric" style="width:120px" value="'
+      + esc(b.y == null ? "" : b.y) + '"></div>'
+    + '<button class="act ghost" id="edSaveYear">Queue the year</button>'
+    + '<p class="effect">NOT instant. A year feeds a matrix bit that only a local '
+    + "build_matrix.py run recomputes — everything else on this page is live.</p></div>"
+    + '<div class="scroll"><table><thead><tr><th>Question</th><th>Table says</th>'
+    + "<th>Override</th><th></th></tr></thead><tbody>" + rows + "</tbody></table></div>";
+
+  document.getElementById("edSaveName").addEventListener("click", async () => {
+    const title = document.getElementById("edTitle").value.trim();
+    const author = document.getElementById("edAuthor").value.trim();
+    if (!title) { setStatus("edStatus", "a title cannot be blank", false); return; }
+    try {
+      const r = await post("/api/display", {work_key: b.k, title, author});
+      books[i].t = title; books[i].a = author;
+      setStatus("edStatus", "Renamed for display — " + r.effect, true);
+    } catch (err) { setStatus("edStatus", String(err.message || err), false); }
+  });
+
+  document.getElementById("edSaveYear").addEventListener("click", async () => {
+    const raw = document.getElementById("edYear").value.trim();
+    if (!/^\\d{1,4}$/.test(raw)) { setStatus("edStatus", "a year, digits only", false); return; }
+    try {
+      const r = await post("/api/correction",
+        {work_key: b.k, field: "first_publish_year", value: parseInt(raw, 10)});
+      setStatus("edStatus", "Year queued — " + r.effect, true);
+    } catch (err) { setStatus("edStatus", String(err.message || err), false); }
+  });
+
+  host.querySelector(".scroll").addEventListener("click", async (e) => {
+    if (!e.target.classList.contains("edSet")) return;
+    const q = e.target.dataset.q, v = e.target.dataset.v;
+    e.target.closest("tr").querySelectorAll("button").forEach(x => { x.disabled = true; });
+    setStatus("edStatus", "Writing\\u2026");
+    try {
+      const r = await post("/api/taught/apply", {work_key: b.k, question_id: q, verdict: v});
+      if (r.value == null) { delete (overrides[b.k] || {})[q]; }
+      else { (overrides[b.k] = overrides[b.k] || {})[q] = r.value; }
+      setStatus("edStatus", (r.value == null ? "Cleared \\u2014 " : "Set to " + r.value + " \\u2014 ")
+        + r.note, true);
+      renderEditPanel(i);
+    } catch (err) {
+      setStatus("edStatus", String(err.message || err), false);
+      renderEditPanel(i);
+    }
+  });
+}
+
+document.getElementById("edSearch").addEventListener("input", (e) => {
+  const f = (e.target.value || "").toLowerCase();
+  const host = document.getElementById("edPick");
+  if (f.length < 2) { host.innerHTML = ""; return; }
+  const hits = books.map((b, i) => ({b, i}))
+    .filter(({b}) => (b.t || "").toLowerCase().includes(f)
+                  || (b.a || "").toLowerCase().includes(f)).slice(0, 12);
+  host.innerHTML = hits.length
+    ? '<div class="scroll"><table><tbody>' + hits.map(({b, i}) =>
+        '<tr><td class="title">' + esc(b.t) + "</td><td>" + esc(b.a || "\\u2014")
+        + "</td><td>" + (b.y ?? "\\u2014") + '</td><td><button class="act ghost edPickBtn" '
+        + 'data-i="' + i + '">Edit</button></td></tr>').join("") + "</tbody></table></div>"
+    : '<p class="status">No match.</p>';
+});
+
+document.getElementById("edPick").addEventListener("click", (e) => {
+  if (!e.target.classList.contains("edPickBtn")) return;
+  document.getElementById("edPick").innerHTML = "";
+  renderEditPanel(+e.target.dataset.i);
+});
+
 // ── taught cells: the owner's hand, ahead of the 8-play floor ────────────
 //
 // MIN_PLAYS stays at 8 and this does not lower it. It goes around it for the
@@ -901,6 +1043,19 @@ document.getElementById("sgList").addEventListener("click", async (e)=>{
       fetch(DATA+"/excluded.json").then(r=>r.ok?r.json():[]).catch(()=>[]),
     ]);
     books = b; questions = q; excluded = new Set(x);
+    // The matrix and the override file, for the Edit tab only. 63 KB and a
+    // small JSON on an admin page nobody loads casually — and without them
+    // the editor would be setting cells blind, which is how you write an
+    // override that changes nothing. A 404 on overrides.json is normal:
+    // it does not exist until something has been written.
+    Promise.all([
+      fetch(DATA + "/matrix.bin").then(r => r.ok ? r.arrayBuffer() : null),
+      fetch(DATA + "/meta.json").then(r => r.json()),
+      fetch(DATA + "/overrides.json").then(r => r.ok ? r.json() : {}).catch(() => ({})),
+    ]).then(([mb, mt, ov]) => {
+      if (mb) matrix = new Uint8Array(mb);
+      meta = mt; overrides = ov || {};
+    }).catch(() => {});
     computeDupFlags();
     renderBooks(""); renderQuestions();
   } catch (e) {
