@@ -71,11 +71,83 @@ def fetch_one(work_key: str, timeout: int = 25) -> str:
     return text[:MAX_CHARS] if len(text) >= MIN_CHARS else ""
 
 
+def fetch_google(title: str, author: str) -> str:
+    """A description from Google Books, with Open Library as the fallback.
+
+    THE SECOND SOURCE, and it exists because the first one is EXHAUSTED, not
+    because it was never run. All 5,000 books were asked of Open Library's
+    per-work endpoint; 3,648 had text and 1,292 of the shipped books were
+    asked and genuinely had none. Re-running the OL pass on those cannot
+    produce anything — 73% is the OL ceiling this project has cited for
+    weeks, and this is the measurement behind it.
+
+    `resolve_book` is the resolver every other tool here uses, so this
+    inherits its Google Books -> Open Library chain and its author fix
+    rather than opening a fourth way of asking about a book.
+
+    Measured yield on a random 14 of the shipped books that OL had nothing
+    for: **7 usable** (>=200 chars), and that sample included several Google
+    503s, so it is a floor rather than an estimate. 12 Rules for Life, Dead
+    Poets Society, The Ones Who Walk Away from Omelas and Grandma's Bag of
+    Stories all came back with real text.
+
+    THE 503 TRAP, and it bit this function within two minutes of first
+    running. `resolve_book` swallows a provider error and answers
+    `found=False` — the SAME value it gives for a book that genuinely has no
+    record. So a Google Books 503 was being written down as "asked, nothing
+    there", permanently, and *12 Rules for Life* — rank 99, richness 19 —
+    was skipped on a transient server error and would never have been asked
+    again. Unavailable recorded as absent: failure shape #4, and the reason
+    `_catalogue_reachable` exists over in tools/akinator_suggest.py.
+
+    So a miss is only reported as a miss when the catalogue is demonstrably
+    up. If it is not, this RAISES, and the caller's failure path leaves the
+    book out of the asked-set for the next run to retry.
+    """
+    sys.path.insert(0, REPO_ROOT)
+    from book_data import resolve_book                     # noqa: E402
+    record = resolve_book(title, author)
+    if record.found:
+        return _text_of(record.description)
+    if not _catalogue_reachable():
+        raise RuntimeError("catalogue unreachable; not recording a miss")
+    return ""
+
+
+def _catalogue_reachable() -> bool:
+    """Did we look and find nothing, or could we not look?
+
+    One query that must return something, asked only on the failure path.
+    Open Library rather than Google Books on purpose: Google is the source
+    that 503s here, and asking a flaky provider whether it is flaky answers
+    the wrong question. What is being tested is whether THIS MACHINE can
+    reach a catalogue at all.
+    """
+    import urllib.parse
+    try:
+        url = ("https://openlibrary.org/search.json?"
+               + urllib.parse.urlencode({"q": "dune frank herbert",
+                                         "fields": "key", "limit": 1}))
+        req = urllib.request.Request(url, headers=HEADERS)
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return bool(json.load(resp).get("docs"))
+    except Exception:                                      # noqa: BLE001
+        return False
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--limit", type=int, default=5000)
     ap.add_argument("--delay", type=float, default=0.4)
     ap.add_argument("--out", default=OUT_PATH)
+    ap.add_argument("--source", choices=["openlibrary", "google"],
+                    default="openlibrary",
+                    help="'google' asks Google Books (falling back to Open "
+                         "Library) for the books the openlibrary pass asked "
+                         "about and found nothing for. It GAP-FILLS: a book "
+                         "that already has text is never re-fetched and never "
+                         "overwritten, so a worse second answer cannot "
+                         "replace a good first one.")
     args = ap.parse_args()
 
     docs = []
@@ -92,7 +164,12 @@ def main() -> None:
 
     out: dict[str, str] = {}
     asked: set[str] = set()
-    asked_path = args.out.replace(".json", "_asked.json")
+    # Each source keeps its OWN asked-set. Sharing one would mean the Google
+    # pass marking a book "asked" and the next Open Library run skipping it —
+    # or, worse, the reverse: this pass skipping all 5,000 because the OL run
+    # had already asked them, which is exactly the population it exists for.
+    suffix = "_asked.json" if args.source == "openlibrary" else "_asked_google.json"
+    asked_path = args.out.replace(".json", suffix)
     if os.path.exists(args.out):
         with open(args.out, encoding="utf-8") as fh:
             out = json.load(fh)
@@ -106,13 +183,25 @@ def main() -> None:
         print(f"Resuming: {len(asked)} asked, {len(out)} with text.\n")
 
     todo = [d for d in docs if d.get("key") and d["key"] not in asked]
-    print(f"{len(docs)} books, {len(todo)} still to ask about.\n")
+    if args.source == "google":
+        # GAP-FILL ONLY. A book that already has usable text is not asked
+        # again: the first answer came from the source carrying a per-work
+        # editorial description, and a publisher blurb is not an improvement
+        # on it. This pass exists for the books that have nothing at all.
+        todo = [d for d in todo if not _text_of(out.get(d["key"], ""))]
+        print(f"{len(docs)} books, {len(todo)} with NO description to fill.\n")
+    else:
+        print(f"{len(docs)} books, {len(todo)} still to ask about.\n")
 
     failures = 0
     for i, doc in enumerate(todo, 1):
         key = doc["key"]
         try:
-            text = fetch_one(key)
+            if args.source == "google":
+                text = fetch_google(doc.get("title") or "",
+                                    (doc.get("author_name") or [""])[0])
+            else:
+                text = fetch_one(key)
             failures = 0
         except Exception as exc:  # noqa: BLE001
             failures += 1
@@ -124,7 +213,9 @@ def main() -> None:
             continue
 
         asked.add(key)
-        if text:
+        # `not out.get(key)` is belt and braces on top of the todo filter:
+        # a long run could otherwise clobber text a concurrent process wrote.
+        if text and not _text_of(out.get(key, "")):
             out[key] = text
 
         # Checkpoint often. At 200 the first smoke test was killed at ~175

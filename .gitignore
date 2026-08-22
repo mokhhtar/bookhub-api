@@ -75,6 +75,10 @@ venv/
 # OL work descriptions for trait extraction, regenerable.
 /data/akinator_descriptions.json
 /data/akinator_descriptions_asked.json
+# Second source (--source google) keeps its own attempt log, same reason.
+/data/akinator_descriptions_asked_google.json
+# Backups taken before a destructive regeneration. Regenerable, never shipped.
+/data/*.json.bak
 
 # Hand-labelled trait batches (input to manual_traits.py ingest).
 /data/_labels_batch*.json
