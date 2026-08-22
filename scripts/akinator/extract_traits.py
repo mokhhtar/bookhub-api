@@ -216,6 +216,42 @@ def _trait_config():
     )
 
 
+# A batch is bounded by CHARACTERS, not by a count of books.
+#
+# MEASURED 2026-08-21, and it is why --source fandom labelled nothing at
+# all. The corpus path feeds short Open Library blurbs, so eight of them is
+# a small prompt and a fixed count was fine. The Fandom path feeds harvested
+# wiki prose capped at 4,000 characters each, and it processes LONGEST
+# FIRST — so the very first batch is the eight biggest articles: 35,213
+# characters, about 9,000 tokens, and Groq answers **HTTP 413 Payload Too
+# Large**. Every batch failed, the run reported "0 books labelled", and the
+# error surfaced as "Groq returned nothing (key set? quota left?)" — which
+# reads as a quota problem and is not one.
+#
+# 12,000 characters is ~3,000 prompt tokens. 24,000 was tried first: it
+# cleared the 413, and then hit the OTHER wall — Groq's free tier allows
+# **12,000 tokens a minute**, so two 6,000-token calls exhaust it and every
+# batch after the first came back empty. Half the size means four calls a
+# minute fit the same budget, and the caller still has to pace itself
+# (`--delay 20` for this source). `--batch` still caps the count; this caps
+# the size, and a single book over the budget goes on its own rather than
+# being dropped.
+CHUNK_CHAR_BUDGET = 12000
+
+
+def _pack_chunk(todo: list, start: int, max_books: int,
+                descriptions: dict) -> list:
+    """As many books as fit in one prompt, at least one."""
+    chunk, total = [], 0
+    for doc in todo[start:start + max_books]:
+        size = len(descriptions.get(doc["key"]) or "")
+        if chunk and total + size > CHUNK_CHAR_BUDGET:
+            break
+        chunk.append(doc)
+        total += size
+    return chunk
+
+
 def _generate(prompt: str, provider: str = "auto") -> str:
     """One completion. `provider` picks who answers.
 
@@ -262,23 +298,59 @@ def _groq_call(prompt: str, config) -> str | None:
         return _groq_generate(prompt, config)
     if not GROQ_API_KEY:
         return None
-    try:
-        resp = httpx.post(
-            GROQ_CHAT_URL,
-            headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
-            json={
-                "model": GROQ_MODEL_OVERRIDE or GROQ_MODEL,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": config.temperature,
-                "max_tokens": config.max_output_tokens,
-            },
-            timeout=90.0,
-        )
-        resp.raise_for_status()
-        return (resp.json()["choices"][0]["message"]["content"] or "").strip() or None
-    except Exception as e:  # noqa: BLE001 — same fail-open shape as the client
-        logging.getLogger("gemini_client").warning(f"Groq fallback failed: {e}")
-        return None
+
+    # `reasoning_effort: low`, and without it this whole path returns
+    # nothing at batch size. MEASURED 2026-08-21: gpt-oss-120b is a
+    # REASONING model, and `TRAIT_MAX_OUTPUT_TOKENS = 800` was sized for
+    # gemini-3.1-flash-lite, which does not think before it answers. Asked
+    # for eight books it spent **798 of its 800 output tokens on reasoning**
+    # and returned `finish_reason: length` with an EMPTY string — so every
+    # batch failed and the run reported "0 books labelled" while looking
+    # like a quota problem.
+    #
+    # Raising the cap is not the fix and was tried: prompt is already 5,379
+    # tokens and max_tokens=4000 answers **HTTP 413**. Lowering the effort
+    # is: same batch of eight, reasoning drops to 459, `finish_reason:
+    # stop`, 404 characters of correct JSON.
+    #
+    # Sent only on the override path, which is build-time scripts choosing
+    # their own model. A model that rejects the parameter gets one retry
+    # without it rather than a silent None — an unknown-parameter 400 must
+    # not look like an empty answer, which is the exact confusion this
+    # comment exists to end.
+    body = {
+        "model": GROQ_MODEL_OVERRIDE or GROQ_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": config.temperature,
+        "max_tokens": config.max_output_tokens,
+        "reasoning_effort": "low",
+    }
+    for attempt in (0, 1):
+        try:
+            resp = httpx.post(
+                GROQ_CHAT_URL,
+                headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+                json=body,
+                timeout=90.0,
+            )
+            if resp.status_code == 400 and attempt == 0 and "reasoning_effort" in body:
+                body.pop("reasoning_effort")
+                continue
+            resp.raise_for_status()
+            choice = resp.json()["choices"][0]
+            text = (choice["message"].get("content") or "").strip()
+            if not text and choice.get("finish_reason") == "length":
+                # Say which wall was hit. "Groq returned nothing" sent this
+                # session hunting a quota that was never the problem.
+                logging.getLogger("gemini_client").warning(
+                    "Groq hit max_tokens before writing any content "
+                    "(reasoning consumed the budget) — lower the batch size "
+                    "or raise TRAIT_MAX_OUTPUT_TOKENS")
+            return text or None
+        except Exception as e:  # noqa: BLE001 — same fail-open shape as the client
+            logging.getLogger("gemini_client").warning(f"Groq fallback failed: {e}")
+            return None
+    return None
 
 
 def extract_one(title: str, author: str, text: str,
@@ -528,8 +600,9 @@ def main() -> None:
 
     consecutive = 0
     stopped_early = False
-    for start in range(0, len(todo), args.batch):
-        chunk = todo[start:start + args.batch]
+    start = 0
+    while start < len(todo):
+        chunk = _pack_chunk(todo, start, args.batch, descriptions)
         rows = [(d.get("title") or "", (d.get("author_name") or [""])[0],
                  descriptions[d["key"]]) for d in chunk]
         results = extract_batch(rows, args.provider) if args.batch > 1 else             [extract_one(*r, args.provider) for r in rows]
@@ -548,7 +621,11 @@ def main() -> None:
         else:
             consecutive = 0
 
-        i = start + len(chunk)
+        # Advance by what was actually PACKED, not by args.batch: a
+        # size-bounded chunk is often shorter than the count allows, and
+        # striding past the difference would skip books silently.
+        start += len(chunk)
+        i = start
         with open(args.out, "w", encoding="utf-8") as fh:
             json.dump({"traits": out}, fh, ensure_ascii=False)
         labelled = sum(1 for v in out.values() if v)

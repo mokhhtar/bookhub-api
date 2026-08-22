@@ -985,6 +985,22 @@ FORCE_KEEP = {
     # how MANY books a question applies to and cannot see how cleanly a
     # reader answers it, which is the same reason the three above are here.
     "form:webnovel",
+    # 11 books of 5,000 — 0.22%, twenty times under the floor — and kept on
+    # a MEASUREMENT rather than the usual "a reader answers it cleanly"
+    # argument, which would be true here too.
+    #
+    # The 39 web novels score 0/39 and the documented reason is not the
+    # chooser: 24 of them share a BYTE-IDENTICAL answer row with another web
+    # novel, so belief cannot concentrate on any one of them. For a group of
+    # eight the maximum attainable belief is 12.5% against a 0.65 threshold —
+    # unguessable by arithmetic, whatever any question does.
+    #
+    # This question splits FOUR of the six identical-row groups:
+    #     group of 8 -> 2 yes / 6 no        group of 3 -> 1 / 2
+    #     group of 7 -> 1 yes / 6 no        group of 2 -> 1 / 1
+    # The lone book severed from the group of seven becomes reachable at all
+    # for the first time. That is the point; the frequency is beside it.
+    "t:powersystem",
 }
 
 

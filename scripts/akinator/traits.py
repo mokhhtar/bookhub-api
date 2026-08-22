@@ -119,6 +119,33 @@ TRAITS: dict[str, tuple[str, str]] = {
     "t:funny": (
         "Is it funny?",
         "The book is written to be humorous, comic or satirical."),
+    # LAYER 2, 2026-08-21. The owner asked for a "power system" question and
+    # the subject data cannot answer it: that vocabulary was searched for in
+    # BOTH catalogues and is absent — Open Library gives 33 apparent hits on
+    # the shipped 5,000 of which nearly all are `nervous system`, `limbic
+    # system`, `system analysis` and `esperanto`, and the Fandom SUBJECT
+    # harvest gives three books, two of them false. It is not in the
+    # metadata anywhere.
+    #
+    # It IS in the prose. So it is asked of the labeller against the wiki
+    # text instead, which is what this vocabulary is for.
+    #
+    # DELIBERATELY NARROWER THAN `theme:magic`. That question now asks
+    # "Does it have supernatural elements?" and Harry Potter, Dracula and
+    # LOTR all answer yes to it. This one asks about a CODIFIED, ranked
+    # progression the story states rules for — the thing a cultivation or
+    # LitRPG reader recognises instantly and a Dracula reader does not.
+    # Two questions that both mean "is it fantasy" would be worth nothing;
+    # the wording keeps them apart, and the dedup guard checks they are not
+    # byte-identical.
+    "t:powersystem": (
+        "Does it have a ranked system of powers with stated rules?",
+        "The story sets out an explicit, ranked way of gaining or measuring "
+        "power that characters advance through — cultivation stages, levels, "
+        "ranks, classes, quirks, chakra, mana, a literal 'system' — with "
+        "rules the text states. Ordinary magic, a gift, or an unexplained "
+        "supernatural ability is NOT this: the ranking and its rules must be "
+        "part of how the story works."),
 }
 
 TRAIT_QUESTIONS = {k: v[0] for k, v in TRAITS.items()}
