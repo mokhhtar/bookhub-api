@@ -79,6 +79,11 @@ const ROUTES = {
   "/api/suggestions/theme": relay("/akinator/admin/suggestions/theme"),
   "/api/taught": relay("/akinator/admin/taught"),
   "/api/taught/apply": relay("/akinator/admin/taught/apply"),
+  // Verdicts on scripts/akinator/propose_questions.py's mined candidates —
+  // the candidates themselves are read straight off question_candidates.json
+  // by the client, same as books.json/questions.json; only the decision
+  // needs a write, hence one relay rather than two.
+  "/api/candidates/decide": relay("/akinator/admin/candidates/decide"),
 };
 
 function page() {
@@ -156,6 +161,9 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
 .sg-stats table{min-width:420px}
 .sg-stats .scroll{margin-top:10px}
 .sg-over{color:var(--work)}
+.cq-draft{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:9px 11px;
+  font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;
+  word-break:break-word;margin:0 0 10px;max-height:220px;overflow:auto}
 </style></head><body><div class="wrap">
 <h1>Book Mind Reader — admin</h1>
 <p class="sub">Every action here commits directly to the live game. Nothing is automatic — nothing applies without you clicking it.</p>
@@ -166,6 +174,7 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
   <button data-tab="add">Add a book</button>
   <button data-tab="suggestions">Suggestions <span class="pill" id="sgCount"></span></button>
   <button data-tab="taught">Taught <span class="pill" id="tgCount"></span></button>
+  <button data-tab="candidates">Mined questions <span class="pill" id="cqCount"></span></button>
   <button data-tab="edit">Edit a book</button>
 </nav>
 
@@ -249,6 +258,19 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
   <div id="sgAsks"></div>
   <div id="sgStats"></div>
   <div id="sgList"></div>
+</section>
+
+<section id="candidates">
+  <p class="sub" style="margin-bottom:14px">Proposed by <code>scripts/akinator/propose_questions.py</code>, measured
+  against the real corpus (or a real sample, for a prose-only candidate) before you ever see it — the frequency and
+  any near-duplicate warning below are numbers, not guesses. Accepting only records a verdict here; it never edits
+  <code>features.py</code> or <code>traits.py</code> and never triggers a rebuild. Copy the drafted rule and paste it
+  in by hand — a bad keyword needs a human eye on the diff before it can silently mislabel 5,000 books.</p>
+  <div class="row" style="margin-bottom:12px">
+    <button class="act ghost" id="cqReload">Refresh</button>
+    <span class="status" id="cqStatus" style="margin:0"></span>
+  </div>
+  <div id="cqList"></div>
 </section>
 
 <footer>Verified against Google Books / Open Library before a row is added — this page cannot invent a book.
@@ -1051,6 +1073,124 @@ document.getElementById("sgList").addEventListener("click", async (e)=>{
   }
 });
 
+// ── mined questions ───────────────────────────────────────────────────────
+//
+// FETCHED DIRECTLY, NOT THROUGH A RELAY — same as books.json/questions.json.
+// propose_questions.py writes this file straight into the bookhub repo, so
+// it is already a public artifact the moment it is committed; only the
+// ACCEPT/REJECT verdict needs write access, which is what /api/candidates
+// /decide is for. A 404 is the normal state until a local run has produced
+// one, same convention excluded.json/overrides.json already use.
+let candidates = [];
+
+function renderCandidates(){
+  const host = document.getElementById("cqList");
+  const pending = candidates.filter((c) => c.status === "pending");
+  document.getElementById("cqCount").textContent = pending.length || "";
+  if (!candidates.length){
+    host.innerHTML = '<p class="status">Nothing yet. Run '
+      + '<code>python scripts/akinator/propose_questions.py</code> locally — '
+      + "it writes straight into this file.</p>";
+    return;
+  }
+  if (!pending.length){
+    host.innerHTML = '<p class="status">Nothing pending — '
+      + (candidates.length) + " candidate(s) already decided.</p>";
+    return;
+  }
+
+  host.innerHTML = pending.map((c) => {
+    const measured = c.measured || {};
+    const band = measured.passes_band
+      ? '<span class="sg-new">clears the 5–60% floor</span>'
+      : '<span class="sg-over">below the floor — would be dropped at build time</span>';
+    const sampleNote = measured.measured_on === "sample"
+      ? ' <span class="sg-none">(sample of ' + esc(measured.sample_size) + ', not the whole corpus — '
+        + "prose candidates have no keyword shortcut to measure exactly)</span>"
+      : ' <span class="sg-none">(exact, full shipped corpus, ' + esc(measured.sample_size) + " books)</span>";
+    const freq = ((measured.frequency || 0) * 100).toFixed(1) + "%";
+
+    const examples = (label, list) => (list && list.length)
+      ? '<div class="sg-themes">' + esc(label) + ": "
+        + list.map((t) => '<span class="badge">' + esc(t) + "</span>").join(" ") + "</div>"
+      : "";
+
+    const coll = c.collision || {};
+    let warn = "";
+    if (coll.exact_wording_collision){
+      warn += '<p class="sg-dupe sg-dupe--sure">EXACT WORDING COLLISION with <code>'
+        + esc(coll.exact_wording_collision) + "</code> — a player would be asked the same "
+        + "question twice. Do not add this as written.</p>";
+    }
+    if (coll.near_duplicate && coll.near_duplicate.length){
+      warn += '<p class="sg-dupe">Agrees with an existing question on most sampled books — '
+        + "it may tell the engine almost nothing new:</p><ul class=\"sg-near\">"
+        + coll.near_duplicate.map((n) => "<li><code>" + esc(n.id) + "</code> — "
+          + Math.round(n.agreement * 100) + "% agreement over " + esc(n.n) + " books</li>").join("")
+        + "</ul>";
+    }
+
+    const draft = c.draft_rule || c.draft_entry || "";
+
+    return '<div class="sg" data-id="' + esc(c.id) + '">' +
+      '<div class="sg-head"><span class="sg-reason">' + esc(c.type) + "</span>" +
+        '<code>' + esc(c.key) + "</code>" +
+        '<span class="sg-when">generated ' + esc(c.generated) + "</span></div>" +
+      '<dl class="sg-cmp"><dt>Question</dt><dd>' + esc(c.question) + "</dd>" +
+        "<dt>Frequency</dt><dd>" + freq + " — " + band + sampleNote + "</dd>" +
+        "<dt>Cost</dt><dd>" + esc(c.byte_cost || "") + "</dd></dl>" +
+      examples("matches", measured.example_present) +
+      examples("does not match", measured.example_absent) +
+      warn +
+      (c.rationale ? '<p class="sg-none">' + esc(c.rationale) + "</p>" : "") +
+      '<pre class="cq-draft">' + esc(draft) + "</pre>" +
+      '<div class="row">' +
+        '<button class="act ghost cqCopy" data-draft="' + esc(draft) + '">Copy rule</button>' +
+        '<button class="act cqAct" data-id="' + esc(c.id) + '" data-status="accepted">Accept</button>' +
+        '<button class="act ghost cqAct" data-id="' + esc(c.id) + '" data-status="rejected">Reject</button>' +
+      "</div></div>";
+  }).join("");
+}
+
+async function loadCandidates(){
+  setStatus("cqStatus", "Loading…");
+  try {
+    const r = await fetch(DATA + "/question_candidates.json");
+    candidates = r.ok ? await r.json() : [];
+    if (!Array.isArray(candidates)) candidates = [];
+    renderCandidates();
+    const pending = candidates.filter((c) => c.status === "pending").length;
+    setStatus("cqStatus", pending ? pending + " waiting" : "Nothing pending.", true);
+  } catch (err) {
+    setStatus("cqStatus", "Could not read question_candidates.json: " + String(err.message || err), false);
+  }
+}
+
+document.getElementById("cqReload").addEventListener("click", loadCandidates);
+
+document.getElementById("cqList").addEventListener("click", async (e)=>{
+  if (e.target.classList.contains("cqCopy")){
+    try { await navigator.clipboard.writeText(e.target.dataset.draft); } catch (err) { /* clipboard permission denied — nothing to fall back to on an admin-only page */ }
+    return;
+  }
+  if (!e.target.classList.contains("cqAct")) return;
+  const id = e.target.dataset.id, status = e.target.dataset.status;
+  const card = e.target.closest(".sg");
+  card.querySelectorAll("button").forEach(b => { b.disabled = true; });
+  setStatus("cqStatus", status === "rejected" ? "Rejecting…" : "Accepting…");
+  try {
+    await post("/api/candidates/decide", {id, status});
+    const c = candidates.find((x) => x.id === id);
+    if (c) c.status = status;
+    renderCandidates();
+    setStatus("cqStatus", status === "rejected" ? "Rejected." :
+      "Accepted — paste the rule into features.py/traits.py by hand, then rebuild when ready.", true);
+  } catch (err) {
+    setStatus("cqStatus", String(err.message || err), false);
+    card.querySelectorAll("button").forEach(b => { b.disabled = false; });
+  }
+});
+
 (async function init(){
   try {
     const [b, q, x] = await Promise.all([
@@ -1085,6 +1225,7 @@ document.getElementById("sgList").addEventListener("click", async (e)=>{
   // the owner stares at the Suggestions tab.
   loadSuggestions();
   loadTaught();
+  loadCandidates();
 })();
 </script>
 </body></html>`;

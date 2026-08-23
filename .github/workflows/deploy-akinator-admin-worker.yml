@@ -126,14 +126,21 @@ jobs:
           # means no page AND no write.
           #
           # THIS LIST MUST MATCH ROUTES IN index.js, and it had already
-          # drifted: `display` shipped without ever being interrogated here,
-          # and separately without being in ROUTES at all, so the one check
-          # that could have caught either was looking at four names while the
-          # client used five. `suggestions` and `suggestions/resolve` are
-          # added with the queue. A relay missing from this loop is a relay
-          # nothing proves is guarded.
+          # drifted TWICE. First: `display` shipped without ever being
+          # interrogated here, and separately without being in ROUTES at
+          # all, so the one check that could have caught either was looking
+          # at four names while the client used five. Second, found
+          # 2026-08-23 while adding `candidates/decide`: this loop was STILL
+          # only seven names against ROUTES' eleven — `suggestions/theme`,
+          # `taught` and `taught/apply` had shipped guarded in practice
+          # (they sit behind the same ADMIN_SECRET check every relay does)
+          # but never actually PROVEN so by this workflow. A relay missing
+          # from this loop is a relay nothing proves is guarded — checked by
+          # diffing this list against ROUTES directly, not by re-reading
+          # both by eye, which is exactly how it drifted the first time.
           for p in exclude correction question book display \
-                   suggestions suggestions/resolve; do
+                   suggestions suggestions/resolve suggestions/theme \
+                   taught taught/apply candidates/decide; do
             CODE=$(curl -sS -m 30 -o rel.txt -D hdr.txt -w '%{http_code}' -X POST "$BASE/api/$p" \
                    -H "Content-Type: application/json" -d '{}')
             guarded "POST /api/$p (no Access header)" "$CODE" rel.txt || exit 1
