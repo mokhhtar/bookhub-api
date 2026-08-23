@@ -150,8 +150,33 @@ _GENERIC_CAST = {
 }
 
 
-def has_named_characters(persons: list[str]) -> bool:
-    """Does this book have characters a reader could NAME?
+def has_named_characters(persons: list[str]) -> bool | None:
+    """Does this book have characters a reader could NAME? `None` if unasked.
+
+    **`None` WHEN `persons` IS EMPTY, and this is the correction, 2026-08-23.**
+    Everything below is about what the ENTRIES say; nothing in it was ever
+    about there being no entries at all, and returning `False` for that case
+    turned a silence into an assertion. Measured over the shipped 5,004:
+
+        3,234 books answered "no, it has no well-known named characters"
+        3,190 of them because Open Library's `person` field is EMPTY
+            7 of them for the reason this function exists (The Road)
+        1,410 of the false ones are form:fiction — The Silent Patient,
+              Le Petit Prince, Verity, The Seven Husbands of Evelyn Hugo
+
+    Scored as ordinary absence that is 0.15 for a richly documented row, and
+    `fact:namedchars` is asked in 250 of 250 simulated games at a median turn
+    of 3 — first thing, while the whole belief mass is still in play. So a
+    reader who correctly answers "yes" was having their own book pushed down
+    on nearly every game. `structural_features`' docstring already states the
+    rule this broke: a fact we cannot determine must be `None`.
+
+    Ablating it on books we KNOW have a cast costs **18.4 points**
+    (44.0% -> 26.0%, 250 paired games, p<0.0001); scoring the 3,190 as unknown
+    instead measures **+4.4 points, 95% CI [-0.1, +8.9], p=0.0801 on one seed**
+    — not significant, and shipped on correctness rather than on that number,
+    the same footing as the web-novel era rule. See
+    `scripts/akinator/measure_cast.py` and the 2026-08-23 vault note.
 
     THE CASE THIS EXISTS FOR. The owner played *The Road* and answered "no"
     to "does it have well-known named characters?" — correctly: McCarthy's
@@ -174,6 +199,8 @@ def has_named_characters(persons: list[str]) -> bool:
     A false "yes" costs a little belief; a false "no" contradicts a player
     who is right, which is the failure that started this.
     """
+    if not persons:
+        return None          # never examined; see the note above
     for entry in persons:
         tokens = [t for t in normalize(entry).split() if t]
         if not tokens:
