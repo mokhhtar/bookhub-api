@@ -91,7 +91,13 @@ MAX_FREQ = features_MAX_FREQ
 # The stated first-paint budget: the matrix, the wording and the decoding
 # rule, and nothing else. Checked at the end of a build rather than trusted,
 # because exceeding it is invisible in every other output.
-FIRST_PAINT_BUDGET_KB = 100
+#
+# Was 100 — every other mention of this budget in this file (the --no-traits
+# help text below, the --limit 0 comment above) already says 78, and 78 is
+# the number quoted throughout the vault as the real product constraint. A
+# drifted literal, not a policy change: at today's ~62.8 KB core it doesn't
+# newly trip the warning.
+FIRST_PAINT_BUDGET_KB = 78
 
 # A character name is useful precisely because it is rare. Only the ceiling
 # matters, and it scales with corpus size rather than being a fixed count.
