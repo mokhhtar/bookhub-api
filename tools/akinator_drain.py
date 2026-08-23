@@ -146,7 +146,7 @@ def drain(dry_run: bool = False) -> dict:
 
     locked = _load_locked()
 
-    written = skipped = held = 0
+    written = skipped = held = retired = 0
     for work_key in touched:
         counts = cache.hgetall(COUNTS_PREFIX + work_key)
         if not counts:
@@ -164,7 +164,18 @@ def drain(dry_run: bool = False) -> dict:
             except (TypeError, ValueError):
                 continue
 
+        live_ids = set(_artifacts().get("qids") or ())
         for qid, tally in per_question.items():
+            # A RETIRED question is not a cell. Counts filed against one
+            # outlive the question by design — they are keyed by question id
+            # and the id simply stops being asked — so 18 of them were still
+            # sitting in Redis from `fact:long`, `genre:thriller`,
+            # `fact:famous` and the rest. Draining them would write override
+            # keys nothing reads, growing a file every player downloads with
+            # answers to questions nobody is asked.
+            if live_ids and qid not in live_ids:
+                retired += 1
+                continue
             # A cell the owner already decided by hand is not up for a vote.
             # Play data may still be arriving on it, and it is still worth
             # keeping, but it must not quietly soften a judgement made by
@@ -191,12 +202,15 @@ def drain(dry_run: bool = False) -> dict:
 
     if not written:
         return {"ok": True, "books": len(touched), "cells": 0, "held": held,
+                "retired": retired,
                 "reason": f"{skipped} cells below the {MIN_PLAYS}-play floor"
-                          + (f", {held} held by a manual decision" if held else "")}
+                          + (f", {held} held by a manual decision" if held else "")
+                          + (f", {retired} for retired questions" if retired else "")}
 
     if dry_run:
         return {"ok": True, "dry_run": True, "books": len(overrides),
-                "cells": written, "skipped": skipped, "held": held}
+                "cells": written, "skipped": skipped, "held": held,
+                "retired": retired}
 
     payload = json.dumps(overrides, ensure_ascii=False,
                          separators=(",", ":")).encode("utf-8")
@@ -215,7 +229,7 @@ def drain(dry_run: bool = False) -> dict:
     log.info("drained %d cells across %d books (%d held by hand)",
              written, len(touched), held)
     return {"ok": True, "books": len(touched), "cells": written,
-            "skipped": skipped, "held": held}
+            "skipped": skipped, "held": held, "retired": retired}
 
 
 def _load_locked() -> dict:
@@ -273,7 +287,7 @@ def _taught_rows(limit: int = MAX_TAUGHT_BOOKS) -> tuple[list, int]:
                                    "is not the same as there being none")
     total = len(touched)
     if not touched:
-        return [], 0
+        return [], 0, 0
     touched = sorted(touched)[:limit]
 
     replies = cache.pipeline([["HGETALL", COUNTS_PREFIX + k] for k in touched])
@@ -281,8 +295,11 @@ def _taught_rows(limit: int = MAX_TAUGHT_BOOKS) -> tuple[list, int]:
         raise HTTPException(status_code=503, detail="play counts unreadable right now")
 
     locked = _load_locked()
-    art_ok = bool(_artifacts())
+    art = _artifacts()
+    art_ok = bool(art)
+    live_ids = set(art.get("qids") or ())
     rows = []
+    retired_rows = 0
     for work_key, reply in zip(touched, replies):
         flat = reply.get("result") if isinstance(reply, dict) else None
         if not flat:
@@ -301,6 +318,13 @@ def _taught_rows(limit: int = MAX_TAUGHT_BOOKS) -> tuple[list, int]:
                 continue
 
         for qid, tally in per_question.items():
+            # Not shown, and not actionable: `apply_taught` refuses an id the
+            # game does not ask, so a Yes button here would only ever 404.
+            # Counted so the page can say they exist rather than pretending
+            # the queue is shorter than it is.
+            if live_ids and qid not in live_ids:
+                retired_rows += 1
+                continue
             judged = sum(n for a, n in tally.items() if a != "unknown")
             yes = sum(ANSWER_WEIGHT.get(a, 0.0) * n
                       for a, n in tally.items() if a != "unknown")
@@ -329,7 +353,7 @@ def _taught_rows(limit: int = MAX_TAUGHT_BOOKS) -> tuple[list, int]:
     # what the table currently holds.
     rows.sort(key=lambda r: (-r["judged"],
                              -abs((r["drain_would_write"] or 0.5) - (r["prior"] or 0.5))))
-    return rows, total
+    return rows, total, retired_rows
 
 
 class TaughtApply(BaseModel):
@@ -355,8 +379,9 @@ admin_router = APIRouter(prefix="/akinator/admin/taught", tags=["akinator"],
 @admin_router.post("")
 def list_taught():
     """Everything players have taught that has not been written yet."""
-    rows, books = _taught_rows()
-    return {"ok": True, "cells": rows, "books": books, "min_plays": MIN_PLAYS}
+    rows, books, retired = _taught_rows()
+    return {"ok": True, "cells": rows, "books": books,
+            "min_plays": MIN_PLAYS, "retired": retired}
 
 
 @admin_router.post("/apply")

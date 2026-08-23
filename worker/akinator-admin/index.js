@@ -698,9 +698,21 @@ function renderEditPanel(i){
     const table = st === 1 ? '<span class="sg-new">yes</span>'
       : st === 0 ? "no"
       : '<span class="sg-none">no record</span>';
+    // A PROBABILITY IS NOT AN ANSWER. This read "set by hand: 0.9", which
+    // tells the owner what got written and not what the game now believes —
+    // and next time they open the book they cannot tell whether they had
+    // said yes or no. 0.90 and 0.15 are the two clamp bounds a hand verdict
+    // writes, so they map back to yes and no exactly; anything else came
+    // from the drain and IS a probability, so it is labelled as learned
+    // rather than dressed up as a verdict.
     const o = ov[q.id];
-    const cur = o === undefined ? ""
-      : '<span class="badge off">set by hand: ' + esc(o) + "</span>";
+    let cur = "";
+    if (o !== undefined) {
+      cur = o >= 0.9 ? '<span class="badge off">set by hand: YES</span>'
+          : o <= 0.15 ? '<span class="badge off">set by hand: NO</span>'
+          : '<span class="badge">learned from play: ' + esc(o) + "</span>";
+      cur += ' <span class="sg-none">(' + esc(o) + ")</span>";
+    }
     return "<tr><td>" + esc(q.text) + '<br><span class="sg-none">' + esc(q.id) + "</span></td>"
       + "<td>" + table + "</td><td>" + cur + "</td>"
       + '<td class="row">'
@@ -852,10 +864,14 @@ async function loadTaught(){
     const r = await post("/api/taught", {});
     taught = r.cells || [];
     renderTaught();
-    setStatus("tgStatus", taught.length
+    const retired = r.retired
+      ? "  — " + r.retired + " more are for RETIRED questions and are not "
+        + "shown: the game no longer asks them, so there is nothing to set."
+      : "";
+    setStatus("tgStatus", (taught.length
       ? taught.length + " cell(s) across " + r.books + " book(s); the drain writes at "
         + r.min_plays + " plays"
-      : "Nothing taught yet.", true);
+      : "Nothing taught yet.") + retired, true);
   } catch (err) {
     setStatus("tgStatus", "Could not read the play counts: "
       + String(err.message || err) + " — this is NOT the same as there being none.", false);
