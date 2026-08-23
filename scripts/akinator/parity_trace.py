@@ -132,7 +132,30 @@ def main() -> None:
     if excluded:
         print(f"excluded.json: {len(excluded)} book(s) zeroed in the prior")
 
-    matrix = Matrix(books, qids, excluded=excluded)
+    # Read from the artifacts directory for the same reason `excluded.json`
+    # is: the browser fetches this file out of that directory and patches
+    # `pYesCache` with it, so a trace generated without it compares two
+    # engines that were given different inputs and blames the difference on
+    # the engines. That is not hypothetical — it happened on 2026-08-23, and
+    # reported a QUESTION MISMATCH on a build whose engines agreed 20/20 once
+    # this file was taken into account.
+    overrides_path = os.path.join(args.artifacts, "overrides.json")
+    overrides: dict[str, dict[str, float]] = {}
+    if os.path.exists(overrides_path):
+        try:
+            with open(overrides_path, encoding="utf-8") as fh:
+                data = json.load(fh)
+            if isinstance(data, dict):
+                overrides = {k: v for k, v in data.items()
+                             if isinstance(k, str) and isinstance(v, dict)}
+        except (OSError, json.JSONDecodeError):
+            overrides = {}
+    if overrides:
+        cells = sum(len(v) for v in overrides.values())
+        print(f"overrides.json: {cells} learned cell(s) across "
+              f"{len(overrides)} book(s)")
+
+    matrix = Matrix(books, qids, excluded=excluded, overrides=overrides)
     engine = Engine(matrix)
 
     turns = []

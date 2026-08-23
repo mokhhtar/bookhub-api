@@ -164,7 +164,8 @@ class Matrix:
                  char_questions: list[str] | None = None,
                  series_of: list[str | None] | None = None,
                  series_names: dict[str, str] | None = None,
-                 excluded: set[str] | None = None):
+                 excluded: set[str] | None = None,
+                 overrides: dict[str, dict[str, float]] | None = None):
         self.books = books
         # Series membership per book index, for guess-time pooling. Absent
         # is fine — the engine simply never guesses a series.
@@ -224,6 +225,42 @@ class Matrix:
             # question, and H_b(p) never changes — only the belief weighting
             # does. See Engine.next_question for the identity.
             self.hrows.append({q: _binary_entropy(p) for q, p in row.items()})
+
+        # Cells the drain has learned from play, and cells the owner decided
+        # by hand. Applied AFTER the rows are built, patching them in place —
+        # which is what `applyOverrides` does to `pYesCache` on every page
+        # load, and the two must agree cell for cell.
+        #
+        # HERE FOR THE SAME REASON `excluded` IS, and it is the same lesson a
+        # second time. The client read this file and Python did not, so
+        # `parity-check.js` reported a QUESTION MISMATCH on a build whose
+        # engines were in fact identical — and every offline measurement was
+        # scoring a game without the taught cells in it.
+        #
+        # The guards mirror the page's exactly: a key we no longer ship is
+        # skipped, a question id that is not one of the MAIN questions is
+        # skipped (the page builds its index from `questions`, so a `char:`
+        # override is refused on both sides), and a value that is not a number
+        # in [0, 1] is refused rather than clamped.
+        if overrides:
+            by_key: dict[str, int] = {}
+            for i, book in enumerate(books):
+                key = book.get("key")
+                if key:
+                    by_key[key] = i
+            for key, cells in overrides.items():
+                i = by_key.get(key)
+                if i is None:
+                    continue
+                for q, p in cells.items():
+                    if q not in self.question_set:
+                        continue
+                    if isinstance(p, bool) or not isinstance(p, (int, float)):
+                        continue
+                    if p < 0.0 or p > 1.0:
+                        continue
+                    self.rows[i][q] = float(p)
+                    self.hrows[i][q] = _binary_entropy(float(p))
 
         # Prior: popularity, log-compressed. Raw readinglog_count spans
         # 62,023 (Atomic Habits) to single digits; used linearly it would

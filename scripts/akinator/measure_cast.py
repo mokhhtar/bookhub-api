@@ -135,7 +135,16 @@ def load_shipped(path: str) -> tuple[list[dict], list[str], list[str],
         with open(xpath, encoding="utf-8") as fh:
             excluded = {k for k in json.load(fh) if isinstance(k, str)}
 
-    return books, qids, char_questions, series_of, series_names, excluded
+    # The cells the drain has learned and the owner has taught by hand. The
+    # page applies these on every load, so a measurement taken without them
+    # describes a game nobody plays — the same reason `excluded.json` is read
+    # above, and the reason parity-check.js reported a QUESTION MISMATCH on
+    # 2026-08-23 against two engines that in fact agreed.
+    from exclusions import load_overrides
+    overrides = load_overrides(os.path.join(path, "overrides.json"))
+
+    return (books, qids, char_questions, series_of, series_names, excluded,
+            overrides)
 
 
 # ---------------------------------------------------------------------------
@@ -511,16 +520,17 @@ def main() -> None:
     ap.add_argument("--out", default=None, help="write per-game JSON here")
     args = ap.parse_args()
 
-    books, questions, char_questions, series_of, series_names, excluded = \
-        load_shipped(args.artifacts)
+    (books, questions, char_questions, series_of, series_names, excluded,
+     overrides) = load_shipped(args.artifacts)
     matrix = Matrix(books, questions, char_questions,
                     series_of=series_of, series_names=series_names,
-                    excluded=excluded)
+                    excluded=excluded, overrides=overrides)
     with open(os.path.join(args.artifacts, "meta.json"), encoding="utf-8") as fh:
         meta = json.load(fh)
     print(f"Shipped artifacts: question_hash {meta['question_hash']}, "
           f"{meta['books']} books, {meta['questions']} questions, "
-          f"{len(excluded)} excluded")
+          f"{len(excluded)} excluded, "
+          f"{sum(len(v) for v in overrides.values())} taught cell(s)")
 
     covered = [i for i, b in enumerate(books) if b["char_tokens"]]
     uncovered = [i for i, b in enumerate(books) if not b["char_tokens"]]
