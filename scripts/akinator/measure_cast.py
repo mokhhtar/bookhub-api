@@ -424,8 +424,17 @@ def mcnemar(a: dict[str, bool], b: dict[str, bool]) -> str:
     lo = min(a_only, b_only)
     p = sum(math.comb(n, i) for i in range(lo + 1)) / (2 ** n) * 2
     p = min(1.0, p)
+    # The point estimate and its interval, alongside the p-value, because a
+    # p-value on its own invites "significant / not significant" and the
+    # useful question is how big the effect could be. sqrt(b+c)/N is the
+    # standard error of the paired difference when only discordant pairs
+    # carry information.
+    diff = (b_only - a_only) / len(keys) * 100
+    se = math.sqrt(n) / len(keys) * 100
     return (f"  discordant {n}/{len(keys)}: first-only {a_only}, "
-            f"second-only {b_only}, exact p={p:.4f}")
+            f"second-only {b_only}, exact p={p:.4f}\n"
+            f"  second minus first: {diff:+.1f} points, "
+            f"95% CI [{diff - 1.96 * se:+.1f}, {diff + 1.96 * se:+.1f}]")
 
 
 # ---------------------------------------------------------------------------
@@ -586,9 +595,20 @@ def main() -> None:
                 print(f"    {n}/{len(ctrl)}", flush=True)
 
     # -- report ------------------------------------------------------------
+    # THE HEADING NAMES THE POPULATION THAT WAS ACTUALLY PLAYED. The first
+    # version printed "BOOKS WITH A CAST" in both modes, and `namedchars`
+    # targets the opposite population — books with no `person` field at all.
+    # A report that mislabels its own sample is how a number gets quoted
+    # against a question it never answered.
     print("\n" + "=" * 68)
-    print(f"BOOKS WITH A CAST — {len(targets)} of {len(covered)}, "
-          f"drawn uniformly across all ranks")
+    if args.mode == "namedchars":
+        print(f"BOOKS WITH NO `person` FIELD — {len(targets)} of "
+              f"{len(no_person)}, drawn uniformly across all ranks")
+        print("player answers YES to fact:namedchars where the book is "
+              "fiction; the table is what differs between arms")
+    else:
+        print(f"BOOKS WITH A CAST — {len(targets)} of {len(covered)}, "
+              f"drawn uniformly across all ranks")
     print("=" * 68)
     for arm in arms:
         rs = list(results[arm].values())
