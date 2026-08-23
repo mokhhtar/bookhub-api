@@ -33,6 +33,7 @@ quality.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -106,6 +107,32 @@ def books_from_artifacts(meta: dict, questions: list[dict],
     return out
 
 
+def overrides_fingerprint(overrides: dict) -> str:
+    """A language-neutral rendering of the taught cells, for the digest.
+
+    Mirrored byte for byte by `overridesFingerprint` in
+    `games/parity-check.js`. Six fixed decimals because that is the one number
+    format Python and JavaScript are guaranteed to agree on; booleans and
+    anything non-numeric render as `?` rather than being coerced, since a
+    malformed cell is refused by both engines and should still change the
+    fingerprint if it appears.
+    """
+    parts = []
+    for key in sorted(overrides):
+        cells = overrides[key] or {}
+        for q in sorted(cells):
+            p = cells[q]
+            if isinstance(p, bool) or not isinstance(p, (int, float)):
+                value = "?"
+            else:
+                value = f"{float(p):.6f}"
+            # "|" and not a NUL byte: a NUL in the JS mirror makes git treat
+            # parity-check.js as a binary file, which it briefly did. Neither
+            # a work key nor a question id can contain a pipe.
+            parts.append(f"{key}|{q}|{value}")
+    return "\n".join(parts)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--artifacts", default=DEFAULT_ARTIFACTS)
@@ -177,11 +204,31 @@ def main() -> None:
                 sum(b * math.log1p(i + 1) for i, b in enumerate(engine.belief)), 12),
         })
 
+    # A FINGERPRINT OF THE OVERRIDES, and it closes a trap this file's own
+    # fix would otherwise have opened. Now that the trace is recorded WITH
+    # `overrides.json` applied, every cell the owner teaches from the admin
+    # page invalidates it — and without something to compare, parity-check.js
+    # would report that as "the engines have drifted" rather than as a stale
+    # fixture. It already distinguishes the two for a nightly sync (books and
+    # question_hash); this is the third input that moves underneath it, and it
+    # moves far more often than the other two.
+    # NOT a hash of the JSON text. `json.dumps` and `JSON.stringify` disagree
+    # about numbers — Python writes a float 1.0 as "1.0" and JavaScript writes
+    # it as "1" — and a fingerprint that drifts between the two languages
+    # would report a stale fixture on every run, which is worse than not
+    # having one. Fixed to six decimals on both sides instead, over a sorted
+    # key\0question\0value list. The JS mirror is in games/parity-check.js and
+    # the two must be edited together.
+    overrides_digest = hashlib.sha256(
+        overrides_fingerprint(overrides).encode("utf-8")).hexdigest()[:16]
+
     trace = {
         "generated_from": {
             "question_hash": meta.get("question_hash"),
             "books": meta["books"],
             "questions": meta["questions"],
+            "overrides_digest": overrides_digest,
+            "overrides_cells": sum(len(v) for v in overrides.values()),
         },
         "answer_script": ANSWER_SCRIPT,
         "turns": turns,
