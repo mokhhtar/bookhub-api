@@ -36,6 +36,7 @@ from tools import akinator_learn as akinator_learn_tool
 from tools import akinator_drain as akinator_drain_tool
 from tools import akinator_admin as akinator_admin_tool
 from tools import akinator_suggest as akinator_suggest_tool
+from tools import akinator_candidates as akinator_candidates_tool
 # from tools import recommend as recommend_tool   # pending rebuild
 # from tools import questions as questions_tool   # pending rebuild
 # from tools import compare as compare_tool       # pending rebuild
@@ -161,6 +162,10 @@ app.include_router(akinator_suggest_tool.router)
 app.include_router(akinator_suggest_tool.admin_router)
 # The manual route around the drain's 8-play floor. Same secret gate.
 app.include_router(akinator_drain_tool.admin_router)
+# Verdicts on scripts/akinator/propose_questions.py's mined candidates. Same
+# secret gate; the candidates themselves are read straight off
+# question_candidates.json by the client, same as books.json/questions.json.
+app.include_router(akinator_candidates_tool.admin_router)
 
 
 @app.get("/health")
