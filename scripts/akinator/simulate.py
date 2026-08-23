@@ -68,6 +68,13 @@ from work_traits import (WORK_QUESTIONS, load_protagonists,        # noqa: E402
                          load_works, merge_into)
 from features import (FORCE_KEEP, QUESTION_TEXT,                    # noqa: E402
                       STRUCTURAL_QUESTIONS, extract)
+# THE DEPENDENCY POINTS THIS WAY ON PURPOSE. build_matrix.py packs the
+# artifact the game ships; this file's whole job is to measure that artifact.
+# So when the two disagree about which questions exist, the build is right by
+# definition and the measurement is wrong — and importing the build's rule is
+# the only arrangement in which they cannot drift apart again. The same
+# argument `traits.apply_labels` already makes for itself.
+from build_matrix import _drop_duplicate_wordings                   # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SAMPLE_PATH = os.path.join(REPO_ROOT, "data", "akinator_sample.json")
@@ -184,7 +191,20 @@ def load_books(corpus_size: int = 0, with_author_traits: bool = True,
             # with build_matrix.py on purpose: this file measures the game
             # that file ships, so a private copy of this rule is a way for
             # the measurement to stop describing the artifact.
-            apply_labels(book, doc.get("key") or "", extracted)
+            #
+            # THE FANDOM BRANCH WAS MISSING HERE, and sharing `apply_labels`
+            # was not enough to prevent it: the rule was shared, the CHOICE OF
+            # INPUT was not. Census novels carry their labels on the doc as
+            # `_fandom_traits` because they have no Open Library work key to
+            # look up in `extracted`. build_matrix reads them; this did not,
+            # so `t:powersystem` — 11 books, FORCE_KEEP, and the question that
+            # splits four of the six identical-row web-novel groups — was
+            # invisible to every measurement ever taken here.
+            fandom_labels = doc.get("_fandom_traits")
+            if fandom_labels:
+                apply_labels(book, doc["key"], {doc["key"]: fandom_labels})
+            else:
+                apply_labels(book, doc.get("key") or "", extracted)
 
         books.append(book)
     return books
@@ -213,7 +233,13 @@ def select_questions(books: list[dict], verbose: bool = True) -> list[str]:
                      or TRAIT_QUESTIONS.get(key, key))
             print(f"     {freq:5.1%}  {label}")
         print(f"     ... and {max(0, len(kept) - 12)} more")
-    return [k for k, _ in kept]
+    # ADDED 2026-08-23, and it had been missing since the guard was written.
+    # `build_matrix.select_features` ends with this call and this one did not,
+    # so the simulator kept BOTH halves of every wording collision the build
+    # resolves — `t:magic` beside `theme:magic`, `t:school` beside
+    # `setting:school`. Two extra questions, and the measurement quietly
+    # described a game with a duplicate in it.
+    return _drop_duplicate_wordings(books, [k for k, _ in kept])
 
 
 def select_character_questions(books: list[dict], verbose: bool = True) -> list[str]:
