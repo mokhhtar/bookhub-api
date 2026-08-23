@@ -354,21 +354,28 @@ def _groq_call(prompt: str, config) -> str | None:
 
 
 def extract_one(title: str, author: str, text: str,
-                provider: str = "auto") -> list[str] | None:
+                provider: str = "auto",
+                vocab: dict[str, tuple[str, str]] | None = None
+                ) -> list[str] | None:
     """Labels for one book, or None when the call failed.
 
     None and [] are different and both are kept: a failed call should be
     retried on the next run, while a genuine empty answer should not.
+    `vocab` — see `traits.build_prompt`; defaults to the full `TRAITS`,
+    which is what `--calibrate` always wants (a global accuracy check, not
+    a partial one) and what every caller got before `--keys` existed.
     """
     try:
-        return parse_response(_generate(build_prompt(title, author, text), provider))
+        return parse_response(
+            _generate(build_prompt(title, author, text, vocab), provider), vocab)
     except Exception as exc:  # noqa: BLE001
         print(f"    ! {title[:40]}: {str(exc)[:70]}", file=sys.stderr)
         return None
 
 
-def extract_batch(rows: list[tuple[str, str, str]],
-                  provider: str) -> list[list[str] | None]:
+def extract_batch(rows: list[tuple[str, str, str]], provider: str,
+                  vocab: dict[str, tuple[str, str]] | None = None
+                  ) -> list[list[str] | None]:
     """Label several books in one call, falling back to one at a time.
 
     A batch reply that does not align exactly — wrong count, duplicate or
@@ -382,19 +389,21 @@ def extract_batch(rows: list[tuple[str, str, str]],
     eight more times, and the run that hit the daily cap spent nine calls
     per batch discovering that, over and over. So a raised call returns
     None for the whole batch and lets the caller decide whether to go on.
+
+    `vocab` — see `extract_one`.
     """
     try:
-        raw = _generate(build_batch_prompt(rows), provider)
+        raw = _generate(build_batch_prompt(rows, vocab), provider)
     except Exception as exc:  # noqa: BLE001
         print(f"    ! batch failed ({str(exc)[:70]})", file=sys.stderr)
         return [None] * len(rows)
 
-    parsed = parse_batch_response(raw, len(rows))
+    parsed = parse_batch_response(raw, len(rows), vocab)
     if parsed is not None:
         return parsed
     print(f"    . batch of {len(rows)} did not align; retrying singly",
           file=sys.stderr)
-    return [extract_one(t, a, x, provider) for t, a, x in rows]
+    return [extract_one(t, a, x, provider, vocab) for t, a, x in rows]
 
 
 def _score(rows: list[dict]) -> None:
@@ -480,6 +489,53 @@ def rescore(path: str = CALIBRATION_PATH) -> None:
     _score(rows)
 
 
+def _payload(out: dict, tested: dict, tracking_enabled: bool) -> dict:
+    """What gets written to --out. `tested` is included only once tracking
+    has been switched on for this file (see `tracking_enabled` in main()) —
+    writing it earlier would be exactly the half-migrated state that flag
+    exists to prevent: a `tested` map covering some books but not others,
+    which the next run cannot tell apart from "these others were never
+    tested for anything"."""
+    payload = {"traits": out}
+    if tracking_enabled:
+        payload["tested"] = tested
+    return payload
+
+
+def migrate_tested(path: str) -> None:
+    """One-time upgrade to per-key resume tracking. See --migrate-tested's
+    own help text for the exact assumption this makes and why it is only
+    correct right now, not in general.
+
+    THE ONLY WAY a file gains a `tested` map, by design. An ordinary run
+    never introduces one on its own — see `tracking_enabled` in main() —
+    specifically so that the first `tested` a file ever gets is always
+    COMPLETE (every book in `traits` stamped at once), never partial.
+
+    Refuses to double-migrate: a file that already has a `tested` map has
+    either been through this once or has been maintaining it incrementally
+    ever since, and re-running this over already-accurate per-key data
+    would blow that accuracy away — exactly the mistake this flag exists to
+    prevent happening implicitly.
+    """
+    if not os.path.exists(path):
+        print(f"No {path} yet — nothing to migrate.")
+        return
+    with open(path, encoding="utf-8") as fh:
+        saved = json.load(fh)
+    out = saved.get("traits", saved)
+    if "tested" in saved:
+        print("Already migrated — 'tested' is already present. Nothing done.")
+        return
+    tested = {key: sorted(TRAITS) for key in out}
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump({"traits": out, "tested": tested}, fh, ensure_ascii=False)
+    print(f"Migrated {len(out)} book(s): each stamped as tested against all "
+          f"{len(TRAITS)} current TRAITS keys. No API calls made.")
+    print("From here on, only use --keys for a key added AFTER this moment "
+          "— do not run --migrate-tested again.")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--calibrate", action="store_true")
@@ -522,6 +578,32 @@ def main() -> None:
                          "the verified wiki prose harvested for books Open "
                          "Library has no description for — and writes to "
                          "akinator_fandom_traits.json instead.")
+    ap.add_argument("--from-shipped", default=None,
+                    help="with --source corpus: a books.json URL or local "
+                         "path — read the book list from the SHIPPED "
+                         "artifact instead of the local, gitignored corpus, "
+                         "so a GitHub Actions runner with no corpus can "
+                         "still run this incrementally. See shipped_docs.py.")
+    ap.add_argument("--keys", default=None,
+                    help="comma-separated TRAITS ids to backfill (e.g. "
+                         "t:cooking) instead of the full vocabulary. Sends a "
+                         "shorter prompt and skips any book already tested "
+                         "against every requested key. Needs the output "
+                         "file to already carry per-key 'tested' data — run "
+                         "--migrate-tested once first if it doesn't; the "
+                         "tool refuses rather than guessing.")
+    ap.add_argument("--migrate-tested", action="store_true",
+                    help="ONE-TIME: stamp every already-labelled book in "
+                         "--out as tested against the full CURRENT TRAITS "
+                         "vocabulary, enabling --keys. Makes no API calls. "
+                         "Correct ONLY if run before adding any new TRAITS "
+                         "key after upgrading to this version — it cannot "
+                         "see history, so it assumes every label already on "
+                         "disk came from the unfiltered vocabulary active "
+                         "right now, which has always been true until this "
+                         "flag exists. Do not re-run it after adding a new "
+                         "key; that would falsely mark old books as already "
+                         "tested against a key they never saw.")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
     if args.out is None:
@@ -539,6 +621,25 @@ def main() -> None:
     if args.calibrate:
         calibrate(args.delay, args.provider)
         return
+
+    if args.migrate_tested:
+        migrate_tested(args.out)
+        return
+
+    # `requested` is the vocabulary THIS run judges against — the full
+    # TRAITS unless --keys narrows it. Resolved before any file I/O so the
+    # old-format-file check below has it to compare against.
+    if args.keys:
+        wanted = [k.strip() for k in args.keys.split(",") if k.strip()]
+        unknown = [k for k in wanted if k not in TRAITS]
+        if unknown:
+            print(f"! --keys names id(s) not in TRAITS: {unknown}. Add them "
+                  f"to traits.py first.", file=sys.stderr)
+            sys.exit(1)
+        requested = {k: TRAITS[k] for k in wanted}
+    else:
+        requested = TRAITS
+    requested_keys = set(requested)
 
     if args.source == "fandom":
         # Shaped into the same (docs, descriptions) pair the corpus path
@@ -570,27 +671,81 @@ def main() -> None:
         with open(DESC_PATH, encoding="utf-8") as fh:
             descriptions = json.load(fh)
 
-        docs = []
-        with open(CORPUS_PATH, encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if line:
-                    try:
-                        docs.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        continue
-        docs.sort(key=lambda d: -(d.get("readinglog_count") or 0))
+        if args.from_shipped:
+            from shipped_docs import load_shipped_docs
+            docs = load_shipped_docs(args.from_shipped)
+        else:
+            docs = []
+            with open(CORPUS_PATH, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if line:
+                        try:
+                            docs.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            continue
+            docs.sort(key=lambda d: -(d.get("readinglog_count") or 0))
         docs = docs[:args.limit]
 
+    # `tested` — which TRAITS keys each book has actually been judged
+    # against, separate from `out` (which keys it was found to HAVE). A
+    # book present in `out` used to mean "done, skip forever" regardless of
+    # which keys produced that entry — so adding one new key to TRAITS and
+    # re-running never backfilled it for any already-labelled book, only
+    # for books labelled from that point on. `tested` is what makes "done"
+    # a per-key question again.
+    #
+    # `tracking_enabled` — NOT `bool(tested)` — decides which predicate to
+    # use, and the distinction is load-bearing. `tested` starts empty on a
+    # freshly-upgraded file and would otherwise fill in gradually, one newly
+    # -processed book at a time, on ordinary unfiltered runs — which makes
+    # it TRUTHY long before it is COMPLETE. The first run after upgrading
+    # would look identical to today (few new books, `tested` still empty,
+    # old predicate). The SECOND run would see a non-empty-but-partial
+    # `tested`, switch to the strict per-key predicate, and find every one
+    # of the thousands of pre-existing books "not yet tested" for anything
+    # — because they were labelled before this dict existed — and resend
+    # every one of them. `tracking_enabled` is keyed on whether `"tested"`
+    # was ever written by `--migrate-tested`, which stamps EVERY book in
+    # `out` in one atomic pass specifically so this half-migrated state can
+    # never occur: either the file has no tracking at all (old predicate,
+    # exactly as before this feature existed) or it has COMPLETE tracking
+    # (new predicate, safe by construction). Ordinary runs only ever ADD to
+    # an already-complete `tested`, in lockstep with `out` — see the merge
+    # loop and the write-back below, both gated on this same flag.
     out: dict[str, list[str]] = {}
+    tested: dict[str, list[str]] = {}
+    tracking_enabled = False
     if os.path.exists(args.out):
         with open(args.out, encoding="utf-8") as fh:
             saved = json.load(fh)
         out = saved.get("traits", saved)
+        tracking_enabled = "tested" in saved
+        if tracking_enabled:
+            tested = saved.get("tested") or {}
+        elif args.keys:
+            # Old-format file, predating this feature, and --keys was given.
+            # This script cannot safely guess which historical keys a book
+            # was actually tested against, so it refuses rather than risk
+            # silently under-covering one.
+            print("! This file predates per-key tracking and --keys "
+                  "was given. Run --migrate-tested once first (no API "
+                  "calls), then re-run with --keys.", file=sys.stderr)
+            sys.exit(1)
         print(f"Resuming with {len(out)} books already labelled.")
 
-    todo = [d for d in docs
-            if d.get("key") in descriptions and d["key"] not in out]
+    if tracking_enabled:
+        todo = [d for d in docs
+                if d.get("key") in descriptions
+                and not (requested_keys <= set(tested.get(d["key"], [])))]
+    else:
+        # No per-key tracking on this file yet (never migrated). Same
+        # predicate this script has always used — --keys was already
+        # refused above if this branch is reached with one.
+        todo = [d for d in docs
+                if d.get("key") in descriptions and d["key"] not in out]
+    if args.keys:
+        print(f"Backfilling {sorted(requested_keys)} only.")
     print(f"{len(todo)} books with a description and no labels yet.\n")
 
     # Watch the shared client's own log for the reason behind a failure.
@@ -605,12 +760,25 @@ def main() -> None:
         chunk = _pack_chunk(todo, start, args.batch, descriptions)
         rows = [(d.get("title") or "", (d.get("author_name") or [""])[0],
                  descriptions[d["key"]]) for d in chunk]
-        results = extract_batch(rows, args.provider) if args.batch > 1 else             [extract_one(*r, args.provider) for r in rows]
+        results = (extract_batch(rows, args.provider, requested)
+                   if args.batch > 1 else
+                   [extract_one(*r, args.provider, requested) for r in rows])
 
         for doc, labels in zip(chunk, results):
             if labels is None:
                 continue      # failed: leave it for the next run
-            out[doc["key"]] = labels
+            # UNION, not overwrite. A book re-visited for a newly-added key
+            # sends back labels for ONLY the requested subset — overwriting
+            # `out[key]` with just that would erase every label the book
+            # already had from an earlier, differently-scoped run.
+            key = doc["key"]
+            out[key] = sorted(set(out.get(key, [])) | set(labels))
+            # Only once tracking is switched on for THIS file (see
+            # `tracking_enabled` above) — writing a partial `tested` entry
+            # for an unmigrated file is exactly the half-migrated state that
+            # flag exists to prevent.
+            if tracking_enabled:
+                tested[key] = sorted(set(tested.get(key, [])) | requested_keys)
 
         # A batch where nothing came back is a provider problem, not a
         # property of these eight books. The first run to hit the daily cap
@@ -627,7 +795,7 @@ def main() -> None:
         start += len(chunk)
         i = start
         with open(args.out, "w", encoding="utf-8") as fh:
-            json.dump({"traits": out}, fh, ensure_ascii=False)
+            json.dump(_payload(out, tested, tracking_enabled), fh, ensure_ascii=False)
         labelled = sum(1 for v in out.values() if v)
         print(f"  {i:>5}/{len(todo)}   {len(out)} done, "
               f"{labelled} with at least one label")
@@ -656,7 +824,7 @@ def main() -> None:
         time.sleep(pause)
 
     with open(args.out, "w", encoding="utf-8") as fh:
-        json.dump({"traits": out}, fh, ensure_ascii=False)
+        json.dump(_payload(out, tested, tracking_enabled), fh, ensure_ascii=False)
 
     counts: dict[str, int] = {}
     for labels in out.values():
@@ -667,8 +835,13 @@ def main() -> None:
     # Say what is still missing, in the same breath as what was done. The
     # count above is the number that looks like success; the one below is
     # the one that decides whether a trait can clear the 5% floor.
-    remaining = [d for d in docs
-                 if d.get("key") in descriptions and d["key"] not in out]
+    if tracking_enabled:
+        remaining = [d for d in docs
+                     if d.get("key") in descriptions
+                     and not (requested_keys <= set(tested.get(d["key"], [])))]
+    else:
+        remaining = [d for d in docs
+                     if d.get("key") in descriptions and d["key"] not in out]
     if remaining:
         state = "STOPPED EARLY" if stopped_early else "not reached"
         print(f"  {len(remaining)} book(s) with a description are still "
@@ -682,9 +855,14 @@ def main() -> None:
     # Percentages are of labelled books, not of the corpus. The floor is a
     # share of all 5,000, so a trait at 8% here is nearer 4% there while
     # coverage is partial — see the frequency column after a rebuild.
+    #
+    # Scoped to `requested` (the full TRAITS unless --keys narrowed it), not
+    # always TRAITS: a --keys run's summary should report on what it just
+    # backfilled, not print 0% for every untouched key that this run never
+    # asked about.
     n = max(1, len(out))
     print(f"\n  share of the {n} LABELLED books (not of the corpus):")
-    for key, (question, _defn) in TRAITS.items():
+    for key, (question, _defn) in requested.items():
         c = counts.get(key, 0)
         print(f"  {c * 100 // n:>3}%  {key:<14} {question}")
 

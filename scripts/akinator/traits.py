@@ -151,9 +151,19 @@ TRAITS: dict[str, tuple[str, str]] = {
 TRAIT_QUESTIONS = {k: v[0] for k, v in TRAITS.items()}
 
 
-def build_prompt(title: str, author: str, text: str) -> str:
-    """One book, one prompt. Grounded on the supplied text only."""
-    lines = [f'- "{k}": {defn}' for k, (_q, defn) in TRAITS.items()]
+def build_prompt(title: str, author: str, text: str,
+                 vocab: dict[str, tuple[str, str]] | None = None) -> str:
+    """One book, one prompt. Grounded on the supplied text only.
+
+    `vocab` is which labels to ask about — defaults to the full `TRAITS`,
+    byte-for-byte what every caller got before this parameter existed.
+    Narrower on purpose for `propose_questions.py`'s sample measurement and
+    for `extract_traits.py --keys`'s single-dimension backfill: a shorter
+    vocabulary means a shorter prompt, not a different judgment on the
+    labels that ARE asked about.
+    """
+    vocab = TRAITS if vocab is None else vocab
+    lines = [f'- "{k}": {defn}' for k, (_q, defn) in vocab.items()]
     return (
         "You are labelling a book for a guessing game, using ONLY the "
         "description supplied below.\n\n"
@@ -177,14 +187,20 @@ def build_prompt(title: str, author: str, text: str) -> str:
     )
 
 
-def parse_response(raw: str) -> list[str]:
+def parse_response(raw: str,
+                   vocab: dict[str, tuple[str, str]] | None = None) -> list[str]:
     """Model output -> validated label list.
 
-    Anything outside the vocabulary is dropped rather than trusted: a model
-    that invents `t:pirates` has stopped classifying and started writing,
-    and an unknown key would sail straight through the feature pipeline as
-    a question nobody authored.
+    Anything outside `vocab` is dropped rather than trusted: a model that
+    invents `t:pirates` has stopped classifying and started writing, and an
+    unknown key would sail straight through the feature pipeline as a
+    question nobody authored. `vocab` must be the SAME dict `build_prompt`
+    was called with — validating against the full `TRAITS` when only a
+    subset was asked about would let a hallucinated label for an
+    unrequested key pass as real, which is exactly the false-confidence
+    this check exists to prevent.
     """
+    vocab = TRAITS if vocab is None else vocab
     if not raw:
         return []
     text = raw.strip()
@@ -198,10 +214,10 @@ def parse_response(raw: str) -> list[str]:
         data = json.loads(text[start:end + 1])
     except json.JSONDecodeError:
         return []
-    labels = data.get("labels")
-    if not isinstance(labels, list):
+    result = data.get("labels")
+    if not isinstance(result, list):
         return []
-    return sorted({l for l in labels if isinstance(l, str) and l in TRAITS})
+    return sorted({l for l in result if isinstance(l, str) and l in vocab})
 
 
 def load_traits(path: str = OUT_PATH) -> dict[str, list[str]]:
@@ -262,9 +278,14 @@ def apply_labels(book: dict, work_key: str,
 BATCH_SIZE = 8
 
 
-def build_batch_prompt(books: list[tuple[str, str, str]]) -> str:
-    """One prompt, several books. `books` is [(title, author, text), ...]."""
-    lines = [f'- "{k}": {defn}' for k, (_q, defn) in TRAITS.items()]
+def build_batch_prompt(books: list[tuple[str, str, str]],
+                       vocab: dict[str, tuple[str, str]] | None = None) -> str:
+    """One prompt, several books. `books` is [(title, author, text), ...].
+
+    `vocab` — see `build_prompt`; defaults to the full `TRAITS`.
+    """
+    vocab = TRAITS if vocab is None else vocab
+    lines = [f'- "{k}": {defn}' for k, (_q, defn) in vocab.items()]
     blocks = []
     for i, (title, author, text) in enumerate(books, 1):
         blocks.append(f"### BOOK {i}\nTITLE: {title}\nAUTHOR: {author}\n"
@@ -291,15 +312,19 @@ def build_batch_prompt(books: list[tuple[str, str, str]]) -> str:
     )
 
 
-def parse_batch_response(raw: str, expected: int) -> list[list[str]] | None:
+def parse_batch_response(raw: str, expected: int,
+                         vocab: dict[str, tuple[str, str]] | None = None
+                         ) -> list[list[str]] | None:
     """Batch reply -> one validated label list per book, or None.
 
     None means "do not trust any of this" and the caller should retry the
     batch one book at a time. Returning a partially-aligned list would be
     the worst outcome available: labels silently attached to the wrong
     books, which is exactly the failure the whole grounding discipline
-    exists to avoid.
+    exists to avoid. `vocab` — see `parse_response`; must match what
+    `build_batch_prompt` was called with.
     """
+    vocab = TRAITS if vocab is None else vocab
     if not raw:
         return None
     text = raw.strip()
@@ -331,7 +356,7 @@ def parse_batch_response(raw: str, expected: int) -> list[list[str]] | None:
         if not isinstance(labels, list):
             return None
         out[n - 1] = sorted({l for l in labels
-                             if isinstance(l, str) and l in TRAITS})
+                             if isinstance(l, str) and l in vocab})
     if any(v is None for v in out):
         return None
     return out  # type: ignore[return-value]
