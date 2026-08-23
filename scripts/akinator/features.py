@@ -1043,6 +1043,61 @@ FORCE_KEEP = {
 }
 
 
+# The other direction: a question that CLEARS the floor and still should not
+# ship. There was no way to say this before, and the gap had a cost.
+#
+# `t:animals` sits at 258 of 5,004 — 5.156%, against a 5% floor. Thirteen
+# labels are the entire difference between it existing and not: on the trait
+# file as it stood before the section B description harvest it was 4.896%.
+#
+# The owner reviewed section B on 2026-08-22 and declined to ship it: 473 new
+# descriptions produced only 140 present-cells because 76% of the books
+# returned no labels at all, and the cost was +5 KB of first paint for every
+# visitor (bytes_per_row 12 -> 13 at question 49) plus a `question_hash`
+# change invalidating every open tab and any phase 5 submission in flight.
+#
+# But that price was the price of THE FORTY-NINTH QUESTION, not of the
+# labels. The same harvest adds 86 cells to eleven trait columns the game
+# already ships — t:child, t:romance, t:realevents and the rest — and those
+# cost nothing at all, because the row length does not move. So the labels
+# stay and the question is refused by name.
+#
+# Refused HERE rather than by deleting rows from `akinator_traits.json`,
+# which would have worked and would have been a lie: the labels are real, the
+# harvester would re-derive them, and the next session would find a data file
+# quietly disagreeing with the tool that wrote it.
+FORCE_DROP = {
+    "t:animals",
+}
+
+
+# A feature carried by 2% of books eliminates almost nothing; one carried by
+# 80% tells almost nothing. Defined HERE and imported by both callers — they
+# had a copy each, with identical values, which is the state every drift in
+# this codebase has started from.
+MIN_FREQ = 0.05
+MAX_FREQ = 0.60
+
+
+def keeps_question(key: str, freq: float) -> bool:
+    """The 5%-60% band, its two override lists, and ONE implementation.
+
+    Imported by `build_matrix.select_features`, which packs what ships, and by
+    `simulate.select_questions`, which measures what ships. They had a rule
+    each, and on 2026-08-23 the copies had drifted far enough that the
+    simulator was choosing 50 questions against the live 48 — so a private
+    copy of this rule is precisely how the measurement stops describing the
+    artifact. The same argument `traits.apply_labels` makes for itself.
+
+    FORCE_DROP wins over FORCE_KEEP. Nothing is in both today; if anything
+    ever is, refusing is the safe reading, since a question that must not ship
+    is a stronger statement than one that would be nice to keep.
+    """
+    if key in FORCE_DROP:
+        return False
+    return (MIN_FREQ <= freq <= MAX_FREQ) or (key in FORCE_KEEP and freq > 0)
+
+
 def absence_confidence(richness: int) -> float:
     """P(yes | book, feature) when the book does NOT carry the feature.
 

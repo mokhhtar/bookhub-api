@@ -61,10 +61,13 @@ from site_books import supplement as site_supplement                # noqa: E402
 from fandom_books import supplement as fandom_supplement             # noqa: E402
 from traits import TRAIT_QUESTIONS, apply_labels, load_traits       # noqa: E402
 from series import VOLUME_DOMINANCE                                  # noqa: E402
-from features import (EXCLUSIVE_GROUPS, FORCE_KEEP,                  # noqa: E402
+from features import (EXCLUSIVE_GROUPS, FORCE_DROP, FORCE_KEEP,      # noqa: E402
                       PRESENCE_CONFIDENCE,
                       QUESTION_TEXT, STRUCTURAL_QUESTIONS,
-                      UNKNOWN_CONFIDENCE, absence_confidence, extract)
+                      UNKNOWN_CONFIDENCE, absence_confidence, extract,
+                      keeps_question)
+from features import MAX_FREQ as features_MAX_FREQ                   # noqa: E402
+from features import MIN_FREQ as features_MIN_FREQ                   # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CORPUS_PATH = os.path.join(REPO_ROOT, "data", "akinator_corpus.jsonl")
@@ -72,9 +75,11 @@ COVERS_PATH = os.path.join(REPO_ROOT, "data", "akinator_covers.json")
 DEFAULT_OUT = os.path.join(REPO_ROOT, "data", "akinator_build")
 
 # Same band as the Phase 0 gate: rarer than this splits nothing, commoner
-# tells nothing.
-MIN_FREQ = 0.05
-MAX_FREQ = 0.60
+# tells nothing. Re-exported from features.py, which now owns the band and
+# the two override lists, so the build and the simulator cannot hold
+# different ideas of which questions exist.
+MIN_FREQ = features_MIN_FREQ
+MAX_FREQ = features_MAX_FREQ
 
 # SHIPPED_BOOKS is the DEFAULT for --limit because the default should build
 # the thing that ships. It used to be 0, meaning the whole 19,890-book
@@ -345,10 +350,18 @@ def select_features(books: list[dict]) -> list[str]:
             counts[f] = counts.get(f, 0) + 1
     keys = set(counts) | {k for b in books for k in b["unknown"]}
     kept = []
+    dropped_by_name = []
     for k in sorted(keys):
         freq = counts.get(k, 0) / n
-        if MIN_FREQ <= freq <= MAX_FREQ or (k in FORCE_KEEP and freq > 0):
+        if keeps_question(k, freq):
             kept.append(k)
+        elif k in FORCE_DROP and freq > 0:
+            dropped_by_name.append((k, freq))
+    for k, freq in dropped_by_name:
+        # Said out loud, because a question vanishing from a build is exactly
+        # the kind of silent change this project keeps paying for.
+        print(f"  ! FORCE_DROP: refused {k} at {freq:.3%} "
+              f"(would otherwise have cleared the {MIN_FREQ:.0%} floor)")
     return _drop_duplicate_wordings(books, kept)
 
 

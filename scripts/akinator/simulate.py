@@ -67,7 +67,9 @@ from engine import Engine, Matrix                                # noqa: E402
 from work_traits import (WORK_QUESTIONS, load_protagonists,        # noqa: E402
                          load_works, merge_into)
 from features import (FORCE_KEEP, QUESTION_TEXT,                    # noqa: E402
-                      STRUCTURAL_QUESTIONS, extract)
+                      STRUCTURAL_QUESTIONS, extract, keeps_question)
+from features import MAX_FREQ as features_MAX_FREQ                  # noqa: E402
+from features import MIN_FREQ as features_MIN_FREQ                  # noqa: E402
 # THE DEPENDENCY POINTS THIS WAY ON PURPOSE. build_matrix.py packs the
 # artifact the game ships; this file's whole job is to measure that artifact.
 # So when the two disagree about which questions exist, the build is right by
@@ -80,10 +82,12 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 SAMPLE_PATH = os.path.join(REPO_ROOT, "data", "akinator_sample.json")
 CORPUS_PATH = os.path.join(REPO_ROOT, "data", "akinator_corpus.jsonl")
 
-# A feature carried by 2% of books eliminates almost nothing; one carried by
-# 80% tells almost nothing. The requirements note settled on a 5%-60% band.
-MIN_FREQ = 0.05
-MAX_FREQ = 0.60
+# The band and its two override lists now live in features.py and are shared
+# with build_matrix.py. They used to be a copy here with identical values,
+# which is the state every drift in this codebase has started from — and this
+# file had in fact drifted, by two questions, before 2026-08-23.
+MIN_FREQ = features_MIN_FREQ
+MAX_FREQ = features_MAX_FREQ
 
 # Character tokens are the opposite case: a name shared by many books is
 # useless, and one unique to a single book is exactly what we want in the
@@ -221,8 +225,7 @@ def select_questions(books: list[dict], verbose: bool = True) -> list[str]:
     all_keys = set(counts) | {k for b in books for k in b["unknown"]}
     for key in sorted(all_keys):
         freq = counts.get(key, 0) / n
-        ok = (MIN_FREQ <= freq <= MAX_FREQ) or (key in FORCE_KEEP and freq > 0)
-        (kept if ok else dropped).append((key, freq))
+        (kept if keeps_question(key, freq) else dropped).append((key, freq))
 
     if verbose:
         print(f"Feature selection ({MIN_FREQ:.0%}-{MAX_FREQ:.0%} band): "
