@@ -72,8 +72,18 @@ venv/
 # Open Library cover ids, regenerable by fetch_covers.py.
 /data/akinator_covers.json
 
-# OL work descriptions for trait extraction, regenerable.
-/data/akinator_descriptions.json
+# akinator_descriptions.json and akinator_traits.json are TRACKED, not
+# ignored, as of 2026-08-23 — owner-approved policy change (see
+# scripts/akinator/shipped_docs.py and .github/workflows/
+# akinator-harvest.yml). A GitHub Actions runner has no copy of the local
+# corpus these were originally regenerable FROM, so committing the two
+# outputs is what lets a weekly job keep them current without also
+# committing the 18 MB corpus itself. Regenerable locally either way — this
+# is a durability choice, not a claim that either file is hand-authored.
+#
+# The attempt-logs stay ignored: losing them in CI only means the next run
+# re-asks a few hundred previously-empty books, which is cheap and correct,
+# never wrong data.
 /data/akinator_descriptions_asked.json
 # Second source (--source google) keeps its own attempt log, same reason.
 /data/akinator_descriptions_asked_google.json
@@ -82,7 +92,6 @@ venv/
 
 # Hand-labelled trait batches (input to manual_traits.py ingest).
 /data/_labels_batch*.json
-/data/akinator_traits.json
 
 # Saved calibration run — the model's own answers on our published pages,
 # kept so re-scoring them against changed CALIBRATION_HINTS costs nothing.

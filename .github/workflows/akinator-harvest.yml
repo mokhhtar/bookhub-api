@@ -1,0 +1,113 @@
+# Weekly catch-up: keep the description and trait harvests current without
+# anyone remembering to run them by hand.
+#
+# THE PROBLEM THIS SOLVES. harvest_descriptions.py and extract_traits.py
+# both read the local, gitignored data/akinator_corpus.jsonl — never on
+# Render, never in any repo (akinator_sync.py's own docstring: "Render has
+# no corpus either"). A GitHub Actions runner checking out this repo has
+# none of it, so nothing could run these incrementally in CI at all. Fixed
+# by scripts/akinator/shipped_docs.py: both scripts can now take
+# --from-shipped, reading the book list off the PUBLIC, already-committed
+# books.json instead — which also means this job targets exactly the
+# population that matters, the books actually live, not the ~19,890-book
+# candidate pool the local corpus holds.
+#
+# WHY THIS COMMITS BACK TO bookhub-api, NOT bookhub. data/akinator_
+# descriptions.json and data/akinator_traits.json are TRACKED here as of
+# 2026-08-23 (see .gitignore) specifically so this job has somewhere to
+# write. This is a policy change from "everything akinator-data is
+# gitignored, regenerable, local-only" for these two files ONLY, made
+# because there is no other way to satisfy "converges automatically"
+# without inventing new infrastructure (a database, a second repo secret,
+# etc.) beyond what this project already uses. It does NOT touch
+# build_matrix.py, does NOT write to bookhub/games/data/akinator/, and does
+# NOT change question_hash or matrix.bin — the monthly rebuild (re-selects
+# features) and the nightly sync (append-only) are unchanged. This only
+# keeps the two data files current on disk, ready for the next deliberate,
+# manual rebuild.
+#
+# CADENCE, SIZED AGAINST REAL NUMBERS, not assumed. Description harvesting
+# is nearly a no-op most weeks — the OL+Google gap-fill for permanently-
+# undescribed books is already exhausted, and new demand only arrives when
+# a book is newly promoted into the shipped 5,000 at the next monthly
+# rebuild. The trait side is the real driver: backfilling ONE new key
+# across the ~4,114 already-labelled books is ~515 batches at the existing
+# delay, well under 40 minutes and comfortably inside a single Gemini key's
+# 500-request/day cap. Even five new keys added in one sitting fits inside
+# one run across the existing multi-key rotation and this job's timeout.
+# Weekly has large headroom.
+#
+# REQUIRES: GEMINI_API_KEYS (or GEMINI_API_KEY) and, optionally, GROQ_API_KEY
+# as repo secrets — today these are Render-only env vars; add them here too,
+# the same dual-home pattern AKINATOR_SYNC_SECRET already has.
+#
+# BEFORE THIS JOB CAN BACKFILL A NEW TRAIT KEY WITH --keys, data/
+# akinator_traits.json must be migrated once: `python scripts/akinator/
+# extract_traits.py --migrate-tested` (no API calls, run locally, commit the
+# result). An UNFILTERED run (the scheduled default, no `keys` input) does
+# not need this — it behaves exactly as it always has until migration
+# happens.
+name: Weekly akinator description/trait catch-up
+
+on:
+  schedule:
+    - cron: "17 4 * * 1"  # 04:17 UTC on Mondays — not :00, everything fires there
+  workflow_dispatch:
+    inputs:
+      keys:
+        description: "Comma-separated TRAITS ids to backfill (blank = every key). Needs --migrate-tested to have been run and committed first."
+        default: ""
+
+permissions:
+  contents: write
+
+env:
+  BOOKS_URL: "https://litheca.com/games/data/akinator/books.json"
+
+jobs:
+  harvest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet -r requirements.txt
+
+      - name: Fill gaps in harvested descriptions (Open Library)
+        run: |
+          python scripts/akinator/harvest_descriptions.py \
+            --from-shipped "$BOOKS_URL" --delay 0.4
+
+      - name: Fill remaining gaps (Google Books)
+        run: |
+          python scripts/akinator/harvest_descriptions.py --source google \
+            --from-shipped "$BOOKS_URL" --delay 0.4
+
+      - name: Classify trait labels
+        env:
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          python scripts/akinator/extract_traits.py \
+            --from-shipped "$BOOKS_URL" --keys "${{ inputs.keys || '' }}"
+
+      - name: Commit if anything changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # ONLY the two tracked files. `git add` on a gitignored path exits
+          # 1 (verified — it is not a silent no-op), which under this
+          # step's default `set -e` shell would fail the run before the
+          # commit check even executes, turning every week with no real
+          # change into a false red X. The *_asked* files stay gitignored
+          # on purpose (see .gitignore) and must never appear in this list.
+          git add data/akinator_descriptions.json data/akinator_traits.json
+          if git diff --cached --quiet; then
+            echo "Nothing changed."
+          else
+            git commit -m "akinator: weekly descriptions/traits catch-up"
+            git push
+          fi

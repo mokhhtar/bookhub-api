@@ -148,18 +148,31 @@ def main() -> None:
                          "that already has text is never re-fetched and never "
                          "overwritten, so a worse second answer cannot "
                          "replace a good first one.")
+    ap.add_argument("--from-shipped", default=None,
+                    help="a books.json URL or local path — read the book "
+                         "list from the SHIPPED artifact instead of the "
+                         "local, gitignored corpus. This is what lets a "
+                         "GitHub Actions runner, which has no copy of the "
+                         "corpus at all, run this incrementally. See "
+                         "shipped_docs.py for exactly what it changes (only "
+                         "which books are considered — nothing about how "
+                         "they are fetched or resumed).")
     args = ap.parse_args()
 
-    docs = []
-    with open(CORPUS_PATH, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if line:
-                try:
-                    docs.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
-    docs.sort(key=lambda d: -(d.get("readinglog_count") or 0))
+    if args.from_shipped:
+        from shipped_docs import load_shipped_docs
+        docs = load_shipped_docs(args.from_shipped)
+    else:
+        docs = []
+        with open(CORPUS_PATH, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line:
+                    try:
+                        docs.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+        docs.sort(key=lambda d: -(d.get("readinglog_count") or 0))
     docs = docs[:args.limit]
 
     out: dict[str, str] = {}
@@ -241,7 +254,23 @@ def main() -> None:
     # it: the first pass reported "3,590 descriptions" and said nothing about
     # the 85 books it never managed to ask about, among them Nineteen
     # Eighty-Four. Silence read as completion for a week.
-    unasked = [d for d in docs if d.get("key") and d["key"] not in asked]
+    # A book this pass never MEANT to ask about is not an unasked book.
+    #
+    # This report was written for the openlibrary pass, where every one of
+    # the 5,000 should end up in `asked`, and it exists because a first run
+    # once reported "3,590 descriptions" while silently skipping 85 books
+    # including Nineteen Eighty-Four. Reused unchanged by the gap-fill pass
+    # it inverted itself: `--source google` deliberately skips every book
+    # that already HAS text, so the report counted all 4,121 of them as
+    # transient failures and told the owner to re-run a twenty-minute job
+    # to retry Atomic Habits — which has a 409-character description and was
+    # never in question. A warning that fires on success trains people to
+    # ignore warnings.
+    skipped_on_purpose = ({d["key"] for d in docs
+                           if d.get("key") and _text_of(out.get(d["key"], ""))}
+                          if args.source == "google" else set())
+    unasked = [d for d in docs if d.get("key") and d["key"] not in asked
+               and d["key"] not in skipped_on_purpose]
     if unasked:
         print(f"! {len(unasked)} book(s) were never successfully asked — "
               f"transient failures, NOT 'no description exists'.")
