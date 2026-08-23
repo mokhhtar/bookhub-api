@@ -196,12 +196,24 @@ def main() -> None:
         print(f"Resuming: {len(asked)} asked, {len(out)} with text.\n")
 
     todo = [d for d in docs if d.get("key") and d["key"] not in asked]
+    # A book that already has usable text needs no further asking, whatever
+    # the source — generalizes a check the google gap-fill pass already had
+    # on its own.
+    #
+    # FOUND 2026-08-23, live, on the first --from-shipped run in GitHub
+    # Actions: a fresh checkout has no _asked.json at all (it stays
+    # gitignored on purpose — see the comment above), so `asked` starts
+    # EMPTY every single run there. Before this line applied to the
+    # openlibrary source too, that meant every weekly run re-asked all
+    # ~4,122 already-described books from scratch — the write-back a few
+    # lines down already refuses to overwrite existing text (`not
+    # _text_of(out.get(key, ""))`), so nothing was ever actually LOST, only
+    # ~30+ minutes wasted per run re-confirming answers already on disk.
+    # Locally this never showed up: the asked-log persists on the
+    # developer's own disk between manual runs even though git never sees
+    # it, so the resume "worked" there by accident.
+    todo = [d for d in todo if not _text_of(out.get(d["key"], ""))]
     if args.source == "google":
-        # GAP-FILL ONLY. A book that already has usable text is not asked
-        # again: the first answer came from the source carrying a per-work
-        # editorial description, and a publisher blurb is not an improvement
-        # on it. This pass exists for the books that have nothing at all.
-        todo = [d for d in todo if not _text_of(out.get(d["key"], ""))]
         print(f"{len(docs)} books, {len(todo)} with NO description to fill.\n")
     else:
         print(f"{len(docs)} books, {len(todo)} still to ask about.\n")
