@@ -309,14 +309,60 @@ def _load_live_artifacts() -> dict:
             "question_ids": [q["id"] for q in questions], "live_hash": live}
 
 
+def _apply_manual_answers(book: dict, answers: dict[str, bool | None] | None,
+                          question_ids: list[str]) -> None:
+    """The admin's reviewed verdicts, over whatever the pipeline computed.
+
+    Same precedence as everywhere else a human looked something up:
+    `admin_corrections.json` over a catalogued year, `author_overrides.json`
+    over Wikidata, a hand-taught cell over the drain. `answers` comes from
+    `/akinator/admin/book/preview`'s suggestions AFTER the admin reviewed
+    and corrected them — the one signal in this whole pipeline that a
+    person actually looked at.
+
+    Ids outside `question_ids` are dropped silently rather than raising: the
+    caller already validated against the SHIPPED list, and a stale id here
+    (the preview and the create call landing on different question sets,
+    however that could happen) must not corrupt a book over it — same
+    "fail toward doing nothing wrong" shape as `_encode_row`'s own guard.
+    """
+    if not answers:
+        return
+    present = set(book["present"])
+    unknown = set(book["unknown"])
+    known_false = set(book.get("known_false") or ())
+    ids = set(question_ids)
+    for qid, value in answers.items():
+        if qid not in ids:
+            continue
+        present.discard(qid)
+        unknown.discard(qid)
+        known_false.discard(qid)
+        if value is None:
+            unknown.add(qid)
+        elif value:
+            present.add(qid)
+        else:
+            known_false.add(qid)
+    book["present"] = sorted(present)
+    book["unknown"] = sorted(unknown)
+    book["known_false"] = sorted(known_false)
+
+
 def _build_book_row(doc: dict, question_ids: list[str], bpr: int, rank: int,
-                    prose: str = "") -> tuple[dict, bytes]:
+                    prose: str = "",
+                    manual_answers: dict[str, bool | None] | None = None
+                    ) -> tuple[dict, bytes]:
     """One OL-shaped doc -> (feature dict, packed row bytes).
 
     Shared by `sync()`'s per-page loop and `append_book_row()` — the only
     difference between a newly published site page and an admin-typed book
     is where `doc` and `prose` come from; everything after that is the
     same extract -> mark-unknown -> label -> pack pipeline either way.
+
+    `manual_answers` is additive and optional: `sync()` never passes it (a
+    published page has no admin sitting over a review screen), so its
+    behaviour is exactly what it was before this parameter existed.
     """
     from features import extract                              # noqa: E402
     from characters import extract_characters, usable_token   # noqa: E402
@@ -330,11 +376,17 @@ def _build_book_row(doc: dict, question_ids: list[str], bpr: int, rank: int,
     _label_traits(book, {"title": doc.get("title"),
                          "author": (doc.get("author_name") or [""])[0],
                          "prose": prose}, question_ids)
+    # LAST, so a human's reviewed answer is never overwritten by the
+    # automatic pipeline that ran before them — the same ordering
+    # apply_author_facts uses for the author overlay over Wikidata.
+    _apply_manual_answers(book, manual_answers, question_ids)
     row = _encode_row(book, question_ids, bpr)
     return book, row
 
 
-def append_book_row(doc: dict, prose: str = "", commit_message: str = "") -> dict:
+def append_book_row(doc: dict, prose: str = "", commit_message: str = "",
+                    manual_answers: dict[str, bool | None] | None = None
+                    ) -> dict:
     """Append ONE book to the live artifacts and commit immediately.
 
     The admin add-book endpoint's whole implementation — one call, one
@@ -343,6 +395,13 @@ def append_book_row(doc: dict, prose: str = "", commit_message: str = "") -> dic
     readinglog_count); the caller decides `readinglog_count` since there is
     no measured popularity for a book added this way, same caveat
     `fandom_books.py` already documents for its own thin rows.
+
+    `manual_answers` is the admin's reviewed verdicts from
+    `/akinator/admin/book/preview` — see `_apply_manual_answers` for the
+    precedence. Baked directly into this row's present/unknown/known_false
+    at creation, never as an `overrides.json` clamp: unlike a correction to
+    an EXISTING shipped row, there is no prior state here for a clamp to
+    sit on top of, and no drain that could later contradict it.
     """
     if not GITHUB_PAT:
         return {"ok": False, "reason": "GITHUB_PAT not configured"}
@@ -355,7 +414,8 @@ def append_book_row(doc: dict, prose: str = "", commit_message: str = "") -> dic
 
     rank = meta["books"]
     try:
-        book, row = _build_book_row(doc, question_ids, bpr, rank, prose)
+        book, row = _build_book_row(doc, question_ids, bpr, rank, prose,
+                                    manual_answers)
     except ValueError as exc:
         # A row that packs to the wrong width is exactly the corruption this
         # module exists to prevent. `sync()` already turns this into a
