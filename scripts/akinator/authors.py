@@ -150,21 +150,46 @@ class AuthorIndex:
 
     Identity precedence, strongest first:
       1. `ol_author_key` — a real id, present on ~98% of works
-      2. the canonical spelling, for records missing a key
+      2. a hand-taught alias, for a name with no key — see `alias_of`
+      3. the canonical spelling, for records missing a key
     Aliases accumulate on whichever entity wins, so the endgame question
     and the reveal search can both match what a player actually types.
+
+    `alias_of` maps a name's merge key to the entity it belongs to, and is
+    built from `author_overrides.json` by `author_overrides.alias_index()`.
+    It exists for one measured gap: this class already folds spelling NOISE
+    — case, diacritics, punctuation, suffixes, "Last, First" inversion — so
+    "J. R. R. Tolkien" and "Eugène Schwartz" merge for free. What it cannot
+    fold is two genuinely different names for one person ("Colleen Hoover"
+    / "C. Hoover"), which is what a manually added book with no key
+    produces. That is a judgement, so it comes from a human, through a
+    file, and never from a fuzzy match here.
+
+    It is consulted ONLY when there is no `ol_key`. A real id outranks a
+    spelling in this class and always has; letting a hand-written alias
+    move a book off the key Open Library itself asserts would make this
+    file able to break identity rather than repair it.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, alias_of: dict[str, str] | None = None) -> None:
         self.by_id: dict[str, dict] = {}
         self._key_to_id: dict[str, str] = {}
         self._canon_to_id: dict[str, str] = {}
+        self._alias_of = alias_of or {}
 
     def add(self, name: str, ol_key: str | None) -> str | None:
         canon = canonical_author(name)
         mkey = merge_key(canon)
         if not mkey and not ol_key:
             return None
+
+        aliased = False
+        if not ol_key and mkey:
+            target = self._alias_of.get(f"name:{mkey}")
+            if target and target.startswith("name:"):
+                mkey, aliased = target[5:], True
+            elif target:
+                ol_key, aliased = target, True
 
         author_id = None
         if ol_key and ol_key in self._key_to_id:
@@ -182,9 +207,21 @@ class AuthorIndex:
                 "surname": surname_token(canon),
                 "traits": {},        # filled in phase 2 from Wikidata
                 "book_count": 0,
+                # This entity was created by an ALIAS, so its name and
+                # surname are the spelling we were told to fold in rather
+                # than what the author is called. The corpus is popularity-
+                # ordered so the real spelling usually arrives first, but
+                # "usually" would mean the reveal one day prints "C.
+                # Hoover" and the endgame question asks about a surname
+                # nobody uses.
+                "via_alias": aliased,
             }
 
         entry = self.by_id[author_id]
+        if entry["via_alias"] and not aliased:
+            entry["name"] = name
+            entry["surname"] = surname_token(canon)
+            entry["via_alias"] = False
         entry["aliases"].add(canon)
         if ol_key:
             self._key_to_id[ol_key] = author_id

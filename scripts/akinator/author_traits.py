@@ -36,6 +36,8 @@ from __future__ import annotations
 import json
 import os
 
+import author_overrides
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 AUTHORS_WD_PATH = os.path.join(REPO_ROOT, "data", "akinator_authors_wd.json")
 
@@ -205,21 +207,85 @@ def traits_for(record: dict | None, book_count: int, this_year: int = 2026
     return out
 
 
-def book_traits(author_ids: list[str], wd: dict[str, dict],
-                book_counts: dict[str, int]) -> dict[str, bool | None]:
-    """Merge the traits of a book's authors into the book's own features.
+def facts_author(author_ids: list[str], wd: dict[str, dict]) -> str | None:
+    """WHOSE facts a book takes — the one decision, in one place.
 
     Co-authored books take the first author's facts. Averaging two authors'
     nationalities would invent a fact about neither of them, and a player
     thinking of a co-authored book almost always has the lead author in
-    mind.
+    mind. "First" means the first author Wikidata actually knows, falling
+    back to the literal first: a lead author nobody documented should not
+    cost the book the co-author's real facts.
+
+    Split out of `book_traits` so the hand-set overlay can look up the SAME
+    author these facts came from. Recomputing that choice separately would
+    let an override for the second author quietly become the book's answer
+    — two people's facts on one row, which is the exact failure the
+    "co-authored books take the first author" rule exists to prevent.
     """
     for aid in author_ids:
         # `aid` is the Open Library author key when one exists, which is
         # also what the harvest is keyed on.
-        record = wd.get(aid)
-        if record:
-            return traits_for(record, book_counts.get(aid, 0))
-    if author_ids:
-        return traits_for(None, book_counts.get(author_ids[0], 0))
-    return {k: None for k in AUTHOR_QUESTIONS}
+        if wd.get(aid):
+            return aid
+    return author_ids[0] if author_ids else None
+
+
+def book_traits(author_ids: list[str], wd: dict[str, dict],
+                book_counts: dict[str, int]) -> dict[str, bool | None]:
+    """Merge the traits of a book's authors into the book's own features."""
+    aid = facts_author(author_ids, wd)
+    if aid is None:
+        return {k: None for k in AUTHOR_QUESTIONS}
+    return traits_for(wd.get(aid), book_counts.get(aid, 0))
+
+
+def apply_author_facts(book: dict, doc: dict, wd: dict[str, dict],
+                       book_counts: dict[str, int],
+                       overrides: dict[str, dict] | None = None,
+                       aliases: dict[str, str] | None = None) -> None:
+    """Wikidata's author facts, then the owner's, onto one book's sets.
+
+    SHARED BY build_matrix.py AND simulate.py, and that is the point rather
+    than a convenience. Those two carried a byte-identical copy of this
+    block, and this project has twice paid for simulate.py drifting from
+    the game it claims to measure — most recently when a whole branch of
+    the trait-labelling rule existed in one file and not the other, making
+    a FORCE_KEEP question invisible to every measurement ever taken.
+
+    PRECEDENCE: the hand-set overlay wins over Wikidata, the same way
+    `admin_corrections.json` wins over a catalogued year. A person who
+    looked the author up is better evidence than a database that has not
+    been told yet — and `null` in the overlay is a real verdict meaning
+    "back to unknown", not an absent one, because a wrong fact fans out to
+    every book that author wrote while a missing one costs almost nothing.
+    """
+    ol_keys = doc.get("author_key") or []
+    facts = book_traits(ol_keys, wd, book_counts)
+    if overrides:
+        keys = author_overrides.lookup_keys(
+            ol_keys, doc.get("author_name") or [],
+            facts_author(ol_keys, wd), aliases or {})
+        facts.update(author_overrides.facts_for(keys, overrides))
+
+    present = set(book["present"])
+    unknown = set(book["unknown"])
+    known_false = set(book.get("known_false") or ())
+    for key, value in facts.items():
+        # Three states, and they are not two. An author nobody matched is
+        # UNKNOWN — scoring that as "no" would punish the book for a gap in
+        # Wikidata. But Wikidata saying the author IS American does mean
+        # they are certainly not African, and scoring THAT like an
+        # unrecorded subject is what let the game ask both.
+        present.discard(key)
+        unknown.discard(key)
+        known_false.discard(key)
+        if value is None:
+            unknown.add(key)
+        elif value:
+            present.add(key)
+        else:
+            known_false.add(key)
+    book["present"] = sorted(present)
+    book["unknown"] = sorted(unknown)
+    book["known_false"] = sorted(known_false)

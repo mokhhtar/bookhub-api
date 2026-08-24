@@ -47,7 +47,9 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 
-from author_traits import AUTHOR_QUESTIONS, book_traits, load_wikidata  # noqa: E402
+from author_overrides import alias_index, load_overrides             # noqa: E402
+from author_traits import (AUTHOR_QUESTIONS, apply_author_facts,     # noqa: E402
+                           load_wikidata)
 from authors import AuthorIndex                                     # noqa: E402
 from series import series_for_docs                                  # noqa: E402
 from work_traits import (WORK_QUESTIONS, load_protagonists,         # noqa: E402
@@ -171,7 +173,20 @@ def build_books(docs: list[dict],
                 series_of: list[str | None] | None = None
                 ) -> tuple[list[dict], AuthorIndex]:
     n = len(docs)
-    authors = AuthorIndex()
+
+    # The owner's own author facts and aliases, from the admin page's
+    # Authors tab. Missing file is the normal state, same as overrides.json.
+    # Loaded before the index is built because an alias is an identity
+    # decision: it has to be in hand before the first `authors.add()`, not
+    # applied to the finished grouping afterwards.
+    overrides = load_overrides()
+    aliases = alias_index(overrides)
+    if overrides:
+        facts = sum(len(e["facts"]) for e in overrides.values())
+        print(f"Author overrides: {len(overrides)} author(s), {facts} hand-set "
+              f"fact(s), {len(aliases)} alias(es)")
+
+    authors = AuthorIndex(aliases)
     books = []
 
     # Phase 2 author facts. Missing file is fine — the game gets fewer
@@ -195,17 +210,15 @@ def build_books(docs: list[dict],
         book["char_names"] = sorted(names)
         book["char_tokens"] = sorted(t for t in tokens if usable_token(t))
 
+        # Wikidata's author facts, then the owner's hand-set overlay on top
+        # — the same precedence admin_corrections.json has over a
+        # catalogued year. Shared with simulate.py so the artifact and the
+        # measurement of it cannot hold different ideas of what an author
+        # knows; see author_traits.apply_author_facts.
+        apply_author_facts(book, doc, wd, book_counts, overrides, aliases)
         present = set(book["present"])
         unknown = set(book["unknown"])
-        known_false = set(book.get("known_false") or ())
-        for key, value in book_traits(doc.get("author_key") or [],
-                                      wd, book_counts).items():
-            if value is None:
-                unknown.add(key)
-            elif value:
-                present.add(key)
-            else:
-                known_false.add(key)
+        known_false = set(book["known_false"])
         # BEING IN A SERIES GROUP IS THE ANSWER TO "is it part of a
         # series?", and it is better evidence than the subject string the
         # question was reading. `form:series` came only from the words

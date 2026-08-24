@@ -55,7 +55,9 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 
-from author_traits import AUTHOR_QUESTIONS, book_traits, load_wikidata  # noqa: E402
+from author_overrides import alias_index, load_overrides          # noqa: E402
+from author_traits import (AUTHOR_QUESTIONS, apply_author_facts,  # noqa: E402
+                           load_wikidata)
 from characters import extract_characters, usable_token          # noqa: E402
 from corpus_filter import SHIPPED_BOOKS, filter_corpus           # noqa: E402
 from corrections import apply_corrections                         # noqa: E402
@@ -146,6 +148,12 @@ def load_books(corpus_size: int = 0, with_author_traits: bool = True,
     # Phase 2: Wikidata author facts, if they have been harvested. Absent
     # file = the game simply has fewer questions, never wrong ones.
     wd = load_wikidata() if with_author_traits else {}
+    # The owner's hand-set author facts, from the admin page's Authors tab.
+    # Gated on the same flag as Wikidata's, because --no-author-traits asks
+    # what the game is worth WITHOUT author facts, and a hand-set one is
+    # still an author fact.
+    overrides = load_overrides() if with_author_traits else {}
+    aliases = alias_index(overrides)
     works = load_works() if with_author_traits else {}
     protagonists = load_protagonists() if with_author_traits else {}
     # Model-extracted traits, if the extraction has been run. Absent file =
@@ -171,23 +179,11 @@ def load_books(corpus_size: int = 0, with_author_traits: bool = True,
         book["char_tokens"] = sorted(t for t in tokens if usable_token(t))
 
         if with_author_traits:
-            present = set(book["present"])
-            unknown = set(book["unknown"])
-            known_false = set(book.get("known_false") or ())
-            for key, value in book_traits(doc.get("author_key") or [],
-                                          wd, book_counts).items():
-                if value is None:
-                    unknown.add(key)
-                elif value:
-                    present.add(key)
-                else:
-                    # Wikidata says the author IS American, so they are
-                    # certainly not African. Scoring that like an unrecorded
-                    # subject is what let the game ask both.
-                    known_false.add(key)
-            book["present"] = sorted(present)
-            book["unknown"] = sorted(unknown)
-            book["known_false"] = sorted(known_false)
+            # ONE implementation, shared with build_matrix.py. This block
+            # used to be a byte-identical copy of that file's, which is how
+            # the fandom-labels branch below came to exist in one and not
+            # the other — the rule was shared, the code around it was not.
+            apply_author_facts(book, doc, wd, book_counts, overrides, aliases)
             merge_into(book, doc, works, protagonists)
 
             # A trait the model asserted is `present`; everything else is
