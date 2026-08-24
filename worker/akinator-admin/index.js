@@ -63,7 +63,43 @@ function relay(path) {
   };
 }
 
+// GET, not POST, and it needs no ADMIN_SECRET — book_data.search_books_list()
+// is already public (GET /search in tools/summary.py, the site's own book
+// search). This exists ONLY so the browser calls the SAME origin as every
+// other relay: fetching bookhub-api-hnv7.onrender.com directly from
+// mindreader-admin.litheca.com would need that host added to the API's own
+// CORS allow-list, and adding a page whose whole purpose is not being
+// public to a CORS allow-list is exactly backwards. The Worker fetches
+// server-to-server instead, where CORS does not apply at all.
+//
+// Still a POST from the CLIENT's side (body: {q, offset}), so it fits the
+// same relay() shape as everything else and the deploy workflow's guard
+// loop (POST … -d '{}') exercises it exactly like every other route — a
+// GET-shaped route here would need its own carve-out in that loop, and
+// that carve-out is exactly the kind of "this one relay is different" gap
+// that let /display slip through unguarded once already.
+function bookSearchRelay(request) {
+  return (async () => {
+    let q = "", offset = 0;
+    try {
+      const body = JSON.parse(await request.text() || "{}");
+      q = String(body.q || "").slice(0, 200);
+      offset = Number.isFinite(body.offset) ? body.offset : 0;
+    } catch (e) { /* empty q below */ }
+    if (!q.trim()) return new Response("[]", { headers: { "Content-Type": "application/json" } });
+    const upstream = await fetch(
+      `${API_BASE}/search?q=${encodeURIComponent(q)}&offset=${offset}`);
+    const text = await upstream.text();
+    return new Response(text, {
+      status: upstream.status,
+      headers: { "Content-Type": "application/json" },
+    });
+  })();
+}
+
 const ROUTES = {
+  "/api/book/search": (request) => bookSearchRelay(request),
+  "/api/book/preview": relay("/akinator/admin/book/preview"),
   "/api/exclude": relay("/akinator/admin/exclude"),
   "/api/correction": relay("/akinator/admin/correction"),
   "/api/question": relay("/akinator/admin/question"),
@@ -153,7 +189,16 @@ td.title{white-space:normal;min-width:220px}
       "Attaching writes…" note — was nowrap too. Most of them happened to
       be short enough to fit on one unwrapped line and looked fine, which is
       exactly how this hid until a long paragraph exposed it (see td.auEditCell). */
-table.qtable{table-layout:fixed;width:100%}
+/* min-width:0 overrides the page's OWN generic table{min-width:640px} rule
+   (meant for wide book-list tables). Caught in a real browser on the
+   Add-a-book review table specifically: its .card is the default 560px,
+   narrower than that 640px floor, so table-layout:fixed;width:100% still
+   overflowed — width:100% resolves to ~520px but min-width:640px is a
+   hard floor that wins regardless. The Authors/Edit-a-book tables never
+   hit this because their containers happen to be wider than 640px; a
+   floor that only bites in ONE context is exactly the kind of bug that
+   stays hidden until something narrower than every case tested exposes it. */
+table.qtable{table-layout:fixed;width:100%;min-width:0}
 td.q{white-space:normal}
 /* The buttons cell (class="row qa") can genuinely need two lines — Yes /
    No / Unknown / Clear in a ~28%-wide fixed column. .row's flex is nowrap
@@ -256,23 +301,19 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
 <datalist id="authorNames"></datalist>
 
 <section id="add">
+  <p class="sub" style="margin-bottom:14px">Search first — Fandom, Open Library and Google Books, the same
+  cascade the site's own book search already runs, not a new one built to guess at this page. Pick a match and
+  its title/author/year/summary come from a real source. Nothing found? Create the row by hand below the search.
+  Either way, review what the game would say about the book <strong>before</strong> it is added — a suggestion,
+  never a silent guess, and Yes/No/Unknown here costs no commit until you press Add book.</p>
   <div class="card">
-    <div class="field"><label>Title</label><input type="text" id="addTitle"></div>
-    <div class="field"><label>Author — pick one we already hold. A name typed one letter
-      differently from the one we have creates a SECOND author, with the facts and the book
-      count split between them; that is the failure the Authors tab exists to repair, and this
-      form was the easiest place in the product to cause it.</label>
-      <input type="text" id="addAuthor" list="authorNames" autocomplete="off">
-      <p class="effect" id="addAuthorNote"></p></div>
-    <div class="field"><label>First published (optional — leave blank and Open Library's work-level year is used;
-      six era questions read this, and a wrong year is worse than none)</label>
-      <input type="text" id="addYear" inputmode="numeric" style="width:110px"></div>
-    <div class="field"><label>Summary (grounds the theme labels — the richer this is, the more the book can answer)</label>
-      <textarea id="addSummary"></textarea></div>
-    <div class="field"><label>Themes, comma-separated (optional)</label><input type="text" id="addThemes"></div>
-    <button class="act" id="addSubmit">Add book</button>
-    <p class="status" id="addStatus"></p>
+    <div class="field"><label>Search for the book</label>
+      <input type="search" id="addSearch" placeholder="Title, or title and author…"></div>
+    <div id="addSearchStatus" class="status"></div>
+    <div id="addResults"></div>
+    <p class="row" style="margin:10px 0"><button class="act ghost" id="addManual">Nothing matches — create it by hand</button></p>
   </div>
+  <div id="addForm"></div>
 </section>
 
 <section id="edit">
@@ -545,79 +586,273 @@ document.getElementById("qRows").addEventListener("click", async (e)=>{
   finally { e.target.disabled = false; }
 });
 
-// THE FORM WILL NOT ACCEPT AN AUTHOR IT DOES NOT KNOW, and the note under
-// the box says which one it matched. A free-text author field is how "C.
-// Hoover" becomes a second Colleen Hoover — two entities, facts and book
-// count split, and nothing to notice it by until somebody reads the
-// Authors tab months later. Matching folds spelling noise the same way
-// AuthorIndex does, so "J.R.R. Tolkien" still finds "J. R. R. Tolkien";
-// what it refuses is a name nobody in the game has.
+// ── add a book: search first, review before it goes live ─────────────────
+//
+// WHY THIS REPLACED A FLAT FORM. The owner's point: the old form let an
+// admin type a title/author/summary/themes blind and add the row on one
+// click, with no source behind the text and no visibility into what the
+// automatic pipeline was about to label. Two fixes, and neither invents
+// anything new:
+//
+//   SEARCH reuses book_data.search_books_list() through /api/book/search
+//   — the site's own book search (Fandom's hand-verified catalog first,
+//   then a fuzzy subdomain guess mixed with Open Library, then Google
+//   Books), not a cascade built to match a description. Picking a result
+//   fetches the real title/author/year/description server-side; nothing
+//   here re-implements that resolution.
+//
+//   REVIEW calls /api/book/preview, which runs the SAME extract() + trait
+//   model _build_book_row runs at creation, plus a single-work Wikidata
+//   lookup neither of those reach. The result is a DRAFT — same shape as
+//   the Authors tab's, no network per click — reviewed and corrected
+//   before Add book fires the one commit that uses it.
+let addPicked = null;   // the chosen /search candidate, or null (manual)
+let addAnswers = {};    // draft: question id -> true|false|null
+let addTouched = new Set(); // ids the admin actually clicked, for the
+                            // "reviewed" badge — addAnswers holds a value
+                            // for EVERY suggested id from the start (see
+                            // addSuggest), so it alone can't distinguish
+                            // "still just the suggestion" from "reviewed"
+
 function addAuthorCheck(){
-  const box = document.getElementById("addAuthor");
+  const box = document.getElementById("addAuthorField");
   const note = document.getElementById("addAuthorNote");
+  if (!box) return null;
   const text = box.value.trim();
-  if (!text){ note.innerHTML = ""; return null; }
+  if (!text){ if (note) note.innerHTML = ""; return null; }
   const hit = authorByName(text);
-  note.innerHTML = hit
+  if (note) note.innerHTML = hit
     ? '<span class="sg-new">' + esc(hit.name) + "</span> \\u00b7 <code>" + esc(hit.id)
       + "</code> \\u00b7 " + hit.books.length
       + (hit.books.length === 1 ? " book" : " books")
     : '<span class="sg-over">No author by that name.</span> Create their profile on the '
-      + "Authors tab first \\u2014 \\u201cNew author profile\\u201d \\u2014 then come back. "
-      + "Typing a new name here would split an author instead of adding one.";
+      + "Authors tab first \\u2014 \\u201cNew author profile\\u201d \\u2014 then come back.";
   return hit;
 }
-document.getElementById("addAuthor").addEventListener("input", addAuthorCheck);
 
-document.getElementById("addSubmit").addEventListener("click", async ()=>{
-  const title = document.getElementById("addTitle").value.trim();
-  const author = document.getElementById("addAuthor").value.trim();
-  const summary = document.getElementById("addSummary").value.trim();
-  const themes = document.getElementById("addThemes").value.split(",").map(s=>s.trim()).filter(Boolean);
-  const rawYear = document.getElementById("addYear").value.trim();
-  if (!title || !author) { setStatus("addStatus", "title and author are required", false); return; }
-  const who = addAuthorCheck();
-  if (!who) {
-    setStatus("addStatus", "\\u201c" + author + "\\u201d is not an author the game holds. "
-      + "Create the profile on the Authors tab first, then add the book \\u2014 a new name "
-      + "typed here would become a second author rather than this one.", false);
+async function runAddSearch(q){
+  const status = document.getElementById("addSearchStatus");
+  const host = document.getElementById("addResults");
+  if (!q.trim()){ host.innerHTML = ""; status.textContent = ""; return; }
+  status.textContent = "Searching Fandom, Open Library and Google Books…";
+  try {
+    const results = await post("/api/book/search", {q});
+    host.innerHTML = (results || []).slice(0, 12).map((r, i) => {
+      const src = r.source === "fandom" || r.source === "fandom_series" ? "Fandom"
+        : r.source === "open_library" ? "Open Library"
+        : r.source === "google_books" ? "Google Books" : (r.source || "?");
+      return '<div class="sg"><div class="sg-head"><span class="sg-reason">'
+        + esc(r.title) + "</span>" + '<span class="badge">' + esc(src) + "</span>"
+        + (r.published_year ? '<span class="sg-when">' + esc(r.published_year) + "</span>" : "")
+        + "</div><p>" + esc(r.author || "unknown author") + "</p>"
+        + '<button class="act ghost addUse" data-i="' + i + '">Use this one</button></div>';
+    }).join("") || '<p class="status">No matches in any source.</p>';
+    status.textContent = (results || []).length + " result(s)";
+    host.dataset.results = JSON.stringify(results || []);
+  } catch (err) {
+    status.textContent = "Search failed: " + String(err.message || err);
+  }
+}
+
+let addSearchTimer = null;
+document.getElementById("addSearch").addEventListener("input", (e) => {
+  clearTimeout(addSearchTimer);
+  const q = e.target.value;
+  addSearchTimer = setTimeout(() => runAddSearch(q), 500);
+});
+
+document.getElementById("addResults").addEventListener("click", (e) => {
+  if (!e.target.classList.contains("addUse")) return;
+  const results = JSON.parse(document.getElementById("addResults").dataset.results || "[]");
+  const r = results[+e.target.dataset.i];
+  if (!r) return;
+  addPicked = r;
+  renderAddForm();
+});
+
+document.getElementById("addManual").addEventListener("click", () => {
+  addPicked = null;
+  renderAddForm();
+});
+
+// The whole review-and-submit form, built once a source is picked (or
+// manual entry chosen). Rebuilt from scratch on each render — this form
+// is short-lived (one book, then gone), so a full-draft object like the
+// Authors tab's auDraft would be more machinery than the lifetime justifies.
+function renderAddForm(){
+  const host = document.getElementById("addForm");
+  addAnswers = {}; addTouched = new Set();
+  const p = addPicked;
+  host.innerHTML = '<div class="card">'
+    + (p ? '<p class="effect">From ' + esc(p.source || "search") + ': <strong>'
+        + esc(p.title) + "</strong> \\u2014 " + esc(p.author || "unknown author")
+        + "</p>" : "")
+    + '<div class="field"><label>Title</label><input type="text" id="addTitle" value="'
+      + esc(p ? p.title : "") + '"></div>'
+    + '<div class="field"><label>Author \\u2014 pick one we already hold. A name typed one '
+      + "letter differently from the one we have creates a SECOND author, with the facts "
+      + "and the book count split between them.</label>"
+      + '<input type="text" id="addAuthorField" list="authorNames" autocomplete="off" value="'
+      + esc(p ? (p.author || "") : "") + '">'
+      + '<p class="effect" id="addAuthorNote"></p></div>'
+    + '<div class="field"><label>First published (blank = Open Library\\u2019s work-level '
+      + "year; six era questions read this, and a wrong year is worse than none)</label>"
+      + '<input type="text" id="addYear" inputmode="numeric" style="width:110px" value="'
+      + esc(p && p.published_year ? p.published_year : "") + '"></div>'
+    + '<div class="field"><label>Summary (grounds the theme labels \\u2014 the richer this '
+      + "is, the more the book can answer). Leave blank when a source was picked and "
+      + '"Suggest answers" will fetch the catalogue\\u2019s own description.</label>'
+      + '<textarea id="addSummary"></textarea></div>'
+    + '<div class="field"><label>Themes, comma-separated (optional)</label>'
+      + '<input type="text" id="addThemes"></div>'
+    + '<div class="row"><button class="act ghost" id="addSuggest">Suggest answers</button>'
+      + '<span class="status" id="addSuggestStatus"></span></div>'
+    + '<div id="addReview"></div>'
+    + '<div class="row" style="margin-top:12px"><button class="act" id="addSubmit">Add book</button></div>'
+    + '<p class="status" id="addStatus"></p></div>';
+  document.getElementById("addAuthorField").addEventListener("input", addAuthorCheck);
+  addAuthorCheck();
+}
+
+// The review draft — same visual language as the Authors tab's question
+// table (Question | Suggested | Your answer | Yes/No/Unknown), and the
+// same rule: nothing is written while these buttons are clicked. Only
+// "Add book" commits, once, with whatever is in addAnswers at that moment.
+function renderAddReview(questions){
+  const host = document.getElementById("addReview");
+  const src = (s) => s === "subject" ? "from the subjects"
+    : s === "trait model" ? "from the description"
+    : s === "wikidata" ? "from Wikidata" : "";
+  host.innerHTML = '<div class="scroll"><table class="qtable"><colgroup>'
+    + '<col style="width:42%"><col style="width:20%"><col style="width:10%"><col style="width:28%">'
+    + '</colgroup><thead><tr><th>Question</th><th>Suggested</th><th></th><th>Your answer</th>'
+    + "</tr></thead><tbody>" + questions.map((q) => {
+      const touched = addTouched.has(q.id);
+      const v = Object.prototype.hasOwnProperty.call(addAnswers, q.id)
+        ? addAnswers[q.id] : q.suggested;
+      const sugg = q.suggested === true ? '<span class="sg-new">yes</span>'
+        : q.suggested === false ? "no" : '<span class="sg-none">unknown</span>';
+      const on = (val) => ((val === "yes" && v === true) || (val === "no" && v === false)
+        || (val === "unknown" && v === null)) ? "act" : "act ghost";
+      const btn = (val, label) => '<button class="' + on(val) + ' addSet" data-q="'
+        + esc(q.id) + '" data-v="' + val + '">' + label + "</button>";
+      return "<tr><td class=\\"q\\">" + esc(q.text) + '<br><span class="sg-none">'
+        + esc(q.id) + "</span></td><td>" + sugg
+        + '<br><span class="sg-none">' + src(q.source) + "</span></td><td>"
+        + (touched ? '<span class="badge off">reviewed</span>' : "")
+        + '</td><td class="row qa">' + btn("yes", "Yes") + btn("no", "No")
+        + btn("unknown", "Unknown") + "</td></tr>";
+    }).join("") + "</tbody></table></div>"
+    + '<p class="effect">Yes/No/Unknown here edits the DRAFT only \\u2014 nothing is written '
+    + "until Add book. Everything left unreviewed ships exactly as suggested above.</p>";
+}
+
+// window.__addLastQuestions holds the last preview's full question list
+// (id/text/suggested/source) so a Yes/No/Unknown click can redraw the
+// table from the SAME data with just addAnswers changed — no second
+// network call for what is purely a draft edit.
+document.getElementById("addForm").addEventListener("click", async (e) => {
+  if (e.target.classList.contains("addSet")){
+    const q = e.target.dataset.q, v = e.target.dataset.v;
+    addAnswers[q] = v === "yes" ? true : v === "no" ? false : null;
+    addTouched.add(q);
+    if (window.__addLastQuestions) renderAddReview(window.__addLastQuestions);
     return;
   }
-  if (rawYear && !/^\\d{1,4}$/.test(rawYear)) {
-    setStatus("addStatus", "year must be digits only, or blank", false); return;
-  }
-  const btn = document.getElementById("addSubmit");
-  btn.disabled = true;
-  setStatus("addStatus", "Verifying and adding…");
-  try {
-    const r = await post("/api/book",
-      {title, author: who.name, summary, themes,
-       year: rawYear ? parseInt(rawYear, 10) : null});
-    // ATTACH SEPARATELY, and it is not a nicety. /book stores no author key
-    // — a synced row carries an empty author_key by construction — so without
-    // this the new book would be identified by its printed name alone and
-    // would gain none of the author's facts. Linking writes them, and writes
-    // author_name/author_key into admin_corrections.json so the next rebuild
-    // reaches the same conclusion on its own.
-    let linked = "";
+
+  if (e.target.id === "addSuggest"){
+    const title = document.getElementById("addTitle").value.trim();
+    const author = document.getElementById("addAuthorField").value.trim();
+    const summary = document.getElementById("addSummary").value.trim();
+    const themes = document.getElementById("addThemes").value.split(",")
+      .map((s) => s.trim()).filter(Boolean);
+    if (!title){ setStatus("addSuggestStatus", "a title is required first", false); return; }
+    const who = authorByName(author);
+    e.target.disabled = true;
+    setStatus("addSuggestStatus", "Checking the subjects and the description\\u2026");
     try {
-      const l = await post("/api/authors/link", {key: who.id, work_key: r.key,
-                                                 note: "attached when the book was added"});
-      const n = Object.keys(l.applied || {}).length;
-      linked = " Attached to " + l.key + (n ? ", " + n + " answer(s) applied." : ".");
+      const r = await post("/api/book/preview", {
+        title, author, summary, subjects: themes,
+        author_ol_key: who && !who.id.startsWith("name:") ? who.id : null,
+        google_id: addPicked ? addPicked.google_id : null,
+        openlibrary_id: addPicked ? addPicked.openlibrary_id : null,
+      });
+      if (r.fetched_summary && !summary)
+        document.getElementById("addSummary").value = r.fetched_summary;
+      if (r.fetched_year && !document.getElementById("addYear").value.trim())
+        document.getElementById("addYear").value = r.fetched_year;
+      window.__addLastQuestions = r.questions;
+      // THE DRAFT STARTS EQUAL TO THE SUGGESTIONS, not empty. The table
+      // shows the suggested button already highlighted as "your answer" —
+      // found in testing that leaving addAnswers empty until a manual
+      // click made that highlight a LIE: Add book would have sent {},
+      // applying none of what the screen showed as selected, silently.
+      // A fresh preview always REPLACES the draft (never merges into
+      // whatever the admin had reviewed on a previous, different search).
+      addAnswers = {}; addTouched = new Set();
+      r.questions.forEach((q) => { addAnswers[q.id] = q.suggested; });
+      renderAddReview(r.questions);
+      setStatus("addSuggestStatus", r.trait_error
+        ? "Suggested, but the description model failed: " + r.trait_error
+        : r.questions.length + " question(s) reviewed", !r.trait_error);
     } catch (err) {
-      linked = " BUT it could not be attached to " + who.id + " (" + String(err.message || err)
-        + ") \\u2014 the book is in, the author link is not. Attach it from the Authors tab.";
+      setStatus("addSuggestStatus", String(err.message || err), false);
+    } finally { e.target.disabled = false; }
+    return;
+  }
+
+  if (e.target.id === "addSubmit"){
+    const title = document.getElementById("addTitle").value.trim();
+    const author = document.getElementById("addAuthorField").value.trim();
+    const summary = document.getElementById("addSummary").value.trim();
+    const themes = document.getElementById("addThemes").value.split(",")
+      .map((s) => s.trim()).filter(Boolean);
+    const rawYear = document.getElementById("addYear").value.trim();
+    if (!title || !author){ setStatus("addStatus", "title and author are required", false); return; }
+    const who = addAuthorCheck();
+    if (!who){
+      setStatus("addStatus", "\\u201c" + author + "\\u201d is not an author the game holds. "
+        + "Create the profile on the Authors tab first.", false);
+      return;
     }
-    setStatus("addStatus", \`Added "\${r.title}" by \${r.author}\${r.year?(" ("+r.year+")"):" (no year — era questions answer \\u201cunknown\\u201d)"} — effect: \${r.effect}.\` + linked, true);
-    document.getElementById("addTitle").value = "";
-    document.getElementById("addAuthor").value = "";
-    document.getElementById("addYear").value = "";
-    document.getElementById("addSummary").value = "";
-    document.getElementById("addThemes").value = "";
-    document.getElementById("addAuthorNote").innerHTML = "";
-  } catch (err) { setStatus("addStatus", String(err.message||err), false); }
-  finally { btn.disabled = false; }
+    if (rawYear && !/^\\d{1,4}$/.test(rawYear)){
+      setStatus("addStatus", "year must be digits only, or blank", false); return;
+    }
+    e.target.disabled = true;
+    setStatus("addStatus", "Verifying and adding\\u2026");
+    try {
+      const r = await post("/api/book", {
+        title, author: who.name, summary, themes,
+        year: rawYear ? parseInt(rawYear, 10) : null,
+        google_id: addPicked ? addPicked.google_id : null,
+        openlibrary_id: addPicked ? addPicked.openlibrary_id : null,
+        answers: addAnswers,
+      });
+      let linked = "";
+      try {
+        const l = await post("/api/authors/link", {key: who.id, work_key: r.key,
+                                                   note: "attached when the book was added"});
+        const n = Object.keys(l.applied || {}).length;
+        linked = " Attached to " + l.key + (n ? ", " + n + " answer(s) applied." : ".");
+      } catch (err) {
+        linked = " BUT it could not be attached to " + who.id + " (" + String(err.message || err)
+          + ") \\u2014 the book is in, the author link is not. Attach it from the Authors tab.";
+      }
+      // THE MESSAGE GOES IN addSearchStatus, not addStatus — addStatus
+      // lives INSIDE the form card this success clears via renderAddForm()
+      // below, so setting it there and then wiping the form was deleting
+      // the confirmation before the admin could read it. addSearchStatus
+      // sits in the persistent search card above and survives the reset.
+      setStatus("addSearchStatus", "Added \\u201c" + r.title + "\\u201d by " + r.author
+        + (r.year ? " (" + r.year + ")" : " (no year)") + " \\u2014 effect: " + r.effect
+        + "." + linked, true);
+      addPicked = null;
+      document.getElementById("addSearch").value = "";
+      document.getElementById("addResults").innerHTML = "";
+      renderAddForm();
+    } catch (err) { setStatus("addStatus", String(err.message || err), false); }
+    finally { e.target.disabled = false; }
+  }
 });
 
 // ── the reader suggestion queue ──────────────────────────────────────────
