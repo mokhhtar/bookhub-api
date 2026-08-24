@@ -91,6 +91,10 @@ const ROUTES = {
   // artifact; only the write needs a relay.
   "/api/authors/resolve": relay("/akinator/admin/authors/resolve"),
   "/api/authors/save": relay("/akinator/admin/authors/save"),
+  // Says who a book is BY: the display name and the author's known answers
+  // instantly, and author_name/author_key into admin_corrections.json so
+  // the next rebuild reaches the same conclusion on its own.
+  "/api/authors/link": relay("/akinator/admin/authors/link"),
 };
 
 function page() {
@@ -211,10 +215,17 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
   <p class="status" id="qStatus"></p>
 </section>
 
+<datalist id="authorNames"></datalist>
+
 <section id="add">
   <div class="card">
     <div class="field"><label>Title</label><input type="text" id="addTitle"></div>
-    <div class="field"><label>Author</label><input type="text" id="addAuthor"></div>
+    <div class="field"><label>Author — pick one we already hold. A name typed one letter
+      differently from the one we have creates a SECOND author, with the facts and the book
+      count split between them; that is the failure the Authors tab exists to repair, and this
+      form was the easiest place in the product to cause it.</label>
+      <input type="text" id="addAuthor" list="authorNames" autocomplete="off">
+      <p class="effect" id="addAuthorNote"></p></div>
     <div class="field"><label>First published (optional — leave blank and Open Library's work-level year is used;
       six era questions read this, and a wrong year is worse than none)</label>
       <input type="text" id="addYear" inputmode="numeric" style="width:110px"></div>
@@ -247,13 +258,14 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
   <div class="toolbar">
     <label><input type="checkbox" id="auDupOnly"> Only possible duplicates (<span id="auDupCount">0</span>)</label>
     <span id="auShown"></span>
+    <button class="act ghost" id="auNew">New author profile</button>
   </div>
+  <div id="auNewBox"></div>
   <div id="auDupes"></div>
   <div class="scroll"><table>
     <thead><tr><th>Author</th><th>Identity</th><th>Books</th><th>Overlay</th><th></th></tr></thead>
     <tbody id="auRows"><tr><td colspan="5">Loading…</td></tr></tbody>
   </table></div>
-  <div id="auPanel"></div>
   <p class="status" id="auStatus"></p>
 </section>
 
@@ -493,6 +505,30 @@ document.getElementById("qRows").addEventListener("click", async (e)=>{
   finally { e.target.disabled = false; }
 });
 
+// THE FORM WILL NOT ACCEPT AN AUTHOR IT DOES NOT KNOW, and the note under
+// the box says which one it matched. A free-text author field is how "C.
+// Hoover" becomes a second Colleen Hoover — two entities, facts and book
+// count split, and nothing to notice it by until somebody reads the
+// Authors tab months later. Matching folds spelling noise the same way
+// AuthorIndex does, so "J.R.R. Tolkien" still finds "J. R. R. Tolkien";
+// what it refuses is a name nobody in the game has.
+function addAuthorCheck(){
+  const box = document.getElementById("addAuthor");
+  const note = document.getElementById("addAuthorNote");
+  const text = box.value.trim();
+  if (!text){ note.innerHTML = ""; return null; }
+  const hit = authorByName(text);
+  note.innerHTML = hit
+    ? '<span class="sg-new">' + esc(hit.name) + "</span> \\u00b7 <code>" + esc(hit.id)
+      + "</code> \\u00b7 " + hit.books.length
+      + (hit.books.length === 1 ? " book" : " books")
+    : '<span class="sg-over">No author by that name.</span> Create their profile on the '
+      + "Authors tab first \\u2014 \\u201cNew author profile\\u201d \\u2014 then come back. "
+      + "Typing a new name here would split an author instead of adding one.";
+  return hit;
+}
+document.getElementById("addAuthor").addEventListener("input", addAuthorCheck);
+
 document.getElementById("addSubmit").addEventListener("click", async ()=>{
   const title = document.getElementById("addTitle").value.trim();
   const author = document.getElementById("addAuthor").value.trim();
@@ -500,6 +536,13 @@ document.getElementById("addSubmit").addEventListener("click", async ()=>{
   const themes = document.getElementById("addThemes").value.split(",").map(s=>s.trim()).filter(Boolean);
   const rawYear = document.getElementById("addYear").value.trim();
   if (!title || !author) { setStatus("addStatus", "title and author are required", false); return; }
+  const who = addAuthorCheck();
+  if (!who) {
+    setStatus("addStatus", "\\u201c" + author + "\\u201d is not an author the game holds. "
+      + "Create the profile on the Authors tab first, then add the book \\u2014 a new name "
+      + "typed here would become a second author rather than this one.", false);
+    return;
+  }
   if (rawYear && !/^\\d{1,4}$/.test(rawYear)) {
     setStatus("addStatus", "year must be digits only, or blank", false); return;
   }
@@ -508,13 +551,31 @@ document.getElementById("addSubmit").addEventListener("click", async ()=>{
   setStatus("addStatus", "Verifying and adding…");
   try {
     const r = await post("/api/book",
-      {title, author, summary, themes, year: rawYear ? parseInt(rawYear, 10) : null});
-    setStatus("addStatus", \`Added "\${r.title}" by \${r.author}\${r.year?(" ("+r.year+")"):" (no year — era questions answer \\u201cunknown\\u201d)"} — effect: \${r.effect}\`, true);
+      {title, author: who.name, summary, themes,
+       year: rawYear ? parseInt(rawYear, 10) : null});
+    // ATTACH SEPARATELY, and it is not a nicety. /book stores no author key
+    // — a synced row carries an empty author_key by construction — so without
+    // this the new book would be identified by its printed name alone and
+    // would gain none of the author's facts. Linking writes them, and writes
+    // author_name/author_key into admin_corrections.json so the next rebuild
+    // reaches the same conclusion on its own.
+    let linked = "";
+    try {
+      const l = await post("/api/authors/link", {key: who.id, work_key: r.key,
+                                                 note: "attached when the book was added"});
+      const n = Object.keys(l.applied || {}).length;
+      linked = " Attached to " + l.key + (n ? ", " + n + " answer(s) applied." : ".");
+    } catch (err) {
+      linked = " BUT it could not be attached to " + who.id + " (" + String(err.message || err)
+        + ") \\u2014 the book is in, the author link is not. Attach it from the Authors tab.";
+    }
+    setStatus("addStatus", \`Added "\${r.title}" by \${r.author}\${r.year?(" ("+r.year+")"):" (no year — era questions answer \\u201cunknown\\u201d)"} — effect: \${r.effect}.\` + linked, true);
     document.getElementById("addTitle").value = "";
     document.getElementById("addAuthor").value = "";
     document.getElementById("addYear").value = "";
     document.getElementById("addSummary").value = "";
     document.getElementById("addThemes").value = "";
+    document.getElementById("addAuthorNote").innerHTML = "";
   } catch (err) { setStatus("addStatus", String(err.message||err), false); }
   finally { btn.disabled = false; }
 });
@@ -778,11 +839,27 @@ function renderEditPanel(i){
     '<div class="card" style="max-width:none;margin-bottom:14px" data-key="' + esc(b.k) + '">'
     + '<div class="field"><label>Title shown to the player</label>'
       + '<input type="text" id="edTitle" value="' + esc(b.t) + '"></div>'
-    + '<div class="field"><label>Author shown to the player</label>'
-      + '<input type="text" id="edAuthor" value="' + esc(b.a || "") + '"></div>'
-    + '<button class="act" id="edSaveName">Save title and author</button>'
+    + '<button class="act" id="edSaveName">Save the title</button>'
     + '<p class="effect">Changes only what the reveal prints. No question and no '
-    + "matrix bit reads these.</p>"
+    + "matrix bit reads it.</p>"
+    // THE AUTHOR IS NOT A TEXT FIELD ANY MORE. It used to be, next to the
+    // title, saving through /api/display — which renamed what was PRINTED
+    // and left the book attributed to whoever it was attributed to before.
+    // Typing a name here therefore looked like a fix and moved nothing the
+    // engine reads. Attaching is the real operation: the printed name, the
+    // author's known answers, and author_name/author_key for the next
+    // rebuild, in one commit.
+    + '<div class="field" style="margin-top:16px"><label>Author \\u2014 pick one the game '
+      + "already holds. Attaching changes who the book is BY, not just what is printed."
+      + "</label><input type=\\"text\\" id=\\"edAuthor\\" list=\\"authorNames\\" "
+      + 'autocomplete="off" value="' + esc(b.a || "") + '">'
+      + '<p class="effect" id="edAuthorNote"></p></div>'
+    + '<button class="act ghost" id="edLinkAuthor">Attach this book to that author</button>'
+    + '<p class="effect">The name and the author\\u2019s known answers are instant; who the '
+    + "book is BY lands at the next full build_matrix.py run, from "
+    + "admin_corrections.json. Not on the list? Create the profile on the Authors tab "
+    + "first \\u2014 a new name typed here would split an author rather than move a book."
+    + "</p>"
     + '<div class="field" style="margin-top:16px"><label>First published '
       + "(feeds six era questions)</label>"
       + '<input type="text" id="edYear" inputmode="numeric" style="width:120px" value="'
@@ -795,13 +872,52 @@ function renderEditPanel(i){
 
   document.getElementById("edSaveName").addEventListener("click", async () => {
     const title = document.getElementById("edTitle").value.trim();
-    const author = document.getElementById("edAuthor").value.trim();
     if (!title) { setStatus("edStatus", "a title cannot be blank", false); return; }
     try {
-      const r = await post("/api/display", {work_key: b.k, title, author});
-      books[i].t = title; books[i].a = author;
+      const r = await post("/api/display", {work_key: b.k, title});
+      books[i].t = title;
       setStatus("edStatus", "Renamed for display — " + r.effect, true);
     } catch (err) { setStatus("edStatus", String(err.message || err), false); }
+  });
+
+  function edAuthorCheck(){
+    const note = document.getElementById("edAuthorNote");
+    const text = document.getElementById("edAuthor").value.trim();
+    if (!text){ note.innerHTML = ""; return null; }
+    const hit = authorByName(text);
+    note.innerHTML = hit
+      ? '<span class="sg-new">' + esc(hit.name) + "</span> \\u00b7 <code>" + esc(hit.id)
+        + "</code> \\u00b7 " + hit.books.length
+        + (hit.books.length === 1 ? " book" : " books")
+      : '<span class="sg-over">No author by that name.</span> Create the profile on the '
+        + "Authors tab first.";
+    return hit;
+  }
+  document.getElementById("edAuthor").addEventListener("input", edAuthorCheck);
+  edAuthorCheck();
+
+  document.getElementById("edLinkAuthor").addEventListener("click", async (e) => {
+    const who = edAuthorCheck();
+    if (!who) {
+      setStatus("edStatus", "pick an author the game already holds \\u2014 create the "
+        + "profile on the Authors tab if there is none", false);
+      return;
+    }
+    e.target.disabled = true;
+    setStatus("edStatus", "Attaching\\u2026");
+    try {
+      const r = await post("/api/authors/link", {work_key: b.k, key: who.id});
+      books[i].a = r.author;
+      const n = Object.keys(r.applied || {}).length;
+      buildAuthorRows();
+      setStatus("edStatus", "Now by " + r.author + " \\u2014 "
+        + (n ? n + " answer(s) live now" : "no answers to apply") + ". "
+        + r.effect + " " + r.note, true);
+      renderEditPanel(i);
+    } catch (err) {
+      setStatus("edStatus", String(err.message || err), false);
+      e.target.disabled = false;
+    }
   });
 
   document.getElementById("edSaveYear").addEventListener("click", async () => {
@@ -903,6 +1019,13 @@ function buildAuthorRows(){
     // name on somebody else's row.
     if (!p.name && slot === 0) p.name = books[i].a || "";
   }));
+  // Authors who exist only in the overlay: declared on this tab before
+  // they have a book. Without them a new profile would be invisible the
+  // moment it was created, and Add-a-book — which will not accept an
+  // author who has no profile — could never be unblocked.
+  Object.keys(authorOverrides).forEach((id) => {
+    if (!authorById[id]) authorById[id] = {id, name:"", books:[], declared:true};
+  });
   Object.values(authorById).forEach((p) => {
     if (!p.name) p.name = (listed[p.id] || {}).n
       || (p.id.startsWith("name:") ? p.id.slice(5) : "");
@@ -910,6 +1033,42 @@ function buildAuthorRows(){
   authorRows = Object.values(authorById).sort((a,b) =>
     b.books.length - a.books.length || (a.name||a.id).localeCompare(b.name||b.id));
   computeAuthorDupes();
+  renderAuthorDatalist();
+}
+
+// The picker every author name is typed into now — Add-a-book and the
+// book editor both. WHY A LIST AND NOT A TEXT BOX: a typed name that
+// differs from the one we hold by a single letter creates a SECOND author,
+// silently, with the facts and the book count split between them. That is
+// the whole failure this tab exists to repair, and the Add form was the
+// easiest place in the product to cause it.
+function renderAuthorDatalist(){
+  const seen = new Set();
+  const opts = authorRows.filter((p) => {
+    if (!p.name || seen.has(p.id)) return false;
+    seen.add(p.id);
+    return true;
+  }).map((p) => '<option value="' + esc(p.name) + '">' + esc(p.id) + " \\u00b7 "
+      + p.books.length + (p.books.length === 1 ? " book" : " books") + "</option>");
+  document.getElementById("authorNames").innerHTML = opts.join("");
+}
+
+// The author the admin means, from what they typed. Matched on the same
+// folding AuthorIndex uses, so "J.R.R. Tolkien" finds "J. R. R. Tolkien" —
+// the spelling noise the build already merges must not be a reason to
+// refuse here. Returns null when nothing matches, which is the case the
+// caller has to handle rather than paper over.
+function authorByName(text){
+  const n = auNorm(text || "");
+  if (!n) return null;
+  const hits = authorRows.filter((p) => auNorm(p.name) === n);
+  if (hits.length) {
+    // Prefer a real Open Library identity, then the one with more books.
+    hits.sort((a, b) => (a.id.startsWith("name:") ? 1 : 0) - (b.id.startsWith("name:") ? 1 : 0)
+                     || b.books.length - a.books.length);
+    return hits[0];
+  }
+  return authorById[text] || authorById["name:" + n] || null;
 }
 
 // ── "are these two the same person?" ─────────────────────────────────────
@@ -1079,12 +1238,22 @@ function renderAuthors(filter){
     ? "showing " + shown.length + " of " + matching.length + " \\u2014 narrow the search"
     : matching.length + (matching.length === 1 ? " author" : " authors");
   renderAuthorDupes();
+  // The open author is forced into view even when the search no longer
+  // matches them — an editor that vanishes mid-edit because a keystroke
+  // narrowed the list would throw away unsaved work.
+  if (auOpenId && !shown.some((p) => p.id === auOpenId) && authorById[auOpenId]) {
+    shown.unshift(authorById[auOpenId]);
+  }
   rows.innerHTML = shown.map((p) => {
     const ov = auOverlay(p.id);
     const nFacts = ov ? Object.keys(ov.facts || {}).length : 0;
     const nAl = ov ? (ov.aliases || []).length : 0;
-    return "<tr><td class=\\"title\\">" + esc(p.name || '<unnamed>')
+    const open = p.id === auOpenId;
+    const head = "<tr><td class=\\"title\\">" + esc(p.name || "<unnamed>")
       + (p.name ? "" : ' <span class="sg-none">(co-author \\u2014 books.json names only the first)</span>')
+      + (p.declared && !p.books.length
+          ? ' <span class="badge" title="A profile with no book yet. Created here so the author can be picked when adding one.">no books yet</span>'
+          : "")
       + "</td><td><code>" + esc(p.id) + "</code>"
       + (p.id.startsWith("name:")
           ? ' <span class="badge" title="No Open Library author key. Identified by name alone \\u2014 the fragile case.">name only</span>'
@@ -1093,7 +1262,15 @@ function renderAuthors(filter){
       + "<td>" + (nFacts || nAl
           ? '<span class="badge off">' + nFacts + " fact(s), " + nAl + " alias(es)</span>"
           : '<span class="sg-none">\\u2014</span>') + "</td>"
-      + '<td><button class="act ghost auOpen" data-id="' + esc(p.id) + '">Open</button></td></tr>';
+      + '<td><button class="act ghost auOpen" data-id="' + esc(p.id) + '">'
+      + (open ? "Close" : "Edit") + "</button></td></tr>";
+    // The editor opens INSIDE the table, in the row under the name it
+    // belongs to. It used to sit in one panel below the whole list, which
+    // meant scrolling away from the author you were editing to see the
+    // form — and no way to tell which of 3,941 names it was about.
+    return open
+      ? head + '<tr class="auEdit"><td colspan="5">' + authorPanelHtml(p.id) + "</td></tr>"
+      : head;
   }).join("") || '<tr><td colspan="5">No match.</td></tr>';
 }
 
@@ -1105,8 +1282,12 @@ function renderAuthors(filter){
 function auQuestions(id){
   const shipped = questions.filter((q) => q.id.startsWith("author:"));
   const have = new Set(shipped.map((q) => q.id));
-  const ov = auOverlay(id) || {facts:{}};
-  Object.keys(ov.facts || {}).forEach((q) => {
+  // The DRAFT, not the committed overlay: a retired id already in the file
+  // has to stay visible so it can be cleared, and it must not vanish from
+  // the panel the moment Clear is pressed but before Save.
+  const facts = (auOpenId === id && auDraft)
+    ? auDraft.facts : ((auOverlay(id) || {}).facts || {});
+  Object.keys(facts).forEach((q) => {
     if (!have.has(q)) shipped.push({id: q, text: q, retired: true});
   });
   return shipped;
@@ -1124,11 +1305,48 @@ function auLeadBook(p){
   return p.books.length ? p.books[0] : -1;
 }
 
-function renderAuthorPanel(id){
-  const p = authorById[id];
-  const host = document.getElementById("auPanel");
-  if (!p){ host.innerHTML = ""; return; }
+// ── the editor, and why every click no longer costs a commit ─────────────
+//
+// IT USED TO SAVE ON EVERY BUTTON. Each Yes/No/Unknown/Clear was its own
+// POST, its own GitHub commit, and its own wait — so setting six answers
+// meant six round trips, six commits in the history for one decision, and
+// six pauses staring at "effect: next full rebuild only" before the next
+// click could be trusted. The owner said so, and they were right: the
+// wait is not incidental, it is the cost of having modelled one decision
+// as six writes.
+//
+// So the panel edits a DRAFT held in the page, redraws instantly, and
+// commits once. auDraft is the working copy; auOpenId is whose it is.
+// Nothing leaves the browser until Save, and the button says how many
+// changes are waiting — an editor that looks saved but is not is worse
+// than a slow one.
+let auOpenId = null, auDraft = null, auResolveCache = {};
+
+function auDirtyCount(){
+  if (!auDraft || !auOpenId) return 0;
+  const ov = auOverlay(auOpenId) || {facts:{}, aliases:[]};
+  let n = 0;
+  const keys = new Set([...Object.keys(ov.facts || {}), ...Object.keys(auDraft.facts)]);
+  keys.forEach((q) => {
+    const a = Object.prototype.hasOwnProperty.call(ov.facts || {}, q) ? ov.facts[q] : "\\u2205";
+    const b = Object.prototype.hasOwnProperty.call(auDraft.facts, q) ? auDraft.facts[q] : "\\u2205";
+    if (a !== b) n++;
+  });
+  if ((ov.aliases || []).join("|") !== auDraft.aliases.join("|")) n++;
+  return n;
+}
+
+function auOpen(id){
   const ov = auOverlay(id) || {facts:{}, aliases:[]};
+  auOpenId = id;
+  auDraft = {facts: Object.assign({}, ov.facts), aliases: (ov.aliases || []).slice()};
+}
+
+function auClose(){ auOpenId = null; auDraft = null; }
+
+function authorPanelHtml(id){
+  const p = authorById[id];
+  if (!p) return "";
   const lead = auLeadBook(p);
   const isLead = lead >= 0 && ((authorsData.books || [])[lead] || [])[0] === p.id;
   const qIndex = {}; questions.forEach((q, i) => { qIndex[q.id] = i; });
@@ -1141,144 +1359,236 @@ function renderAuthorPanel(id){
       : st === 0 ? "no"
       : st === 2 ? '<span class="sg-none">no record</span>'
       : '<span class="sg-none">\\u2026</span>';
-    const has = Object.prototype.hasOwnProperty.call(ov.facts || {}, q.id);
-    const v = has ? ov.facts[q.id] : undefined;
+    const has = Object.prototype.hasOwnProperty.call(auDraft.facts, q.id);
+    const v = has ? auDraft.facts[q.id] : undefined;
     const cur = !has ? '<span class="sg-none">\\u2014</span>'
-      : v === true ? '<span class="badge off">set: YES</span>'
-      : v === false ? '<span class="badge off">set: NO</span>'
-      : '<span class="badge off">set: back to UNKNOWN</span>';
-    const btn = (val, label) => '<button class="act ghost auSet" data-q="' + esc(q.id)
-      + '" data-v="' + val + '">' + label + "</button>";
+      : v === true ? '<span class="badge off">YES</span>'
+      : v === false ? '<span class="badge off">NO</span>'
+      : '<span class="badge off">back to UNKNOWN</span>';
+    const on = (val) => (has && ((val === "yes" && v === true)
+      || (val === "no" && v === false) || (val === "unknown" && v === null)))
+      ? "act" : "act ghost";
+    const btn = (val, label) => '<button class="' + on(val) + ' auSet" data-q="'
+      + esc(q.id) + '" data-v="' + val + '">' + label + "</button>";
     return "<tr><td>" + esc(q.text)
       + (q.retired ? ' <span class="badge">retired</span>' : "")
       + '<br><span class="sg-none">' + esc(q.id) + "</span></td>"
       + "<td>" + table + "</td><td>" + cur + "</td>"
       + '<td class="row">' + btn("yes", "Yes") + btn("no", "No")
-      + btn("unknown", "Unknown") + (has ? btn("clear", "Clear") : "") + "</td></tr>";
+      + btn("unknown", "Unknown")
+      + (has ? '<button class="act ghost auSet" data-q="' + esc(q.id)
+               + '" data-v="clear">Clear</button>' : "") + "</td></tr>";
   }).join("");
 
-  host.innerHTML =
-    '<div class="card" style="max-width:none;margin:14px 0" data-id="' + esc(id) + '">'
-    + "<h2 style=\\"font-size:17px;margin:0 0 4px\\">" + esc(p.name || id) + "</h2>"
-    + '<p class="sub" style="margin-bottom:12px"><code>' + esc(id) + "</code> \\u00b7 "
-      + p.books.length + (p.books.length === 1 ? " book" : " books") + " in the game \\u00b7 "
-      + esc(auTitles(p, 8)) + "</p>"
-    + (isLead ? "" : '<p class="sg-dupe">This author is not the FIRST author on any book '
-        + "we ship, so \\u201cthe game says\\u201d below is read from a row whose facts come "
-        + "from somebody else. A fact set here still applies to them at the next rebuild "
-        + "only if they become the lead author of a row.</p>")
-    + '<div class="field"><label>Aliases \\u2014 other spellings that should fold into this '
-      + "author. Comma-separated. Only consulted for a book with no Open Library author "
-      + "key.</label><input type=\\"text\\" id=\\"auAliases\\" value=\\""
-      + esc((ov.aliases || []).join(", ")) + "\\"></div>"
-    + '<div class="row"><button class="act" id="auSaveAliases">Save aliases</button>'
-      + '<button class="act ghost" id="auLookup">Look up in Open Library</button></div>'
-    + '<p class="effect">Both take effect at the next full build_matrix.py run. Looking up '
-      + "writes nothing \\u2014 it searches Open Library by name and, once you pick a record, "
-      + "asks Wikidata what it knows.</p>"
-    + '<div id="auResolve"></div>'
-    + '<div class="scroll" style="margin-top:14px"><table><thead><tr><th>Question</th>'
+  const dirty = auDirtyCount();
+  return '<div class="card" style="max-width:none;margin:4px 0" data-id="' + esc(id) + '">'
+    + '<p class="sub" style="margin-bottom:10px"><code>' + esc(id) + "</code> \\u00b7 "
+      + p.books.length + (p.books.length === 1 ? " book" : " books")
+      + (p.books.length ? " \\u00b7 " + esc(auTitles(p, 8)) : "") + "</p>"
+    + (isLead || !p.books.length ? "" : '<p class="sg-dupe">Not the FIRST author on any '
+        + "book we ship, so \\u201cthe game says\\u201d below is read from a row whose facts "
+        + "come from somebody else.</p>")
+    + '<div class="field"><label>Aliases \\u2014 other spellings that fold into this author, '
+      + "comma-separated. Only consulted for a book with no Open Library key.</label>"
+      + '<input type="text" class="auAliases" value="' + esc(auDraft.aliases.join(", ")) + '"></div>'
+    + '<div class="scroll"><table><thead><tr><th>Question</th>'
       + "<th>The game says today</th><th>Your overlay</th><th></th></tr></thead><tbody>"
-      + rows + "</tbody></table></div></div>";
+      + rows + "</tbody></table></div>"
+    + '<div class="row" style="margin-top:12px">'
+      + '<button class="act auSave"' + (dirty ? "" : " disabled") + ">Save"
+      + (dirty ? " " + dirty + " change" + (dirty === 1 ? "" : "s") : " \\u2014 nothing changed")
+      + "</button>"
+      + '<button class="act ghost auRevert"' + (dirty ? "" : " disabled") + ">Discard</button>"
+      + '<button class="act ghost auLookup">Look up in Open Library</button>'
+      + "</div>"
+    + '<p class="effect">One commit for everything above, and it lands at the next full '
+      + "build_matrix.py run. Nothing is written while you click.</p>"
+    + '<div class="auResolve">' + (auResolveCache[id] || "") + "</div>"
+    + linkBoxHtml(id) + "</div>";
+}
+
+// ── attach a book we already ship to this author ─────────────────────────
+//
+// WHAT "IMMEDIATELY" CAN AND CANNOT MEAN. Who a book is BY lives on the
+// corpus row, and the corpus is a local file this server has never seen —
+// so the durable half of a link is a correction, and corrections land at
+// the next build like every other one. What CAN be instant is the two
+// things the browser reads at play time: the name the reveal prints, and
+// the cells overrides.json clamps. So a link writes all three at once and
+// the panel says which is which, rather than implying the whole thing is
+// live or making the owner wait for a rebuild to see anything.
+function linkBoxHtml(id){
+  const p = authorById[id];
+  return '<div class="field" style="margin-top:16px"><label>Attach a book to '
+    + esc(p.name || id) + " \\u2014 search a title we already ship</label>"
+    + '<input type="search" class="auBookSearch" placeholder="Title or current author\\u2026"></div>'
+    + '<div class="auBookHits"></div>'
+    + '<p class="effect">Attaching writes the name and this author\\u2019s known answers '
+    + "straight into the live game, and writes author_name/author_key into "
+    + "admin_corrections.json so the next rebuild reaches the same conclusion on its own "
+    + "\\u2014 which is what makes the clamps disposable later instead of load-bearing "
+    + "forever. <strong>author:prolific is never written this way</strong>: it counts our "
+    + "own corpus and has to stay free to move.</p>";
+}
+
+function renderBookHits(host, filter, authorId){
+  const f = (filter || "").toLowerCase();
+  if (f.length < 2){ host.innerHTML = ""; return; }
+  const hits = books.map((b, i) => ({b, i}))
+    .filter(({b}) => (b.t || "").toLowerCase().includes(f)
+                  || (b.a || "").toLowerCase().includes(f)).slice(0, 10);
+  host.innerHTML = hits.length
+    ? '<div class="scroll"><table><tbody>' + hits.map(({b, i}) =>
+        '<tr><td class="title">' + esc(b.t) + "</td><td>" + esc(b.a || "\\u2014")
+        + "</td><td>" + (b.y ?? "\\u2014") + '</td><td class="rich">#' + (i + 1) + "</td>"
+        + '<td><button class="act ghost auLink" data-k="' + esc(b.k) + '" data-a="'
+        + esc(authorId) + '">Attach</button></td></tr>').join("")
+      + "</tbody></table></div>"
+    : '<p class="status">No match.</p>';
 }
 
 async function auSave(body, okMsg){
-  setStatus("auStatus", "Writing\\u2026");
+  setStatus("auStatus", "Writing…");
   const r = await post("/api/authors/save", body);
   if (r.entry) authorOverrides[r.key] = r.entry;
   else delete authorOverrides[r.key];
+  buildAuthorRows();
+  if (auOpenId === r.key) auOpen(r.key);
   renderAuthors(document.getElementById("auSearch").value);
-  setStatus("auStatus", okMsg + " \\u2014 effect: " + r.effect, true);
+  setStatus("auStatus", okMsg + " — effect: " + r.effect, true);
   return r;
 }
 
-document.getElementById("auSearch").addEventListener("input", (e) =>
-  renderAuthors(e.target.value));
-document.getElementById("auDupOnly").addEventListener("change", () =>
-  renderAuthors(document.getElementById("auSearch").value));
+const auSearchBox = () => document.getElementById("auSearch");
+const auRedraw = () => renderAuthors(auSearchBox().value);
+
+document.getElementById("auSearch").addEventListener("input", auRedraw);
+document.getElementById("auDupOnly").addEventListener("change", auRedraw);
+
+// A profile BEFORE a book, which is the order Add-a-book now forces: that
+// form refuses an author it does not know, so there has to be somewhere to
+// make one known. Declaring writes an entry holding nothing, which changes
+// no artifact at all — it only makes the name pickable and gives the facts
+// somewhere to live.
+document.getElementById("auNew").addEventListener("click", () => {
+  const host = document.getElementById("auNewBox");
+  if (host.innerHTML){ host.innerHTML = ""; return; }
+  host.innerHTML = '<div class="card" style="margin:10px 0">'
+    + '<div class="field"><label>The author’s name, spelled the way it should appear '
+    + 'on their books</label><input type="text" id="auNewName"></div>'
+    + '<button class="act" id="auNewSave">Create the profile</button>'
+    + '<p class="effect">Writes an entry with no facts and no aliases, which changes no '
+    + "artifact — it makes the author pickable when adding a book. Look them up in Open "
+    + "Library afterwards to fill the facts in.</p></div>";
+});
+
+document.getElementById("auNewBox").addEventListener("click", async (e) => {
+  if (e.target.id !== "auNewSave") return;
+  const name = document.getElementById("auNewName").value.trim();
+  if (!name){ setStatus("auStatus", "a name is required", false); return; }
+  const existing = authorByName(name);
+  if (existing){
+    // Creating a second entity for a name we already hold is the exact
+    // failure this tab exists to repair. Open the one that exists.
+    setStatus("auStatus", "“" + name + "” is already " + existing.id
+      + " — opened it instead of making a second one.", true);
+    document.getElementById("auNewBox").innerHTML = "";
+    auOpen(existing.id);
+    auSearchBox().value = name;
+    auRedraw();
+    return;
+  }
+  // The SERVER computes the key, because the key has to be exactly what the
+  // build computes and this page must never hold a second copy of that rule.
+  e.target.disabled = true;
+  setStatus("auStatus", "Creating…");
+  try {
+    const r = await post("/api/authors/resolve", {name});
+    if (!r.name_key) throw new Error("that name folds to an empty key — it carries "
+      + "nothing to identify an author by");
+    await auSave({key: r.name_key, declare: true, facts: {}, aliases: [],
+                  note: "profile created before the first book"},
+      "Created " + r.name_key);
+    document.getElementById("auNewBox").innerHTML = "";
+    auOpen(r.name_key);
+    auSearchBox().value = name;
+    auRedraw();
+  } catch (err) { setStatus("auStatus", String(err.message || err), false); }
+  finally { e.target.disabled = false; }
+});
 
 document.getElementById("auDupes").addEventListener("click", async (e) => {
   if (!e.target.classList.contains("auMerge")) return;
   const into = e.target.dataset.into, alias = e.target.dataset.alias;
   e.target.disabled = true;
   try {
-    await auSave({key: into, add_aliases: [alias]},
-      "Taught \\u201c" + alias + "\\u201d as an alias of " + into);
+    await auSave({key: into, add_aliases: [alias], declare: true},
+      "Taught “" + alias + "” as an alias of " + into);
   } catch (err) {
     setStatus("auStatus", String(err.message || err), false);
     e.target.disabled = false;
   }
 });
 
-document.getElementById("auRows").addEventListener("click", (e) => {
-  if (!e.target.classList.contains("auOpen")) return;
-  renderAuthorPanel(e.target.dataset.id);
-  document.getElementById("auPanel").scrollIntoView({behavior: "smooth", block: "start"});
+// ONE listener for the whole table, because the editor lives inside it now.
+document.getElementById("auRows").addEventListener("input", (e) => {
+  if (e.target.classList.contains("auAliases")){
+    auDraft.aliases = e.target.value.split(",").map((s) => s.trim()).filter(Boolean);
+    // Only the two buttons are refreshed, never the whole panel: redrawing
+    // here would take the caret out of the box being typed in.
+    const card = e.target.closest(".card");
+    const n = auDirtyCount();
+    const save = card.querySelector(".auSave"), rev = card.querySelector(".auRevert");
+    save.disabled = !n; rev.disabled = !n;
+    save.textContent = n ? "Save " + n + " change" + (n === 1 ? "" : "s")
+                         : "Save — nothing changed";
+    return;
+  }
+  if (e.target.classList.contains("auBookSearch")){
+    const card = e.target.closest(".card");
+    renderBookHits(card.querySelector(".auBookHits"), e.target.value, card.dataset.id);
+  }
 });
 
-document.getElementById("auPanel").addEventListener("click", async (e) => {
+document.getElementById("auRows").addEventListener("click", async (e) => {
+  if (e.target.classList.contains("auOpen")){
+    const id = e.target.dataset.id;
+    const dirty = auDirtyCount();
+    if (auOpenId === id){
+      if (dirty && !confirm(dirty + " unsaved change(s) will be discarded. Close anyway?")) return;
+      auClose();
+    } else {
+      if (dirty && !confirm(dirty + " unsaved change(s) on the open author will be "
+          + "discarded. Switch anyway?")) return;
+      auOpen(id);
+    }
+    auRedraw();
+    return;
+  }
+
   const card = e.target.closest(".card");
   if (!card) return;
   const id = card.dataset.id;
 
-  if (e.target.id === "auSaveAliases"){
-    const raw = document.getElementById("auAliases").value;
-    const list = raw.split(",").map((s) => s.trim()).filter(Boolean);
-    e.target.disabled = true;
-    try {
-      await auSave({key: id, aliases: list}, list.length
-        ? list.length + " alias(es) saved" : "Aliases cleared");
-      renderAuthorPanel(id);
-    } catch (err) { setStatus("auStatus", String(err.message || err), false); }
-    finally { e.target.disabled = false; }
+  // Draft edits: no network, no commit, no wait. See the note above
+  // auDirtyCount for why this used to be a POST per click.
+  if (e.target.classList.contains("auSet")){
+    const q = e.target.dataset.q, v = e.target.dataset.v;
+    if (v === "clear") delete auDraft.facts[q];
+    else auDraft.facts[q] = v === "yes" ? true : v === "no" ? false : null;
+    auRedraw();
     return;
   }
 
-  if (e.target.id === "auLookup"){
-    const p = authorById[id];
-    e.target.disabled = true;
-    setStatus("auStatus", "Searching Open Library\\u2026");
-    try {
-      const r = await post("/api/authors/resolve", {name: p.name || id});
-      renderResolve(id, r);
-      setStatus("auStatus", r.searched
-        ? (r.candidates.length + " candidate(s)")
-        : "Open Library could not be reached (" + (r.search_error || "unknown")
-          + ") \\u2014 that is NOT the same as it having no record.", r.searched);
-    } catch (err) { setStatus("auStatus", String(err.message || err), false); }
-    finally { e.target.disabled = false; }
-    return;
-  }
+  if (e.target.classList.contains("auRevert")){ auOpen(id); auRedraw(); return; }
 
-  if (e.target.classList.contains("auPick")){
-    const p = authorById[id];
-    e.target.disabled = true;
-    setStatus("auStatus", "Asking Wikidata\\u2026");
-    try {
-      const r = await post("/api/authors/resolve",
-        {name: p.name || id, ol_key: e.target.dataset.k});
-      renderResolve(id, r);
-      setStatus("auStatus", r.wikidata
-        ? "Wikidata: " + r.wikidata.qid
-        : (r.wikidata_error
-            ? "Wikidata could not be reached (" + r.wikidata_error
-              + ") \\u2014 NOT the same as it knowing nothing."
-            : "Wikidata has no item with that Open Library id."),
-        !r.wikidata_error);
-    } catch (err) { setStatus("auStatus", String(err.message || err), false); }
-    finally { e.target.disabled = false; }
-    return;
-  }
-
-  if (e.target.classList.contains("auApplyTraits")){
-    const facts = JSON.parse(e.target.dataset.f);
-    const ov = auOverlay(id) || {facts:{}, aliases:[]};
-    const merged = Object.assign({}, ov.facts, facts);
+  if (e.target.classList.contains("auSave")){
+    const n = auDirtyCount();
     e.target.disabled = true;
     try {
-      await auSave({key: id, facts: merged, note: "from Wikidata via the Authors tab"},
-        Object.keys(facts).length + " fact(s) taken from Wikidata");
-      renderAuthorPanel(id);
+      await auSave({key: id, facts: auDraft.facts, aliases: auDraft.aliases,
+                    declare: true},
+        n + " change" + (n === 1 ? "" : "s") + " saved in one commit");
     } catch (err) {
       setStatus("auStatus", String(err.message || err), false);
       e.target.disabled = false;
@@ -1286,20 +1596,83 @@ document.getElementById("auPanel").addEventListener("click", async (e) => {
     return;
   }
 
-  if (e.target.classList.contains("auSet")){
-    const q = e.target.dataset.q, v = e.target.dataset.v;
-    const ov = auOverlay(id) || {facts:{}, aliases:[]};
-    const facts = Object.assign({}, ov.facts);
-    if (v === "clear") delete facts[q];
-    else facts[q] = v === "yes" ? true : v === "no" ? false : null;
-    e.target.closest("tr").querySelectorAll("button").forEach((b) => { b.disabled = true; });
+  if (e.target.classList.contains("auLookup")){
+    const p = authorById[id];
+    e.target.disabled = true;
+    setStatus("auStatus", "Searching Open Library…");
     try {
-      await auSave({key: id, facts, aliases: ov.aliases || []},
-        v === "clear" ? "Cleared " + q : q + " set to " + v);
-      renderAuthorPanel(id);
+      const r = await post("/api/authors/resolve", {name: p.name || id});
+      auResolveCache[id] = resolveHtml(r);
+      auRedraw();
+      setStatus("auStatus", r.searched
+        ? (r.candidates.length + " candidate(s)")
+        : "Open Library could not be reached (" + (r.search_error || "unknown")
+          + ") — that is NOT the same as it having no record.", r.searched);
     } catch (err) {
       setStatus("auStatus", String(err.message || err), false);
-      renderAuthorPanel(id);
+      e.target.disabled = false;
+    }
+    return;
+  }
+
+  if (e.target.classList.contains("auPick")){
+    const p = authorById[id];
+    e.target.disabled = true;
+    setStatus("auStatus", "Asking Wikidata…");
+    try {
+      const r = await post("/api/authors/resolve",
+        {name: p.name || id, ol_key: e.target.dataset.k});
+      auResolveCache[id] = resolveHtml(r);
+      auRedraw();
+      setStatus("auStatus", r.wikidata
+        ? "Wikidata: " + r.wikidata.qid
+        : (r.wikidata_error
+            ? "Wikidata could not be reached (" + r.wikidata_error
+              + ") — NOT the same as it knowing nothing."
+            : "Wikidata has no item with that Open Library id."),
+        !r.wikidata_error);
+    } catch (err) {
+      setStatus("auStatus", String(err.message || err), false);
+      e.target.disabled = false;
+    }
+    return;
+  }
+
+  // Into the DRAFT, not straight to a commit. Taking Wikidata's answers is
+  // a proposal the owner reviews beside everything else before one Save.
+  if (e.target.classList.contains("auApplyTraits")){
+    Object.assign(auDraft.facts, JSON.parse(e.target.dataset.f));
+    auRedraw();
+    setStatus("auStatus", "Copied into the draft — nothing is written until you press "
+      + "Save.", true);
+    return;
+  }
+
+  if (e.target.classList.contains("auLink")){
+    const work = e.target.dataset.k, who = e.target.dataset.a;
+    // Attaching uses the SAVED facts, because the server reads the committed
+    // overlay. Saying so beats silently applying a stale set.
+    const dirty = auDirtyCount();
+    if (dirty && !confirm("This author has " + dirty + " unsaved change(s). Attaching "
+        + "commits the book now and uses the SAVED facts, not the unsaved ones. Continue?")) return;
+    e.target.disabled = true;
+    setStatus("auStatus", "Attaching…");
+    try {
+      const r = await post("/api/authors/link", {key: who, work_key: work});
+      const n = Object.keys(r.applied || {}).length;
+      // books.json is what every other tab reads, so the rename is reflected
+      // here too — otherwise the Books tab keeps showing the old author until
+      // a reload.
+      const row = books.find((b) => b.k === work);
+      if (row) row.a = r.author;
+      buildAuthorRows();
+      auRedraw();
+      setStatus("auStatus", "“" + (row ? row.t : work) + "” is now by "
+        + r.author + " — " + (n ? n + " answer(s) live now" : "no answers to apply")
+        + ". " + r.effect + " " + r.note, true);
+    } catch (err) {
+      setStatus("auStatus", String(err.message || err), false);
+      e.target.disabled = false;
     }
   }
 });
@@ -1311,8 +1684,7 @@ document.getElementById("auPanel").addEventListener("click", async (e) => {
 // French translator's name glued to hers. A name is not an identifier, and
 // picking for the owner here would fan a wrong person's gender, nationality
 // and dates across a whole shelf.
-function renderResolve(id, r){
-  const host = document.getElementById("auResolve");
+function resolveHtml(r){
   let html = '<p class="effect" style="margin-top:10px">The build would identify a keyless '
     + "book by this author as <code>" + esc(r.name_key || "(no usable key)") + "</code>"
     + (r.claimed_by ? " \\u2014 already claimed as an alias of <code>"
@@ -1366,9 +1738,10 @@ function renderResolve(id, r){
           ? '<button class="act auApplyTraits" data-f="'
             + esc(JSON.stringify(set)) + '">Take the ' + Object.keys(set).length
             + " answer(s) Wikidata is sure about</button>"
-            + '<p class="effect">Copies them into your overlay, where they beat whatever the '
-            + "next rebuild computes. Everything Wikidata is silent about stays untouched \\u2014 "
-            + "an unmatched fact must not become a \\u201cno\\u201d.</p>"
+            + '<p class="effect">Copies them into the DRAFT above, to review beside '
+            + "everything else before one Save. They beat whatever the next rebuild computes. "
+            + "Everything Wikidata is silent about stays untouched \\u2014 an unmatched fact "
+            + "must not become a \\u201cno\\u201d.</p>"
           : '<p class="sg-none">Wikidata is sure about nothing here, so there is nothing '
             + "to copy.</p>");
   } else if (r.wikidata_error){
@@ -1378,7 +1751,7 @@ function renderResolve(id, r){
     html += '<p class="sg-dupe">No Wikidata item carries that Open Library id. Set the '
       + "facts by hand \\u2014 they will still fan out to every book by this author.</p>";
   }
-  host.innerHTML = html;
+  return html;
 }
 
 // ── taught cells: the owner's hand, ahead of the 8-play floor ────────────
