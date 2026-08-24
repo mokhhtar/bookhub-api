@@ -84,6 +84,13 @@ const ROUTES = {
   // by the client, same as books.json/questions.json; only the decision
   // needs a write, hence one relay rather than two.
   "/api/candidates/decide": relay("/akinator/admin/candidates/decide"),
+  // Author identity and hand-set author facts. `resolve` writes nothing —
+  // it is the Open Library author search and the single-author Wikidata
+  // join — and `save` is the only thing that touches author_overrides.json.
+  // The overlay itself is read straight off litheca.com like every other
+  // artifact; only the write needs a relay.
+  "/api/authors/resolve": relay("/akinator/admin/authors/resolve"),
+  "/api/authors/save": relay("/akinator/admin/authors/save"),
 };
 
 function page() {
@@ -176,6 +183,7 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
   <button data-tab="taught">Taught <span class="pill" id="tgCount"></span></button>
   <button data-tab="candidates">Mined questions <span class="pill" id="cqCount"></span></button>
   <button data-tab="edit">Edit a book</button>
+  <button data-tab="authors">Authors <span class="pill" id="auDupPill"></span></button>
 </nav>
 
 <section id="books" class="on">
@@ -227,6 +235,26 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
   <div id="edPick"></div>
   <div id="edPanel"></div>
   <p class="status" id="edStatus"></p>
+</section>
+
+<section id="authors">
+  <p class="sub" style="margin-bottom:14px">One author, everything about them. A fact set here applies to
+  <strong>every book they wrote</strong>, which is what makes this worth doing and also what makes a wrong one
+  expensive. <strong>Nothing on this tab is instant</strong> — facts feed matrix bits and aliases feed the author
+  grouping, and only a local <code>build_matrix.py</code> run recomputes either. Merging teaches a name; it never
+  rewrites a book count already exported.</p>
+  <input type="search" id="auSearch" placeholder="Find an author by name…">
+  <div class="toolbar">
+    <label><input type="checkbox" id="auDupOnly"> Only possible duplicates (<span id="auDupCount">0</span>)</label>
+    <span id="auShown"></span>
+  </div>
+  <div id="auDupes"></div>
+  <div class="scroll"><table>
+    <thead><tr><th>Author</th><th>Identity</th><th>Books</th><th>Overlay</th><th></th></tr></thead>
+    <tbody id="auRows"><tr><td colspan="5">Loading…</td></tr></tbody>
+  </table></div>
+  <div id="auPanel"></div>
+  <p class="status" id="auStatus"></p>
 </section>
 
 <section id="taught">
@@ -281,6 +309,7 @@ A fact correction (year) reaches nobody until the next full <code>build_matrix.p
 ${ESC_FN}
 const DATA = "https://litheca.com/games/data/akinator";
 let books = [], questions = [], excluded = new Set(), dupFlag = [];
+let authorsData = {};
 
 function tab(name){
   document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("on", b.dataset.tab===name));
@@ -825,6 +854,533 @@ document.getElementById("edPick").addEventListener("click", (e) => {
   renderEditPanel(+e.target.dataset.i);
 });
 
+// ── authors: identity, and facts that fan out to a whole shelf ───────────
+//
+// WHERE THE LIST COMES FROM, and why it is not just authors.json's
+// authors[] array. That array is the ASKABLE set -- authors with 2+ books,
+// 795 of them. Its books[] array references 3,939, and a ONE-BOOK author is
+// exactly the case this tab exists for: a manually added row carries no
+// Open Library author key, so its author is identified by name alone and is
+// the one most likely to be a split identity.
+//
+// It is also STALE. append_book_row() rewrites books.json, matrix.bin and
+// meta.json and leaves authors.json alone — measured at 6 rows behind on
+// 2026-08-24, every one of them a manually added /site/ book. Those rows are
+// padded back in from books.json here, the same way the server does it: a
+// synced row always has an empty author_key, so name:{merge_key} of its 'a'
+// field IS its identity.
+//
+// WHAT THIS CANNOT SEE, said out loud rather than hidden: books.json carries
+// only the FIRST author's name, so 1,063 of the 3,939 ids are second authors
+// whose name we do not have. They are listed by id and excluded from the
+// duplicate detector — comparing two Open Library ids as if they were names
+// flags OL2816667A against OL2816668A, which is noise, not a duplicate.
+let authorRows = [], authorById = {}, authorDupes = [], authorOverrides = {};
+
+function auNorm(s){
+  return String(s || "").toLowerCase().normalize("NFKD")
+    .replace(/[\\u0300-\\u036f]/g, "")
+    .replace(/[.,"'\`\\u2018\\u2019\\u201c\\u201d()\\[\\]]+/g, " ")
+    .replace(/\\s+/g, " ").trim();
+}
+
+function buildAuthorRows(){
+  const per = (authorsData.books || []).map((r) => Array.isArray(r) ? r : []);
+  // Padding for rows appended since the last full rebuild — see above.
+  for (let i = per.length; i < books.length; i++){
+    const nk = auNorm(books[i].a || "");
+    per.push(nk ? ["name:" + nk] : []);
+  }
+  const listed = {};
+  (authorsData.authors || []).forEach((a) => { listed[a.id] = a; });
+
+  authorById = {};
+  per.forEach((ids, i) => ids.forEach((id, slot) => {
+    const p = authorById[id] || (authorById[id] = {id, name:"", books:[]});
+    p.books.push(i);
+    // books.json's 'a' is the FIRST author only, so it names ids[0] and
+    // nothing else. Claiming it for a co-author would put the lead author's
+    // name on somebody else's row.
+    if (!p.name && slot === 0) p.name = books[i].a || "";
+  }));
+  Object.values(authorById).forEach((p) => {
+    if (!p.name) p.name = (listed[p.id] || {}).n
+      || (p.id.startsWith("name:") ? p.id.slice(5) : "");
+  });
+  authorRows = Object.values(authorById).sort((a,b) =>
+    b.books.length - a.books.length || (a.name||a.id).localeCompare(b.name||b.id));
+  computeAuthorDupes();
+}
+
+// ── "are these two the same person?" ─────────────────────────────────────
+//
+// MEASURED BEFORE IT WAS WRITTEN, like computeDupFlags() for books was. Over
+// the real 3,941-author population this flags 28 pairs — 0.71% — and the
+// version with only the surname rules flagged 25 while MISSING both real
+// splits in the live game, because they differ by SPELLING and not by
+// initials: Fyodor Dostoyevsky / Fyodor Dostoevsky, Paulo Coelho / Paulo
+// Coello. Those two are the only mergeable pairs today and a detector that
+// could not see them would have been decoration.
+//
+// So there are two rules. Same surname, compare the forenames. Nearly the
+// same surname (first four letters), compare the whole name by edit
+// distance — capped at two edits, and only for names long enough that two
+// edits is a typo rather than a different person, which is what keeps
+// short names out. Dropping the fuzzy bucket costs the two real cases;
+// widening it past two edits flagged unrelated people in testing.
+//
+// IT IS A HINT AND IT SAYS SO. Merging is a judgement about two human
+// beings, taken by a person looking at both shelves — never automatic, for
+// the same reason the reader-suggestion dedup check stays strict.
+function auLev(a, b, cap){
+  if (Math.abs(a.length - b.length) > cap) return cap + 1;
+  let prev = [], cur = [];
+  for (let j = 0; j <= b.length; j++) prev[j] = j;
+  for (let i = 1; i <= a.length; i++){
+    cur = [i];
+    let best = i;
+    for (let j = 1; j <= b.length; j++){
+      cur[j] = Math.min(prev[j] + 1, cur[j-1] + 1,
+                        prev[j-1] + (a[i-1] === b[j-1] ? 0 : 1));
+      if (cur[j] < best) best = cur[j];
+    }
+    if (best > cap) return cap + 1;
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+function auInitials(a, b){
+  if (a.length !== b.length || !a.length) return false;
+  let hit = false;
+  for (let i = 0; i < a.length; i++){
+    if (a[i] === b[i]) continue;
+    if (a[i].length === 1 && b[i].startsWith(a[i])) hit = true;
+    else if (b[i].length === 1 && a[i].startsWith(b[i])) hit = true;
+    else return false;
+  }
+  return hit;
+}
+
+function computeAuthorDupes(){
+  const groups = {};
+  authorRows.forEach((p) => {
+    p.n = auNorm(p.name);
+    p.toks = p.n ? p.n.split(" ").filter(Boolean) : [];
+    const real = p.toks.filter((t) => t.length > 1 && !/\\d/.test(t));
+    p.sur = real.length ? real[real.length-1] : "";
+    // No name means no comparison. See the note above on the 1,063 ids
+    // books.json cannot name.
+    if (!p.name || !p.sur) return;
+    (groups[p.sur] = groups[p.sur] || []).push(p);
+    if (p.sur.length >= 4){
+      const k = "~" + p.sur.slice(0, 4);
+      (groups[k] = groups[k] || []).push(p);
+    }
+  });
+
+  const seen = new Set();
+  authorDupes = [];
+  Object.entries(groups).forEach(([bucket, list]) => {
+    if (list.length < 2) return;
+    const fuzzy = bucket.startsWith("~");
+    for (let i = 0; i < list.length; i++)
+    for (let j = i + 1; j < list.length; j++){
+      const A = list[i], B = list[j];
+      const pk = A.id < B.id ? A.id + "|" + B.id : B.id + "|" + A.id;
+      if (seen.has(pk)) continue;
+      let why = null;
+      if (A.sur === B.sur){
+        const fa = A.toks.filter((t) => t !== A.sur);
+        const fb = B.toks.filter((t) => t !== B.sur);
+        const sa = new Set(fa), sb = new Set(fb);
+        const subset = (x, y) => x.size < y.size && [...x].every((t) => y.has(t));
+        if (A.n === B.n) why = "identical name under two ids";
+        else if (!fa.length || !fb.length) why = "one is a bare surname";
+        else if (auInitials(fa, fb)) why = "initials";
+        else if (subset(sa, sb) || subset(sb, sa)) why = "one name contains the other";
+      } else if (fuzzy && A.n !== B.n){
+        const shortest = Math.min(A.n.length, B.n.length);
+        const d = auLev(A.n, B.n, 2);
+        if (d <= 2 && shortest >= 8 && d * 6 <= shortest)
+          why = "spelling \\u2014 " + d + (d === 1 ? " edit" : " edits") + " apart";
+      }
+      if (why){ seen.add(pk); authorDupes.push({a: A, b: B, why}); }
+    }
+  });
+  document.getElementById("auDupCount").textContent = authorDupes.length;
+  const merge = authorDupes.filter(auMergeable).length;
+  document.getElementById("auDupPill").textContent = merge || "";
+}
+
+// An alias is consulted ONLY for an author with no Open Library key —
+// authors.py is explicit that a real id outranks a spelling. So a pair where
+// BOTH sides carry a key cannot be merged from here at all, and the card
+// says so instead of offering a button the server would refuse. Two OL
+// records for one person is an Open Library fix.
+function auMergeable(pair){
+  return pair.a.id.startsWith("name:") || pair.b.id.startsWith("name:");
+}
+
+function auOverlay(id){ return authorOverrides[id] || null; }
+
+function auTitles(p, limit){
+  return p.books.slice(0, limit || 4)
+    .map((i) => books[i] ? books[i].t : "?").join(" \\u00b7 ")
+    + (p.books.length > (limit || 4) ? " \\u2026" : "");
+}
+
+function renderAuthorDupes(){
+  const host = document.getElementById("auDupes");
+  if (!document.getElementById("auDupOnly").checked){ host.innerHTML = ""; return; }
+  if (!authorDupes.length){
+    host.innerHTML = '<p class="status">No pair looks like a duplicate. That is weaker '
+      + "evidence than it sounds \\u2014 two spellings that share no surname and are more "
+      + "than two edits apart would not show here.</p>";
+    return;
+  }
+  host.innerHTML = authorDupes.map((d, k) => {
+    const side = (p, other) => "<dd><strong>" + esc(p.name || p.id) + "</strong> "
+      + '<span class="sg-none">' + esc(p.id) + ", " + p.books.length
+      + (p.books.length === 1 ? " book" : " books") + "</span><br>"
+      + '<span class="sg-none">' + esc(auTitles(p)) + "</span>"
+      + (auMergeable(d)
+          ? (p.id.startsWith("name:") ? ""
+             : '<br><button class="act ghost auMerge" data-into="' + esc(p.id)
+               + '" data-alias="' + esc(other.name) + '">Fold \\u201c'
+               + esc(other.name) + '\\u201d into this one</button>')
+          : "") + "</dd>";
+    return '<div class="sg"><div class="sg-head"><span class="sg-reason">'
+      + esc(d.why) + "</span></div>"
+      + '<dl class="sg-cmp"><dt>A</dt>' + side(d.a, d.b)
+      + "<dt>B</dt>" + side(d.b, d.a) + "</dl>"
+      + (auMergeable(d)
+          ? '<p class="effect">Folding adds one name as an alias of the other. It takes '
+            + "effect at the NEXT full rebuild, not now, and it does not rewrite the book "
+            + "count either side already has.</p>"
+          : '<p class="sg-dupe">Both sides have an Open Library author key, so this cannot '
+            + "be merged here: an alias is only ever consulted for an author with no key. "
+            + "If they really are one person, the fix belongs in Open Library.</p>")
+      + "</div>";
+  }).join("");
+}
+
+function renderAuthors(filter){
+  const rows = document.getElementById("auRows");
+  const f = auNorm(filter || "");
+  const dupOnly = document.getElementById("auDupOnly").checked;
+  const inDupe = new Set();
+  authorDupes.forEach((d) => { inDupe.add(d.a.id); inDupe.add(d.b.id); });
+  const matching = authorRows.filter((p) =>
+    (!dupOnly || inDupe.has(p.id))
+    && (!f || auNorm(p.name).includes(f) || p.id.toLowerCase().includes(f)));
+  const shown = matching.slice(0, 200);
+  document.getElementById("auShown").textContent = matching.length > shown.length
+    ? "showing " + shown.length + " of " + matching.length + " \\u2014 narrow the search"
+    : matching.length + (matching.length === 1 ? " author" : " authors");
+  renderAuthorDupes();
+  rows.innerHTML = shown.map((p) => {
+    const ov = auOverlay(p.id);
+    const nFacts = ov ? Object.keys(ov.facts || {}).length : 0;
+    const nAl = ov ? (ov.aliases || []).length : 0;
+    return "<tr><td class=\\"title\\">" + esc(p.name || '<unnamed>')
+      + (p.name ? "" : ' <span class="sg-none">(co-author \\u2014 books.json names only the first)</span>')
+      + "</td><td><code>" + esc(p.id) + "</code>"
+      + (p.id.startsWith("name:")
+          ? ' <span class="badge" title="No Open Library author key. Identified by name alone \\u2014 the fragile case.">name only</span>'
+          : "") + "</td>"
+      + '<td class="rich">' + p.books.length + "</td>"
+      + "<td>" + (nFacts || nAl
+          ? '<span class="badge off">' + nFacts + " fact(s), " + nAl + " alias(es)</span>"
+          : '<span class="sg-none">\\u2014</span>') + "</td>"
+      + '<td><button class="act ghost auOpen" data-id="' + esc(p.id) + '">Open</button></td></tr>';
+  }).join("") || '<tr><td colspan="5">No match.</td></tr>';
+}
+
+// The eight author questions, as the SHIPPED game asks them. Anything the
+// build dropped is not offered: setting a fact for a question nobody is
+// asked changes nothing, the same rule the Taught tab applies to retired
+// cells. An overlay that already holds one is still shown, so it can be
+// cleared.
+function auQuestions(id){
+  const shipped = questions.filter((q) => q.id.startsWith("author:"));
+  const have = new Set(shipped.map((q) => q.id));
+  const ov = auOverlay(id) || {facts:{}};
+  Object.keys(ov.facts || {}).forEach((q) => {
+    if (!have.has(q)) shipped.push({id: q, text: q, retired: true});
+  });
+  return shipped;
+}
+
+// What the game answers TODAY, read out of matrix.bin. Taken from a book
+// where this author is FIRST, because book_traits() gives a co-authored book
+// the lead author's facts and reading a row where they are second would show
+// somebody else's answers.
+function auLeadBook(p){
+  const per = authorsData.books || [];
+  for (const i of p.books){
+    if ((per[i] || [])[0] === p.id) return i;
+  }
+  return p.books.length ? p.books[0] : -1;
+}
+
+function renderAuthorPanel(id){
+  const p = authorById[id];
+  const host = document.getElementById("auPanel");
+  if (!p){ host.innerHTML = ""; return; }
+  const ov = auOverlay(id) || {facts:{}, aliases:[]};
+  const lead = auLeadBook(p);
+  const isLead = lead >= 0 && ((authorsData.books || [])[lead] || [])[0] === p.id;
+  const qIndex = {}; questions.forEach((q, i) => { qIndex[q.id] = i; });
+
+  const rows = auQuestions(id).map((q) => {
+    const st = (lead >= 0 && qIndex[q.id] !== undefined)
+      ? cellState(lead, qIndex[q.id]) : null;
+    const table = q.retired ? '<span class="sg-none">not asked</span>'
+      : st === 1 ? '<span class="sg-new">yes</span>'
+      : st === 0 ? "no"
+      : st === 2 ? '<span class="sg-none">no record</span>'
+      : '<span class="sg-none">\\u2026</span>';
+    const has = Object.prototype.hasOwnProperty.call(ov.facts || {}, q.id);
+    const v = has ? ov.facts[q.id] : undefined;
+    const cur = !has ? '<span class="sg-none">\\u2014</span>'
+      : v === true ? '<span class="badge off">set: YES</span>'
+      : v === false ? '<span class="badge off">set: NO</span>'
+      : '<span class="badge off">set: back to UNKNOWN</span>';
+    const btn = (val, label) => '<button class="act ghost auSet" data-q="' + esc(q.id)
+      + '" data-v="' + val + '">' + label + "</button>";
+    return "<tr><td>" + esc(q.text)
+      + (q.retired ? ' <span class="badge">retired</span>' : "")
+      + '<br><span class="sg-none">' + esc(q.id) + "</span></td>"
+      + "<td>" + table + "</td><td>" + cur + "</td>"
+      + '<td class="row">' + btn("yes", "Yes") + btn("no", "No")
+      + btn("unknown", "Unknown") + (has ? btn("clear", "Clear") : "") + "</td></tr>";
+  }).join("");
+
+  host.innerHTML =
+    '<div class="card" style="max-width:none;margin:14px 0" data-id="' + esc(id) + '">'
+    + "<h2 style=\\"font-size:17px;margin:0 0 4px\\">" + esc(p.name || id) + "</h2>"
+    + '<p class="sub" style="margin-bottom:12px"><code>' + esc(id) + "</code> \\u00b7 "
+      + p.books.length + (p.books.length === 1 ? " book" : " books") + " in the game \\u00b7 "
+      + esc(auTitles(p, 8)) + "</p>"
+    + (isLead ? "" : '<p class="sg-dupe">This author is not the FIRST author on any book '
+        + "we ship, so \\u201cthe game says\\u201d below is read from a row whose facts come "
+        + "from somebody else. A fact set here still applies to them at the next rebuild "
+        + "only if they become the lead author of a row.</p>")
+    + '<div class="field"><label>Aliases \\u2014 other spellings that should fold into this '
+      + "author. Comma-separated. Only consulted for a book with no Open Library author "
+      + "key.</label><input type=\\"text\\" id=\\"auAliases\\" value=\\""
+      + esc((ov.aliases || []).join(", ")) + "\\"></div>"
+    + '<div class="row"><button class="act" id="auSaveAliases">Save aliases</button>'
+      + '<button class="act ghost" id="auLookup">Look up in Open Library</button></div>'
+    + '<p class="effect">Both take effect at the next full build_matrix.py run. Looking up '
+      + "writes nothing \\u2014 it searches Open Library by name and, once you pick a record, "
+      + "asks Wikidata what it knows.</p>"
+    + '<div id="auResolve"></div>'
+    + '<div class="scroll" style="margin-top:14px"><table><thead><tr><th>Question</th>'
+      + "<th>The game says today</th><th>Your overlay</th><th></th></tr></thead><tbody>"
+      + rows + "</tbody></table></div></div>";
+}
+
+async function auSave(body, okMsg){
+  setStatus("auStatus", "Writing\\u2026");
+  const r = await post("/api/authors/save", body);
+  if (r.entry) authorOverrides[r.key] = r.entry;
+  else delete authorOverrides[r.key];
+  renderAuthors(document.getElementById("auSearch").value);
+  setStatus("auStatus", okMsg + " \\u2014 effect: " + r.effect, true);
+  return r;
+}
+
+document.getElementById("auSearch").addEventListener("input", (e) =>
+  renderAuthors(e.target.value));
+document.getElementById("auDupOnly").addEventListener("change", () =>
+  renderAuthors(document.getElementById("auSearch").value));
+
+document.getElementById("auDupes").addEventListener("click", async (e) => {
+  if (!e.target.classList.contains("auMerge")) return;
+  const into = e.target.dataset.into, alias = e.target.dataset.alias;
+  e.target.disabled = true;
+  try {
+    await auSave({key: into, add_aliases: [alias]},
+      "Taught \\u201c" + alias + "\\u201d as an alias of " + into);
+  } catch (err) {
+    setStatus("auStatus", String(err.message || err), false);
+    e.target.disabled = false;
+  }
+});
+
+document.getElementById("auRows").addEventListener("click", (e) => {
+  if (!e.target.classList.contains("auOpen")) return;
+  renderAuthorPanel(e.target.dataset.id);
+  document.getElementById("auPanel").scrollIntoView({behavior: "smooth", block: "start"});
+});
+
+document.getElementById("auPanel").addEventListener("click", async (e) => {
+  const card = e.target.closest(".card");
+  if (!card) return;
+  const id = card.dataset.id;
+
+  if (e.target.id === "auSaveAliases"){
+    const raw = document.getElementById("auAliases").value;
+    const list = raw.split(",").map((s) => s.trim()).filter(Boolean);
+    e.target.disabled = true;
+    try {
+      await auSave({key: id, aliases: list}, list.length
+        ? list.length + " alias(es) saved" : "Aliases cleared");
+      renderAuthorPanel(id);
+    } catch (err) { setStatus("auStatus", String(err.message || err), false); }
+    finally { e.target.disabled = false; }
+    return;
+  }
+
+  if (e.target.id === "auLookup"){
+    const p = authorById[id];
+    e.target.disabled = true;
+    setStatus("auStatus", "Searching Open Library\\u2026");
+    try {
+      const r = await post("/api/authors/resolve", {name: p.name || id});
+      renderResolve(id, r);
+      setStatus("auStatus", r.searched
+        ? (r.candidates.length + " candidate(s)")
+        : "Open Library could not be reached (" + (r.search_error || "unknown")
+          + ") \\u2014 that is NOT the same as it having no record.", r.searched);
+    } catch (err) { setStatus("auStatus", String(err.message || err), false); }
+    finally { e.target.disabled = false; }
+    return;
+  }
+
+  if (e.target.classList.contains("auPick")){
+    const p = authorById[id];
+    e.target.disabled = true;
+    setStatus("auStatus", "Asking Wikidata\\u2026");
+    try {
+      const r = await post("/api/authors/resolve",
+        {name: p.name || id, ol_key: e.target.dataset.k});
+      renderResolve(id, r);
+      setStatus("auStatus", r.wikidata
+        ? "Wikidata: " + r.wikidata.qid
+        : (r.wikidata_error
+            ? "Wikidata could not be reached (" + r.wikidata_error
+              + ") \\u2014 NOT the same as it knowing nothing."
+            : "Wikidata has no item with that Open Library id."),
+        !r.wikidata_error);
+    } catch (err) { setStatus("auStatus", String(err.message || err), false); }
+    finally { e.target.disabled = false; }
+    return;
+  }
+
+  if (e.target.classList.contains("auApplyTraits")){
+    const facts = JSON.parse(e.target.dataset.f);
+    const ov = auOverlay(id) || {facts:{}, aliases:[]};
+    const merged = Object.assign({}, ov.facts, facts);
+    e.target.disabled = true;
+    try {
+      await auSave({key: id, facts: merged, note: "from Wikidata via the Authors tab"},
+        Object.keys(facts).length + " fact(s) taken from Wikidata");
+      renderAuthorPanel(id);
+    } catch (err) {
+      setStatus("auStatus", String(err.message || err), false);
+      e.target.disabled = false;
+    }
+    return;
+  }
+
+  if (e.target.classList.contains("auSet")){
+    const q = e.target.dataset.q, v = e.target.dataset.v;
+    const ov = auOverlay(id) || {facts:{}, aliases:[]};
+    const facts = Object.assign({}, ov.facts);
+    if (v === "clear") delete facts[q];
+    else facts[q] = v === "yes" ? true : v === "no" ? false : null;
+    e.target.closest("tr").querySelectorAll("button").forEach((b) => { b.disabled = true; });
+    try {
+      await auSave({key: id, facts, aliases: ov.aliases || []},
+        v === "clear" ? "Cleared " + q : q + " set to " + v);
+      renderAuthorPanel(id);
+    } catch (err) {
+      setStatus("auStatus", String(err.message || err), false);
+      renderAuthorPanel(id);
+    }
+  }
+});
+
+// WHY A CANDIDATE LIST AND NOT A MATCH. Searching Open Library for "John
+// Gillow" returns the textile historian (19 works, top work "Indian
+// textiles" — three of which this game ships) AND a different John Gillow
+// who died in 1877. "Colleen Hoover" returns four records, one of them a
+// French translator's name glued to hers. A name is not an identifier, and
+// picking for the owner here would fan a wrong person's gender, nationality
+// and dates across a whole shelf.
+function renderResolve(id, r){
+  const host = document.getElementById("auResolve");
+  let html = '<p class="effect" style="margin-top:10px">The build would identify a keyless '
+    + "book by this author as <code>" + esc(r.name_key || "(no usable key)") + "</code>"
+    + (r.claimed_by ? " \\u2014 already claimed as an alias of <code>"
+        + esc(r.claimed_by) + "</code>" : "") + ".</p>";
+
+  if (r.candidates){
+    html += r.candidates.length
+      ? '<div class="scroll"><table><thead><tr><th>Open Library</th><th>Born</th>'
+        + "<th>Died</th><th>Works</th><th>Best known for</th><th></th></tr></thead><tbody>"
+        + r.candidates.map((c) =>
+            "<tr><td>" + esc(c.name) + '<br><span class="sg-none">' + esc(c.ol_key)
+            + "</span></td><td>" + esc(c.birth_date || "\\u2014") + "</td><td>"
+            + esc(c.death_date || "\\u2014") + '</td><td class="rich">' + esc(c.work_count)
+            + "</td><td>" + esc(c.top_work || "\\u2014")
+            + '</td><td><button class="act ghost auPick" data-k="' + esc(c.ol_key)
+            + '">Use this one</button></td></tr>').join("")
+        + "</tbody></table></div>"
+      : '<p class="sg-dupe">' + (r.searched
+          ? "Open Library has no author record under that name. The <code>name:</code> key "
+            + "above is then the whole identity, which is fine \\u2014 set the facts by hand."
+          : "Open Library could not be reached, so this proves nothing about whether it "
+            + "has a record.") + "</p>";
+  }
+
+  if (r.traits){
+    const wd = r.wikidata || {};
+    const set = {};
+    Object.entries(r.traits).forEach(([q, v]) => {
+      // author:prolific is NOT a Wikidata fact. traits_for() computes it
+      // from OUR corpus — book_count >= 5 — and it is the one answer that
+      // is right without any match at all. Copying it into the overlay
+      // would FREEZE it: John Gillow ships three books today, so it reads
+      // false, and an override saying false would still say false after
+      // his fourth and fifth were added. Shown below, never copied.
+      if (v !== null && q !== "author:prolific") set[q] = v;
+    });
+    const dates = (wd.birth || wd.death)
+      ? " \\u00b7 " + esc(wd.birth || "?") + "\\u2013" + esc(wd.death || "")
+      : "";
+    html += '<p class="effect" style="margin-top:10px">Wikidata <code>' + esc(wd.qid || "")
+      + "</code>: " + esc((wd.countries || []).join(", ") || "no nationality") + " \\u00b7 "
+      + esc(wd.gender || "no gender") + dates + "</p>"
+      + '<p class="sg-none">Which answers: '
+      + Object.entries(r.traits).map(([q, v]) => '<span class="badge"'
+          + (q === "author:prolific"
+              ? ' title="Counted from our own corpus, not from Wikidata — the one answer that is right with no match at all. Not copied, because an override would freeze it as this author gains books."'
+              : "")
+          + ">" + esc(q) + " = " + (v === null ? "unknown" : v)
+          + (q === "author:prolific" ? " (ours)" : "") + "</span>").join(" ") + "</p>"
+      + (Object.keys(set).length
+          ? '<button class="act auApplyTraits" data-f="'
+            + esc(JSON.stringify(set)) + '">Take the ' + Object.keys(set).length
+            + " answer(s) Wikidata is sure about</button>"
+            + '<p class="effect">Copies them into your overlay, where they beat whatever the '
+            + "next rebuild computes. Everything Wikidata is silent about stays untouched \\u2014 "
+            + "an unmatched fact must not become a \\u201cno\\u201d.</p>"
+          : '<p class="sg-none">Wikidata is sure about nothing here, so there is nothing '
+            + "to copy.</p>");
+  } else if (r.wikidata_error){
+    html += '<p class="sg-dupe">Wikidata could not be reached: ' + esc(r.wikidata_error)
+      + ". That says nothing about the author.</p>";
+  } else if (r.ol_key && r.wikidata === null){
+    html += '<p class="sg-dupe">No Wikidata item carries that Open Library id. Set the '
+      + "facts by hand \\u2014 they will still fan out to every book by this author.</p>";
+  }
+  host.innerHTML = html;
+}
+
 // ── taught cells: the owner's hand, ahead of the 8-play floor ────────────
 //
 // MIN_PLAYS stays at 8 and this does not lower it. It goes around it for the
@@ -1202,12 +1758,21 @@ document.getElementById("cqList").addEventListener("click", async (e)=>{
 
 (async function init(){
   try {
-    const [b, q, x] = await Promise.all([
+    // authors.json and author_overrides.json join the first paint rather
+    // than the deferred batch below: the Authors tab's duplicate count is a
+    // nav badge, and a badge that appears a second late is a badge nobody
+    // sees. A 404 on the overlay is the normal state until something has
+    // been written, same convention as excluded.json/overrides.json.
+    const [b, q, x, a, ao] = await Promise.all([
       fetch(DATA+"/books.json").then(r=>r.json()),
       fetch(DATA+"/questions.json").then(r=>r.json()),
       fetch(DATA+"/excluded.json").then(r=>r.ok?r.json():[]).catch(()=>[]),
+      fetch(DATA+"/authors.json").then(r=>r.ok?r.json():{}).catch(()=>({})),
+      fetch(DATA+"/author_overrides.json").then(r=>r.ok?r.json():{}).catch(()=>({})),
     ]);
     books = b; questions = q; excluded = new Set(x);
+    authorsData = a && typeof a === "object" ? a : {};
+    authorOverrides = ao && typeof ao === "object" ? ao : {};
     // The matrix and the override file, for the Edit tab only. 63 KB and a
     // small JSON on an admin page nobody loads casually — and without them
     // the editor would be setting cells blind, which is how you write an
@@ -1223,6 +1788,7 @@ document.getElementById("cqList").addEventListener("click", async (e)=>{
     }).catch(() => {});
     computeDupFlags();
     renderBooks(""); renderQuestions();
+    buildAuthorRows(); renderAuthors("");
   } catch (e) {
     setStatus("bookStatus", "failed to load live artifacts: "+e.message, false);
   }
