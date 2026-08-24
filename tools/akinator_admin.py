@@ -335,6 +335,17 @@ class BookRequest(BaseModel):
     year: int | None = Field(default=None, ge=1, le=2100)
     summary: str = Field(default="", max_length=4000)
     themes: list[str] = Field(default_factory=list, max_length=20)
+    # Set when the admin picked a candidate from /search rather than typing
+    # blind — passed straight to resolve_book() so it fetches the EXACT
+    # record shown, not a fresh fuzzy re-search that could land on a
+    # different edition of the same title.
+    google_id: str | None = Field(default=None, max_length=40)
+    openlibrary_id: str | None = Field(default=None, max_length=40)
+    # The admin's reviewed verdicts from /akinator/admin/book/preview — see
+    # akinator_sync._apply_manual_answers for how these are applied. Absent
+    # or empty is not an error: a book added with no review still gets the
+    # automatic extract()/trait-model pass, exactly as before this existed.
+    answers: dict[str, bool | None] = Field(default_factory=dict)
 
 
 def _first_publish_year(title: str, author: str) -> int | None:
@@ -383,7 +394,13 @@ def book(body: BookRequest):
     from book_data import resolve_book                    # noqa: E402
     from features import normalize                         # noqa: E402
 
-    record = resolve_book(body.title, body.author)
+    # A candidate picked from /search carries its own id — resolve_book()
+    # then fetches THAT exact record instead of re-searching by title/author
+    # text, which could resolve to a different edition of the same title
+    # than the one the admin actually looked at and chose.
+    record = resolve_book(body.title, body.author,
+                          google_id=body.google_id,
+                          openlibrary_id=body.openlibrary_id)
     if not record.found:
         raise HTTPException(
             status_code=404,
@@ -400,6 +417,17 @@ def book(body: BookRequest):
     have_titles = {normalize(b.get("t") or "") for b in books}
     if normalize(record.title) in have_titles:
         raise HTTPException(status_code=409, detail="already in the shipped game")
+
+    # Same discipline /taught/apply and /question already hold their ids
+    # to: an answer for a question the game does not ask would sit in the
+    # row invisibly, never packed, never wrong-looking — and a typo would
+    # be indistinguishable from a review that simply did nothing.
+    live_ids = {q.get("id") for q in live if isinstance(q, dict)}
+    bad_ids = sorted(set(body.answers) - live_ids)
+    if bad_ids:
+        raise HTTPException(
+            status_code=400,
+            detail=f"not questions the game asks: {bad_ids}")
 
     floor = min((b.get("p") or 0) for b in books) if books else 1
     # The admin's own year wins — they are a human who can check a fact the
@@ -430,7 +458,8 @@ def book(body: BookRequest):
     # problem `_mark_uncomputed_unknown` documents, not a fix for it.
     result = append_book_row(
         doc, prose=(body.summary or record.description or ""),
-        commit_message=f"mind reader admin: +1 book ({record.title})")
+        commit_message=f"mind reader admin: +1 book ({record.title})",
+        manual_answers=body.answers or None)
     if not result.get("ok"):
         raise HTTPException(status_code=502,
                             detail=result.get("reason", "append failed"))
