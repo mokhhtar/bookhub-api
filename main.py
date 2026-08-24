@@ -38,6 +38,7 @@ from tools import akinator_admin as akinator_admin_tool
 from tools import akinator_suggest as akinator_suggest_tool
 from tools import akinator_candidates as akinator_candidates_tool
 from tools import akinator_authors as akinator_authors_tool
+from tools import akinator_book_search as akinator_book_search_tool
 # from tools import recommend as recommend_tool   # pending rebuild
 # from tools import questions as questions_tool   # pending rebuild
 # from tools import compare as compare_tool       # pending rebuild
@@ -171,6 +172,10 @@ app.include_router(akinator_candidates_tool.admin_router)
 # it writes, author_overrides.json, is read straight off the bookhub repo by
 # the client and by build_matrix.py, same as excluded.json.
 app.include_router(akinator_authors_tool.admin_router)
+# Book search preview: read-only trait/work-fact suggestions before a book
+# is added. Search itself reuses the public /search endpoint (below), not a
+# new one — this router only adds the preview.
+app.include_router(akinator_book_search_tool.admin_router)
 
 
 @app.get("/health")
