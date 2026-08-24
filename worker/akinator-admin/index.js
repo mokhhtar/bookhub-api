@@ -1124,7 +1124,16 @@ function renderCandidates(){
     }
     if (coll.near_duplicate && coll.near_duplicate.length){
       warn += '<p class="sg-dupe">Agrees with an existing question on most sampled books — '
-        + "it may tell the engine almost nothing new:</p><ul class=\"sg-near\">"
+        // SINGLE quotes, and the whole admin page depended on it. A
+        // backslash-quote here is an escape the TEMPLATE LITERAL eats, so
+        // the emitted client script carried a bare class="sg-near" inside
+        // a double-quoted string — a syntax error, which in an inline
+        // script kills the ENTIRE block. Every tab at once, since the
+        // Mined questions tab shipped. Running node --check on this file
+        // cannot see it: the client script is a string here and only
+        // becomes JavaScript after page() runs, so the real check is to
+        // extract the script body from page() and --check that.
+        + 'it may tell the engine almost nothing new:</p><ul class="sg-near">'
         + coll.near_duplicate.map((n) => "<li><code>" + esc(n.id) + "</code> — "
           + Math.round(n.agreement * 100) + "% agreement over " + esc(n.n) + " books</li>").join("")
         + "</ul>";

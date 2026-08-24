@@ -30,6 +30,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # BEFORE the deploy, because all three of these are things a deploy
+      # would happily ship broken. The one that made this step necessary:
+      # the client is a STRING inside page()'s template literal, so an
+      # escaped quote written there emits invalid JavaScript, which in an
+      # inline script kills every tab at once — and the guard below still
+      # passes, because a dead page refuses an unauthenticated request just
+      # as well as a live one. See worker/akinator-admin/check.mjs.
+      - name: Prove the emitted page is not broken
+        working-directory: worker/akinator-admin
+        run: node check.mjs
+
       - name: Deploy
         working-directory: worker/akinator-admin
         env:
@@ -47,6 +58,10 @@ jobs:
       # project has already paid for once (see deploy-seo-worker.yml). Ask
       # the Worker to prove it refuses what it should.
       - name: Prove the deployed Worker refuses what it should
+        # For `node check.mjs --relays` below, which reads ROUTES out of
+        # index.js so this step and the Worker cannot hold different ideas
+        # of which relays exist.
+        working-directory: worker/akinator-admin
         env:
           BASE: ${{ vars.AKINATOR_ADMIN_URL || 'https://mindreader-admin.litheca.com' }}
         run: |
@@ -135,12 +150,21 @@ jobs:
           # `taught` and `taught/apply` had shipped guarded in practice
           # (they sit behind the same ADMIN_SECRET check every relay does)
           # but never actually PROVEN so by this workflow. A relay missing
-          # from this loop is a relay nothing proves is guarded — checked by
-          # diffing this list against ROUTES directly, not by re-reading
-          # both by eye, which is exactly how it drifted the first time.
-          for p in exclude correction question book display \
-                   suggestions suggestions/resolve suggestions/theme \
-                   taught taught/apply candidates/decide; do
+          # from this loop is a relay nothing proves is guarded.
+          #
+          # SO THE LIST IS NO LONGER WRITTEN HERE. It is derived from ROUTES
+          # itself, and there is now exactly one list in the repo — a
+          # comment asking a human to keep two of them in step is what
+          # produced both drifts. A relay added to index.js is interrogated
+          # by this loop on the very next deploy, with nobody remembering
+          # anything.
+          RELAYS=$(node check.mjs --relays)
+          echo "relays under test: $RELAYS"
+          if [ -z "$RELAYS" ]; then
+            echo "::error::could not read ROUTES from index.js — refusing to report a pass on zero relays."
+            exit 1
+          fi
+          for p in $RELAYS; do
             CODE=$(curl -sS -m 30 -o rel.txt -D hdr.txt -w '%{http_code}' -X POST "$BASE/api/$p" \
                    -H "Content-Type: application/json" -d '{}')
             guarded "POST /api/$p (no Access header)" "$CODE" rel.txt || exit 1
