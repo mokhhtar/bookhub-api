@@ -134,6 +134,12 @@ th{font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--mut)
 tr:last-child td{border-bottom:0}
 tr.excluded{opacity:.5}
 td.title{white-space:normal;min-width:220px}
+/* Question text wraps instead of stretching the row — without this, a
+   long question ("Is the author from Asia, Africa, or Latin America?")
+   forces the whole row wide under the generic nowrap rule above, and the
+   Yes/No/Unknown buttons end up a horizontal scroll away from the question
+   they answer. Capped at 320px so a short question does not sprawl either. */
+td.q{white-space:normal;max-width:320px}
 .badge{font-size:11px;font-weight:600;padding:1px 7px;border-radius:3px;background:var(--line)}
 .badge.off{color:var(--work)}
 .badge.dup{color:var(--wait);cursor:pointer;border:1px solid transparent}
@@ -825,7 +831,7 @@ function renderEditPanel(i){
           : '<span class="badge">learned from play: ' + esc(o) + "</span>";
       cur += ' <span class="sg-none">(' + esc(o) + ")</span>";
     }
-    return "<tr><td>" + esc(q.text) + '<br><span class="sg-none">' + esc(q.id) + "</span></td>"
+    return "<tr><td class=\\"q\\">" + esc(q.text) + '<br><span class="sg-none">' + esc(q.id) + "</span></td>"
       + "<td>" + table + "</td><td>" + cur + "</td>"
       + '<td class="row">'
       + '<button class="act ghost edSet" data-q="' + esc(q.id) + '" data-v="yes">Yes</button>'
@@ -1370,7 +1376,7 @@ function authorPanelHtml(id){
       ? "act" : "act ghost";
     const btn = (val, label) => '<button class="' + on(val) + ' auSet" data-q="'
       + esc(q.id) + '" data-v="' + val + '">' + label + "</button>";
-    return "<tr><td>" + esc(q.text)
+    return "<tr><td class=\\"q\\">" + esc(q.text)
       + (q.retired ? ' <span class="badge">retired</span>' : "")
       + '<br><span class="sg-none">' + esc(q.id) + "</span></td>"
       + "<td>" + table + "</td><td>" + cur + "</td>"
