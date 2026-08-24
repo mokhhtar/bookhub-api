@@ -621,14 +621,52 @@ function addAuthorCheck(){
   const text = box.value.trim();
   if (!text){ if (note) note.innerHTML = ""; return null; }
   const hit = authorByName(text);
+  // AN INLINE WAY OUT, not just a refusal. Reported directly: a book
+  // picked from Fandom search names an author the game has never held
+  // (the ordinary case for a new web novel, not an edge case), and the
+  // ONLY prior path forward was "go to the Authors tab, declare them,
+  // come back, re-pick" — easy to miss, and a missed step here means
+  // Add book silently refuses to fire at all, which reads as "I added
+  // the book but it never showed up" because nothing was ever sent.
   if (note) note.innerHTML = hit
     ? '<span class="sg-new">' + esc(hit.name) + "</span> \\u00b7 <code>" + esc(hit.id)
       + "</code> \\u00b7 " + hit.books.length
       + (hit.books.length === 1 ? " book" : " books")
-    : '<span class="sg-over">No author by that name.</span> Create their profile on the '
-      + "Authors tab first \\u2014 \\u201cNew author profile\\u201d \\u2014 then come back.";
+    : '<span class="sg-over">No author by that name.</span> '
+      + '<button class="act ghost addDeclare" data-name="' + esc(text) + '">'
+      + "Create \\u201c" + esc(text) + "\\u201d\\u2019s profile now</button>";
   return hit;
 }
+
+// The declare-and-repick shortcut. THE SERVER COMPUTES THE KEY, same as
+// the Authors tab's own "New author profile" — /api/authors/resolve is
+// called for the name_key before /api/authors/save writes a bare profile
+// (declare:true, same shape). A client-side auNorm(name) would be a
+// SECOND copy of the merge-key rule the Authors tab's own comment already
+// warns against holding, for a page that must never disagree with the
+// build about what an author's key is.
+document.getElementById("addForm").addEventListener("click", async (e) => {
+  if (!e.target.classList.contains("addDeclare")) return;
+  const name = e.target.dataset.name;
+  e.target.disabled = true;
+  setStatus("addStatus", "Creating \\u201c" + name + "\\u201d\\u2019s profile\\u2026");
+  try {
+    const r = await post("/api/authors/resolve", {name});
+    if (!r.name_key) throw new Error("that name folds to an empty key — it carries "
+      + "nothing to identify an author by");
+    await post("/api/authors/save", {key: r.name_key, declare: true, facts: {}, aliases: [],
+                                     note: "profile created from Add a book"});
+    authorOverrides[r.name_key] = {facts: {}, aliases: []};
+    buildAuthorRows();
+    document.getElementById("addAuthorField").value = name;
+    addAuthorCheck();
+    setStatus("addStatus", "Created " + r.name_key + " \\u2014 pick them from the list "
+      + "and Add book when ready.", true);
+  } catch (err) {
+    setStatus("addStatus", String(err.message || err), false);
+    e.target.disabled = false;
+  }
+});
 
 // A SERIES OF VOLUMES IS ONE CANDIDATE, NOT EIGHT. Reported directly from
 // a real search: "Circle of Inevitability" came back as 8 rows ("...,
@@ -767,9 +805,15 @@ function renderAddForm(){
       + '<input type="text" id="addYear" inputmode="numeric" style="width:110px" value="'
       + esc(p && p.published_year ? p.published_year : "") + '"></div>'
     + '<div class="field"><label>Summary (grounds the theme labels \\u2014 the richer this '
-      + "is, the more the book can answer). Leave blank when a source was picked and "
-      + '"Suggest answers" will fetch the catalogue\\u2019s own description.</label>'
-      + '<textarea id="addSummary"></textarea></div>'
+      + "is, the more the book can answer). "
+      + (p && (p.source === "fandom" || p.source === "fandom_series")
+        ? '<strong>Fandom search results carry no description \\u2014 "Suggest answers" '
+          + "cannot fetch one for this pick. Paste or write a synopsis yourself, or the "
+          + "review will show almost every question as unknown, which is honest but "
+          + "not very useful.</strong>"
+        : "Leave blank when a source was picked and \\u201cSuggest answers\\u201d will "
+          + "fetch the catalogue\\u2019s own description.")
+      + '</label><textarea id="addSummary"></textarea></div>'
     + '<div class="field"><label>Themes, comma-separated (optional)</label>'
       + '<input type="text" id="addThemes"></div>'
     + '<div class="row"><button class="act ghost" id="addSuggest">Suggest answers</button>'
@@ -893,6 +937,13 @@ document.getElementById("addForm").addEventListener("click", async (e) => {
         year: rawYear ? parseInt(rawYear, 10) : null,
         google_id: addPicked ? addPicked.google_id : null,
         openlibrary_id: addPicked ? addPicked.openlibrary_id : null,
+        // A Fandom pick is verified server-side against the SAME Fandom
+        // catalog/subdomain match search used to find it, instead of
+        // Google Books/Open Library — see _fandom_verified in
+        // akinator_admin.py for why re-running that second, unrelated,
+        // occasionally-flaky check on top would refuse real web novels
+        // that simply have no official English edition.
+        source: addPicked ? addPicked.source : null,
         answers: addAnswers,
       });
       let linked = "";

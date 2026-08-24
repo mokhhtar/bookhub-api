@@ -341,6 +341,10 @@ class BookRequest(BaseModel):
     # different edition of the same title.
     google_id: str | None = Field(default=None, max_length=40)
     openlibrary_id: str | None = Field(default=None, max_length=40)
+    # The picked candidate's own source label ("fandom", "open_library",
+    # "google_books", or absent for a from-scratch manual entry) — see
+    # `_fandom_verified` for what "fandom" changes.
+    source: str | None = Field(default=None, max_length=40)
     # The admin's reviewed verdicts from /akinator/admin/book/preview — see
     # akinator_sync._apply_manual_answers for how these are applied. Absent
     # or empty is not an error: a book added with no review still gets the
@@ -388,23 +392,62 @@ def _first_publish_year(title: str, author: str) -> int | None:
     return year if isinstance(year, int) and 1 <= year <= 2100 else None
 
 
+def _fandom_verified(title: str) -> bool:
+    """Is this title a real, known Fandom series — independent of Google
+    Books/Open Library having ever heard of it.
+
+    THE GAP THIS CLOSES, found the hard way: a Fandom-picked candidate was
+    still being re-verified against Google Books/Open Library before
+    /book would add it — redundant for something the SAME search cascade
+    already matched against a real Fandom wiki, and actively harmful for
+    an obscure web novel with no official print/ebook edition at all.
+    Worse, that second gate is genuinely flaky: Google Books returned a
+    live 503 while testing this exact fix, on a title that succeeded a
+    minute later — an admin hitting that window would see "no matching
+    book found" for a book that plainly exists.
+
+    Re-checks the SAME hand-verified catalog and fuzzy-subdomain match
+    `search_books_list()` used to find it in the first place, rather than
+    trusting the client-supplied `source` field alone — the admin
+    ticked a box, but the row that lands is still checked against a real
+    external source, just a different one than Google Books/OL.
+    """
+    from tools.fandom import resolve_fandom_subdomain, resolve_series_config_first  # noqa: E402
+    try:
+        return bool(resolve_series_config_first(title) or resolve_fandom_subdomain(title))
+    except Exception as exc:                                  # noqa: BLE001
+        log.warning("Fandom re-verification failed for %r: %s", title[:60], str(exc)[:120])
+        return False
+
+
 @router.post("/book")
 def book(body: BookRequest):
 
-    from book_data import resolve_book                    # noqa: E402
+    from book_data import BookRecord, resolve_book         # noqa: E402
     from features import normalize                         # noqa: E402
 
     # A candidate picked from /search carries its own id — resolve_book()
     # then fetches THAT exact record instead of re-searching by title/author
     # text, which could resolve to a different edition of the same title
     # than the one the admin actually looked at and chose.
-    record = resolve_book(body.title, body.author,
-                          google_id=body.google_id,
-                          openlibrary_id=body.openlibrary_id)
+    #
+    # FANDOM IS A DIFFERENT VERIFICATION PATH, not a bypass of one. A
+    # Fandom-sourced pick already came from a real wiki match; re-running
+    # Google Books/Open Library on TOP of that would refuse — or worse,
+    # flakily refuse — books that are real but never officially published
+    # in English, which is the ordinary case for a web novel and the whole
+    # reason Fandom was worth adding to search in the first place.
+    if (body.source or "").startswith("fandom") and _fandom_verified(body.title):
+        record = BookRecord(found=True, source="fandom", title=body.title,
+                            author=body.author, description="", categories=[])
+    else:
+        record = resolve_book(body.title, body.author,
+                              google_id=body.google_id,
+                              openlibrary_id=body.openlibrary_id)
     if not record.found:
         raise HTTPException(
             status_code=404,
-            detail="no matching book found via Google Books/Open Library "
+            detail="no matching book found via Fandom/Google Books/Open Library "
                    "— check the title and author")
 
     live, _ = _get_json(QUESTIONS_PATH, None)
