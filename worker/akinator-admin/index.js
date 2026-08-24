@@ -630,29 +630,96 @@ function addAuthorCheck(){
   return hit;
 }
 
+// A SERIES OF VOLUMES IS ONE CANDIDATE, NOT EIGHT. Reported directly from
+// a real search: "Circle of Inevitability" came back as 8 rows ("...,
+// Volume 1: Nightmare" through "...Volume 8: Eternal Aeon"), one per
+// Fandom volume, because search_books_list() is built for the SITE's
+// reader-facing search — someone looking for a specific volume to read —
+// not for "how many game rows should this become". Left ungrouped, eight
+// "Use this one" buttons invite exactly the failure already sitting in
+// the shipped data: /site/lord-of-the-mysteries-volume-3/7/8 are three
+// stray admin-added rows fragmenting a novel that ALSO has its own
+// properly-harvested /fandom/lordofthemysteries row — this quick-add path
+// creating a ninth fragment would make that worse, not better.
+//
+// Grouped by (series title with the ", Volume N: Subtitle" suffix
+// stripped, lowercased) + author — the same title-normalizing instinct
+// similarRows() already uses for near-duplicate detection elsewhere on
+// this page. Only Fandom-sourced rows are grouped: Open Library and
+// Google Books already return one row per real edition, and merging THOSE
+// by a shared prefix would hide a real different book with a similar name.
+// DOUBLE BACKSLASHES, deliberately (\\s not \s) — same reason as
+// titleTokens()'s /\\s+/ below: this whole file is a string inside the
+// OUTER template literal that is page()'s return value, and a single \s
+// or \d there is not a recognised JS string escape, so the outer parser
+// silently drops the backslash — confirmed by extracting the emitted
+// script and finding the pattern's \s and \d had become bare letters s
+// and d, matching literal characters instead of whitespace/digits and
+// never firing on a real title.
+const _VOLUME_SUFFIX = /,?\\s*(?:vol(?:ume)?|book|part)\\.?\\s*\\d+\\s*:?.*$/i;
+
+function groupSearchResults(results){
+  const groups = new Map();
+  const out = [];
+  for (const r of results){
+    const isFandom = r.source === "fandom" || r.source === "fandom_series";
+    if (!isFandom){ out.push(r); continue; }
+    const series = (r.title || "").replace(_VOLUME_SUFFIX, "").trim() || r.title;
+    const key = series.toLowerCase() + "\\u0000" + (r.author || "").toLowerCase();
+    const g = groups.get(key);
+    if (g){ g.volumes += 1; if (!g.cover_url && r.cover_url) g.cover_url = r.cover_url; }
+    else {
+      const merged = Object.assign({}, r, {title: series, volumes: 1});
+      groups.set(key, merged);
+      out.push(merged);
+    }
+  }
+  return out;
+}
+
 async function runAddSearch(q){
   const status = document.getElementById("addSearchStatus");
   const host = document.getElementById("addResults");
   if (!q.trim()){ host.innerHTML = ""; status.textContent = ""; return; }
+  // STALE RESPONSES MUST NEVER OVERWRITE A NEWER ONE. Reported directly:
+  // typing "circle of inevitability" showed "results with no relation to
+  // the novel" — reproduced by querying the live search API with partial
+  // prefixes ("circle", "circle of ine…") typed along the way: those DO
+  // return real but unrelated Open Library noise (the Fandom catalog only
+  // matches the full series name), and with a plain debounce and no
+  // ordering guard, a slower response to an EARLIER partial query could
+  // resolve after the correct final one and silently replace it on
+  // screen. A monotonic ticket, checked before rendering, is the fix —
+  // the same shape as any fetch-race guard, just not one this page had.
+  const ticket = ++runAddSearch._ticket;
   status.textContent = "Searching Fandom, Open Library and Google Books…";
   try {
-    const results = await post("/api/book/search", {q});
-    host.innerHTML = (results || []).slice(0, 12).map((r, i) => {
+    const raw = await post("/api/book/search", {q});
+    if (ticket !== runAddSearch._ticket) return;   // superseded — drop it
+    const results = groupSearchResults(raw || []);
+    host.innerHTML = results.slice(0, 12).map((r, i) => {
       const src = r.source === "fandom" || r.source === "fandom_series" ? "Fandom"
         : r.source === "open_library" ? "Open Library"
         : r.source === "google_books" ? "Google Books" : (r.source || "?");
+      const vols = r.volumes > 1
+        ? '<span class="badge" title="Grouped from ' + r.volumes + ' Fandom volume rows into one '
+          + 'candidate. Adding it makes ONE thin row for the whole series \\u2014 for full '
+          + 'per-chapter grounding, run the offline Fandom harvest instead.">'
+          + r.volumes + " volumes</span>" : "";
       return '<div class="sg"><div class="sg-head"><span class="sg-reason">'
-        + esc(r.title) + "</span>" + '<span class="badge">' + esc(src) + "</span>"
+        + esc(r.title) + "</span>" + '<span class="badge">' + esc(src) + "</span>" + vols
         + (r.published_year ? '<span class="sg-when">' + esc(r.published_year) + "</span>" : "")
         + "</div><p>" + esc(r.author || "unknown author") + "</p>"
         + '<button class="act ghost addUse" data-i="' + i + '">Use this one</button></div>';
     }).join("") || '<p class="status">No matches in any source.</p>';
-    status.textContent = (results || []).length + " result(s)";
-    host.dataset.results = JSON.stringify(results || []);
+    status.textContent = results.length + " result(s)";
+    host.dataset.results = JSON.stringify(results);
   } catch (err) {
+    if (ticket !== runAddSearch._ticket) return;
     status.textContent = "Search failed: " + String(err.message || err);
   }
 }
+runAddSearch._ticket = 0;
 
 let addSearchTimer = null;
 document.getElementById("addSearch").addEventListener("input", (e) => {
