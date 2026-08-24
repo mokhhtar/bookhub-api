@@ -84,6 +84,23 @@ CORRECTIONS: dict[str, dict] = {
 # same "one file, both readers" reasoning as `exclusions.py`'s
 # `excluded.json`. It is layered ON TOP of the hand-curated dict here,
 # never replacing it.
+#
+# TWO WRITERS, AND THE SECOND ONE SETS DIFFERENT FIELDS.
+# `/akinator/admin/correction` is restricted to `first_publish_year` and
+# deliberately stays that narrow. `/akinator/admin/authors/link` writes
+# `author_name` and `author_key` here, because saying who a book is BY is
+# exactly a correction to the source row: `AuthorIndex` groups on those two
+# fields, `book_traits()` looks Wikidata up by `author_key`, and
+# `author:prolific` counts by it. A synced `/site/` row carries no author
+# key at all by construction, so this file is the only place one can be
+# attached — and going through the correction mechanism means the next
+# build reaches the conclusion ITSELF, rather than depending forever on the
+# per-cell clamps `link` also writes for immediate effect.
+#
+# Order still matters and still holds: `apply_corrections` runs after the
+# /site/ and /fandom/ supplements in `build_matrix.load_corpus`, which is
+# before `build_books` — so the corrected author reaches AuthorIndex and
+# the trait join, not just the printed name.
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ADMIN_CORRECTIONS_PATH = os.path.abspath(os.path.join(
     REPO_ROOT, "..", "bookhub", "games", "data", "akinator", "admin_corrections.json"))

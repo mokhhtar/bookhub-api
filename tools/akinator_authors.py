@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import urllib.parse
 import urllib.request
 
@@ -56,9 +57,23 @@ from tools.akinator_admin import (                                # noqa: E402
     ARTIFACT_DIR,
     _commit_files,
     _dump,
+    _dump_shipped,
     _get_json,
     _require_admin,
 )
+# The clamp bounds and the shipped-matrix reader, imported rather than
+# rebuilt. `link` writes the SAME 0.90/0.15 a hand verdict writes on the
+# Edit-a-book tab, and reads what the game currently answers about an
+# author out of the same matrix the drain reads — a second copy of either
+# would be a second thing to keep in step with features.py.
+from tools.akinator_drain import (                                # noqa: E402
+    CLAMP_HIGH,
+    CLAMP_LOW,
+    LOCKED_PATH,
+    OVERRIDES_PATH,
+    _load_locked,
+)
+from tools.akinator_learn import _book_states                     # noqa: E402
 
 # Importing tools.akinator_admin above is what puts scripts/akinator on
 # sys.path, so these two resolve. Stated rather than repeated: a second path
@@ -71,6 +86,19 @@ log = logging.getLogger("bookhub-api.akinator_authors")
 
 AUTHOR_OVERRIDES_PATH = f"{ARTIFACT_DIR}/author_overrides.json"
 AUTHORS_PATH = f"{ARTIFACT_DIR}/authors.json"
+BOOKS_PATH = f"{ARTIFACT_DIR}/books.json"
+ADMIN_CORRECTIONS_PATH = f"{ARTIFACT_DIR}/admin_corrections.json"
+DISPLAY_PATH = f"{ARTIFACT_DIR}/display_overrides.json"
+
+_WORK_KEY = re.compile(r"^/(?:works|site|fandom)/[A-Za-z0-9_-]{1,200}$")
+
+# `author:prolific` is NEVER written live by `link`, and the reason is the
+# same one that keeps it out of the "copy from Wikidata" action: it is not a
+# fact about the author, it is `book_count >= 5` over OUR corpus, recomputed
+# at every build. A clamp in overrides.json survives rebuilds — the page
+# applies it over the matrix at play time — so writing it would freeze a
+# number that is supposed to move as the author gains books.
+_NEVER_LIVE = {"author:prolific"}
 
 OL_AUTHOR_SEARCH = "https://openlibrary.org/search/authors.json"
 UA = "Litheca/1.0 (https://litheca.com; hello@litheca.com)"
@@ -319,6 +347,14 @@ class SaveRequest(BaseModel):
     facts: dict[str, bool | None] | None = None
     aliases: list[str] | None = None
     add_aliases: list[str] | None = None
+    # Keep an entry that holds nothing yet. A profile with no facts and no
+    # aliases is how an author becomes PICKABLE before they have a book —
+    # the Add-a-book form will not accept an author who has no profile, so
+    # there has to be a way to create one first. It changes no artifact:
+    # `load_overrides` keeps it, `alias_index` skips it, `facts_for` returns
+    # nothing for it. It is a roster entry, not a new identity — the key is
+    # still exactly what AuthorIndex computes.
+    declare: bool = False
     note: str = Field(default="", max_length=200)
 
 
@@ -441,12 +477,14 @@ def save(body: SaveRequest):
                             {AO.name_key(x) for x in aliases}]
         aliases = _clean_aliases(merged, key, current, shipped_names)
 
-    if facts or aliases:
+    if facts or aliases or body.declare:
         current[key] = {"facts": facts, "aliases": aliases}
     else:
         # An empty entry is not a correction, it is clutter that makes the
         # file look like it says something. Same reasoning as /display
-        # dropping a work key whose overrides were all cleared.
+        # dropping a work key whose overrides were all cleared — unless it
+        # was DECLARED, in which case emptiness is the point: it says an
+        # author exists and has been reviewed, nothing more.
         current.pop(key, None)
 
     note = f" — {body.note}" if body.note else ""
@@ -469,4 +507,193 @@ def save(body: SaveRequest):
         "note": "facts feed matrix bits and aliases feed the author grouping; "
                 "only a local build_matrix.py run recomputes either. Merging "
                 "does not rewrite a book count already exported.",
+    }
+
+
+# ── POST /akinator/admin/authors/link ────────────────────────────────────
+
+class LinkRequest(BaseModel):
+    key: str = Field(..., max_length=180)
+    work_key: str = Field(..., max_length=220)
+    note: str = Field(default="", max_length=200)
+
+
+def _author_facts_now(key: str, lead_book: str | None,
+                      overrides: dict) -> tuple[dict[str, bool], dict[str, str]]:
+    """What the game knows about this author, and where each answer came from.
+
+    READ OUT OF THE SHIPPED MATRIX, not out of Wikidata. A book by this
+    author already carries the `author:*` cells the last build computed —
+    which is Wikidata's answer, already resolved, already through
+    `traits_for`'s rules about ambiguous death dates. Asking Wikidata again
+    here would add a network call whose reachability from Render is
+    unproven, to re-derive something the artifact already states.
+
+    `_book_states` omits unknown cells rather than returning a third value,
+    which is exactly right: an author nobody matched has nothing to
+    propagate, and writing a clamp for a cell that asserts nothing would
+    turn a gap into a claim.
+
+    The hand-set overlay wins, as everywhere else — and `null` there means
+    "back to unknown", so it REMOVES a fact rather than adding one.
+    """
+    facts: dict[str, bool] = {}
+    source: dict[str, str] = {}
+    if lead_book:
+        for qid, value in (_book_states(lead_book) or {}).items():
+            if qid.startswith("author:") and qid not in _NEVER_LIVE:
+                facts[qid] = value
+                source[qid] = "the shipped matrix"
+    entry = overrides.get(key)
+    for qid, value in ((entry or {}).get("facts") or {}).items():
+        if not qid.startswith("author:") or qid in _NEVER_LIVE:
+            continue
+        if value is None:
+            facts.pop(qid, None)          # a verdict of "back to unknown"
+            source.pop(qid, None)
+        elif isinstance(value, bool):
+            facts[qid] = value
+            source[qid] = "your overlay"
+    return facts, source
+
+
+@admin_router.post("/link")
+def link(body: LinkRequest):
+    """Say who a book is BY, and put that author's answers on it now.
+
+    THREE FILES, ONE COMMIT, THREE DIFFERENT LANDING TIMES — stated in the
+    response rather than left to be inferred, the same discipline the rest
+    of this page keeps:
+
+        display_overrides.json  instant   the reveal prints the new name
+        overrides.json          instant   the author's known answers, at the
+                                          same 0.90/0.15 a hand verdict
+                                          writes, held from the drain
+        admin_corrections.json  next      author_name/author_key on the
+                                rebuild   corpus row, so the NEXT build
+                                          reaches the same conclusion by
+                                          itself instead of depending on the
+                                          clamps above
+
+    THAT THIRD FILE IS THE POINT. Without it the link is a set of frozen
+    cells that a rebuild would silently contradict. With it, `AuthorIndex`
+    groups the book under the right author, `book_traits` gives it that
+    author's Wikidata facts, and the row counts toward `author:prolific` —
+    all recomputed from source, which is what makes the clamps disposable
+    later rather than load-bearing forever.
+
+    `author:prolific` is deliberately never among the clamps; see
+    `_NEVER_LIVE`.
+    """
+    key = body.key.strip()
+    if not AO.is_valid_key(key):
+        raise HTTPException(status_code=400, detail="malformed author key")
+    if not _WORK_KEY.match(body.work_key):
+        raise HTTPException(status_code=400, detail="malformed work key")
+
+    books, _ = _get_json(BOOKS_PATH, None)
+    if not isinstance(books, list):
+        raise HTTPException(status_code=502, detail="live books.json unreadable")
+    row = next((b for b in books if b.get("k") == body.work_key), None)
+    if row is None:
+        # A link keyed to nothing is invisible forever — the same refusal
+        # /display makes for the same reason.
+        raise HTTPException(status_code=404,
+                            detail="no such book in the shipped game")
+
+    listed, per_book, shipped_names = _shipped()
+    name = shipped_names.get(key) or (key[5:] if key.startswith("name:") else "")
+    if not name:
+        raise HTTPException(
+            status_code=400,
+            detail="that author has no name we can put on a book — open their "
+                   "profile and give them one, or pick an author who has books")
+    ol_key = None if key.startswith("name:") else key
+
+    # A book by this author that ALREADY carries their answers. Their own
+    # book, never the one being linked: reading the target would propagate
+    # whatever it happens to say back onto itself.
+    lead = None
+    for i, ids in enumerate(per_book):
+        if ids and ids[0] == key and i < len(books) \
+                and books[i].get("k") != body.work_key:
+            lead = books[i].get("k")
+            break
+
+    raw_ov, _ = _get_json(AUTHOR_OVERRIDES_PATH, {})
+    facts, source = _author_facts_now(
+        key, lead, raw_ov if isinstance(raw_ov, dict) else {})
+
+    files: dict[str, bytes] = {}
+
+    # 1. durable: the corpus row itself, at the next rebuild
+    corrections, _ = _get_json(ADMIN_CORRECTIONS_PATH, {})
+    if not isinstance(corrections, dict):
+        corrections = {}
+    entry = dict(corrections.get(body.work_key) or {})
+    previous = entry.get("author_name")
+    entry["author_name"] = [name]
+    entry["author_key"] = [ol_key] if ol_key else []
+    corrections[body.work_key] = entry
+    files[ADMIN_CORRECTIONS_PATH] = _dump(corrections)
+
+    # 2. instant: what the reveal prints
+    display, _ = _get_json(DISPLAY_PATH, {})
+    if not isinstance(display, dict):
+        display = {}
+    renamed = False
+    if (row.get("a") or "") != name:
+        d = dict(display.get(body.work_key) or {})
+        d["a"] = name
+        display[body.work_key] = d
+        files[DISPLAY_PATH] = _dump(display)
+        renamed = True
+
+    # 3. instant: the author's answers, as clamps the drain will not touch
+    raw, _ = _get_json(OVERRIDES_PATH, {})
+    live = raw if isinstance(raw, dict) else {}
+    locked = _load_locked()
+    if facts:
+        cells = dict(live.get(body.work_key) or {})
+        held = list(locked.get(body.work_key) or [])
+        for qid, value in facts.items():
+            cells[qid] = CLAMP_HIGH if value else CLAMP_LOW
+            if qid not in held:
+                held.append(qid)
+        live[body.work_key] = cells
+        locked[body.work_key] = held
+        files[OVERRIDES_PATH] = _dump_shipped(live)
+        files[LOCKED_PATH] = _dump(locked)
+
+    note = f" — {body.note}" if body.note else ""
+    wrote = _commit_files(
+        files,
+        f"mind reader admin: {body.work_key} is by {name} "
+        f"({key}), {len(facts)} answer(s) applied{note}")
+    if not wrote:
+        raise HTTPException(status_code=502, detail="commit failed")
+
+    return {
+        "ok": True,
+        "work_key": body.work_key,
+        "key": key,
+        "author": name,
+        "previous_author": (previous or [row.get("a")])[0] if previous or row.get("a") else None,
+        "renamed": renamed,
+        "applied": {q: (CLAMP_HIGH if v else CLAMP_LOW) for q, v in facts.items()},
+        "sources": source,
+        "from_book": lead,
+        "effect": "the name and the answers are instant; who the book is BY "
+                  "lands at the next full build_matrix.py run",
+        "note": (
+            "No answers were applied: the game asserts nothing about this "
+            "author yet, and a gap must not become a claim. Give them facts "
+            "on their profile and link again."
+            if not facts else
+            f"{len(facts)} answer(s) written at the same 0.90/0.15 a hand "
+            f"verdict writes, and held against the nightly drain. They stay "
+            f"until cleared, so a rebuild will not move them — clear them on "
+            f"the Edit-a-book tab once a rebuild has recomputed the row from "
+            f"admin_corrections.json. author:prolific is never written this "
+            f"way: it counts our own corpus and must stay free to move."),
     }
