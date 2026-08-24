@@ -139,7 +139,39 @@ td.title{white-space:normal;min-width:220px}
    forces the whole row wide under the generic nowrap rule above, and the
    Yes/No/Unknown buttons end up a horizontal scroll away from the question
    they answer. Capped at 320px so a short question does not sprawl either. */
-td.q{white-space:normal;max-width:320px}
+/* THREE SEPARATE FIXES, found empirically one at a time in a real browser —
+   each looked sufficient until measured, and was not:
+   1. td.q{white-space:normal} makes the question text itself wrap. On its
+      own this only fixed that one cell; the ROW stayed 1967px wide because
+      the other three columns still claimed unlimited space.
+   2. table.qtable{table-layout:fixed} + explicit column percentages caps
+      every column — but percentages are meaningless without #3.
+   3. The Authors tab embeds this table's whole card inside a bare
+      <td colspan="5"> (see auEdit below), which matches the page's generic
+      th,td{white-space:nowrap} rule. white-space INHERITS, so every
+      descendant — the book-titles summary line, the aliases label, the
+      "Attaching writes…" note — was nowrap too. Most of them happened to
+      be short enough to fit on one unwrapped line and looked fine, which is
+      exactly how this hid until a long paragraph exposed it (see td.auEditCell). */
+table.qtable{table-layout:fixed;width:100%}
+td.q{white-space:normal}
+/* The buttons cell (class="row qa") can genuinely need two lines — Yes /
+   No / Unknown / Clear in a ~28%-wide fixed column. .row's flex is nowrap
+   everywhere else it is used on this page (search toolbars, the Books
+   tab's per-row actions) and stays that way; qa adds wrapping only where
+   it is also present, rather than changing what .row means everywhere. */
+td.qa{flex-wrap:wrap}
+/* Fix #3 above, and the one that actually mattered most: without this, the
+   ENTIRE inline author editor — not just its question table — silently
+   inherits nowrap from the generic td rule. */
+td.auEditCell{white-space:normal}
+/* The books/authors LIST table (id=auRows's own <table>) is table-layout:
+   auto by default, which lets a colspan=5 cell's content dictate the whole
+   table's width — auto layout treats an explicit width as a MINIMUM, not a
+   cap, when a cell's content cannot be compressed further. Scoped to this
+   one table only: the books table on the other tab must keep sizing to its
+   (much simpler) content. */
+table.qhost{table-layout:fixed}
 .badge{font-size:11px;font-weight:600;padding:1px 7px;border-radius:3px;background:var(--line)}
 .badge.off{color:var(--work)}
 .badge.dup{color:var(--wait);cursor:pointer;border:1px solid transparent}
@@ -268,7 +300,9 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
   </div>
   <div id="auNewBox"></div>
   <div id="auDupes"></div>
-  <div class="scroll"><table>
+  <div class="scroll"><table class="qhost">
+    <colgroup><col style="width:32%"><col style="width:20%"><col style="width:10%">
+    <col style="width:20%"><col style="width:18%"></colgroup>
     <thead><tr><th>Author</th><th>Identity</th><th>Books</th><th>Overlay</th><th></th></tr></thead>
     <tbody id="auRows"><tr><td colspan="5">Loading…</td></tr></tbody>
   </table></div>
@@ -833,7 +867,7 @@ function renderEditPanel(i){
     }
     return "<tr><td class=\\"q\\">" + esc(q.text) + '<br><span class="sg-none">' + esc(q.id) + "</span></td>"
       + "<td>" + table + "</td><td>" + cur + "</td>"
-      + '<td class="row">'
+      + '<td class="row qa">'
       + '<button class="act ghost edSet" data-q="' + esc(q.id) + '" data-v="yes">Yes</button>'
       + '<button class="act ghost edSet" data-q="' + esc(q.id) + '" data-v="no">No</button>'
       + (o === undefined ? ""
@@ -873,7 +907,9 @@ function renderEditPanel(i){
     + '<button class="act ghost" id="edSaveYear">Queue the year</button>'
     + '<p class="effect">NOT instant. A year feeds a matrix bit that only a local '
     + "build_matrix.py run recomputes — everything else on this page is live.</p></div>"
-    + '<div class="scroll"><table><thead><tr><th>Question</th><th>Table says</th>'
+    + '<div class="scroll"><table class="qtable"><colgroup><col style="width:42%">'
+    + '<col style="width:15%"><col style="width:15%"><col style="width:28%"></colgroup>'
+    + "<thead><tr><th>Question</th><th>Table says</th>"
     + "<th>Override</th><th></th></tr></thead><tbody>" + rows + "</tbody></table></div>";
 
   document.getElementById("edSaveName").addEventListener("click", async () => {
@@ -1275,7 +1311,8 @@ function renderAuthors(filter){
     // meant scrolling away from the author you were editing to see the
     // form — and no way to tell which of 3,941 names it was about.
     return open
-      ? head + '<tr class="auEdit"><td colspan="5">' + authorPanelHtml(p.id) + "</td></tr>"
+      ? head + '<tr class="auEdit"><td class="auEditCell" colspan="5">'
+        + authorPanelHtml(p.id) + "</td></tr>"
       : head;
   }).join("") || '<tr><td colspan="5">No match.</td></tr>';
 }
@@ -1380,7 +1417,7 @@ function authorPanelHtml(id){
       + (q.retired ? ' <span class="badge">retired</span>' : "")
       + '<br><span class="sg-none">' + esc(q.id) + "</span></td>"
       + "<td>" + table + "</td><td>" + cur + "</td>"
-      + '<td class="row">' + btn("yes", "Yes") + btn("no", "No")
+      + '<td class="row qa">' + btn("yes", "Yes") + btn("no", "No")
       + btn("unknown", "Unknown")
       + (has ? '<button class="act ghost auSet" data-q="' + esc(q.id)
                + '" data-v="clear">Clear</button>' : "") + "</td></tr>";
@@ -1397,7 +1434,9 @@ function authorPanelHtml(id){
     + '<div class="field"><label>Aliases \\u2014 other spellings that fold into this author, '
       + "comma-separated. Only consulted for a book with no Open Library key.</label>"
       + '<input type="text" class="auAliases" value="' + esc(auDraft.aliases.join(", ")) + '"></div>'
-    + '<div class="scroll"><table><thead><tr><th>Question</th>'
+    + '<div class="scroll"><table class="qtable"><colgroup><col style="width:42%">'
+      + '<col style="width:15%"><col style="width:15%"><col style="width:28%"></colgroup>'
+      + "<thead><tr><th>Question</th>"
       + "<th>The game says today</th><th>Your overlay</th><th></th></tr></thead><tbody>"
       + rows + "</tbody></table></div>"
     + '<div class="row" style="margin-top:12px">'
