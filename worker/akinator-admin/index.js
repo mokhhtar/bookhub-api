@@ -115,6 +115,9 @@ const ROUTES = {
   "/api/suggestions/theme": relay("/akinator/admin/suggestions/theme"),
   "/api/taught": relay("/akinator/admin/taught"),
   "/api/taught/apply": relay("/akinator/admin/taught/apply"),
+  // One commit for every reviewed question on the Edit-a-book tab, instead
+  // of one per Yes/No/Clear click — see akinator_drain.py's apply_taught_batch.
+  "/api/taught/apply_batch": relay("/akinator/admin/taught/apply_batch"),
   // Verdicts on scripts/akinator/propose_questions.py's mined candidates —
   // the candidates themselves are read straight off question_candidates.json
   // by the client, same as books.json/questions.json; only the decision
@@ -318,12 +321,16 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
 
 <section id="edit">
   <p class="sub" style="margin-bottom:14px">Everything about one book on one screen. Title and author change what the
-  reveal PRINTS and take effect as soon as GitHub Pages redeploys. Each question below writes the same verified bound a
-  catalogued fact gets (0.90 / 0.15) straight into overrides.json, and is then held against the nightly drain until you
-  clear it. The year is the exception and says so: it feeds a matrix bit only a full rebuild recomputes.</p>
+  reveal PRINTS and take effect as soon as GitHub Pages redeploys. Questions edit a DRAFT — nothing is written
+  until Save, which writes every reviewed answer in ONE commit at the same verified bound a catalogued fact gets
+  (0.90 / 0.15), then held against the nightly drain until cleared. The year is the exception and says so: it feeds a
+  matrix bit only a full rebuild recomputes.</p>
   <input type="search" id="edSearch" placeholder="Find a book by title or author…">
-  <div id="edPick"></div>
-  <div id="edPanel"></div>
+  <div class="scroll"><table class="qhost">
+    <colgroup><col style="width:44%"><col style="width:26%"><col style="width:12%"><col style="width:18%"></colgroup>
+    <thead><tr><th>Title</th><th>Author</th><th>Year</th><th></th></tr></thead>
+    <tbody id="edRows"></tbody>
+  </table></div>
   <p class="status" id="edStatus"></p>
 </section>
 
@@ -1193,9 +1200,54 @@ function cellState(bookIndex, qIndex){
   return (matrix[off + (qIndex >> 2)] >> ((qIndex & 3) * 2)) & 3;
 }
 
-function renderEditPanel(i){
-  const b = books[i], host = document.getElementById("edPanel");
-  const ov = overrides[b.k] || {};
+// ── the book editor: same shape as the Authors tab's, on purpose ─────────
+//
+// IT USED TO SAVE ON EVERY BUTTON — same failure the Authors tab's editor
+// had before this session, for the same reason: setting a handful of
+// answers meant a handful of commits and a handful of waits for "effect:
+// held against the nightly drain" before the next click could be trusted.
+// So this is the same fix, in the same shape: a DRAFT held in the page
+// (edDraft, whose owner is edOpenKey), redrawn instantly, committed once
+// via POST /taught/apply_batch (new this session — see akinator_drain.py).
+// And the editor opens INSIDE the results table, in the row under the
+// book it belongs to, rather than in a panel scrolled away from a list of
+// up to 30 matches — the exact inline-embedding the Authors tab already
+// moved to and the same reason: no way to tell which row a separate panel
+// was about.
+let edOpenKey = null, edDraft = null;
+
+// {question id: true|false}, ONLY for cells with a genuine hand-verdict
+// clamp (0.90/0.15) — a mid-range value is the drain's own guess from play
+// data, not a prior decision to diff a draft against, so it is left out of
+// both the seed and the dirty count entirely (see editPanelHtml's "learned
+// from play" branch for where it is still shown).
+function edCommitted(key){
+  const ov = overrides[key] || {};
+  const out = {};
+  Object.keys(ov).forEach((qid) => {
+    if (ov[qid] >= 0.9) out[qid] = true;
+    else if (ov[qid] <= 0.15) out[qid] = false;
+  });
+  return out;
+}
+
+function edDirtyCount(){
+  if (!edDraft || edOpenKey == null) return 0;
+  const committed = edCommitted(edOpenKey);
+  let n = 0;
+  new Set([...Object.keys(committed), ...Object.keys(edDraft)]).forEach((q) => {
+    const a = Object.prototype.hasOwnProperty.call(committed, q) ? committed[q] : "\\u2205";
+    const b = Object.prototype.hasOwnProperty.call(edDraft, q) ? edDraft[q] : "\\u2205";
+    if (a !== b) n++;
+  });
+  return n;
+}
+
+function edOpen(key){ edOpenKey = key; edDraft = edCommitted(key); }
+function edClose(){ edOpenKey = null; edDraft = null; }
+
+function editPanelHtml(i){
+  const b = books[i], key = b.k;
   const rows = questions.map((q, qi) => {
     const st = cellState(i, qi);
     // Three states, and "unknown" is NOT "no". The table asserting nothing
@@ -1203,36 +1255,36 @@ function renderEditPanel(i){
     const table = st === 1 ? '<span class="sg-new">yes</span>'
       : st === 0 ? "no"
       : '<span class="sg-none">no record</span>';
-    // A PROBABILITY IS NOT AN ANSWER. This read "set by hand: 0.9", which
-    // tells the owner what got written and not what the game now believes —
-    // and next time they open the book they cannot tell whether they had
-    // said yes or no. 0.90 and 0.15 are the two clamp bounds a hand verdict
-    // writes, so they map back to yes and no exactly; anything else came
-    // from the drain and IS a probability, so it is labelled as learned
-    // rather than dressed up as a verdict.
-    const o = ov[q.id];
-    let cur = "";
-    if (o !== undefined) {
-      cur = o >= 0.9 ? '<span class="badge off">set by hand: YES</span>'
-          : o <= 0.15 ? '<span class="badge off">set by hand: NO</span>'
-          : '<span class="badge">learned from play: ' + esc(o) + "</span>";
-      cur += ' <span class="sg-none">(' + esc(o) + ")</span>";
-    }
+    const has = Object.prototype.hasOwnProperty.call(edDraft, q.id);
+    const v = has ? edDraft[q.id] : undefined;
+    const o = (overrides[key] || {})[q.id];
+    const hadCommitted = o !== undefined;
+    // A PROBABILITY IS NOT AN ANSWER. 0.90/0.15 are the two clamp bounds a
+    // hand verdict writes, so they map back to yes/no exactly; anything
+    // else came from the drain and IS a probability, labelled as learned
+    // rather than dressed up as a verdict the draft could diff against.
+    let cur;
+    if (has) cur = v === true ? '<span class="badge off">YES</span>' : '<span class="badge off">NO</span>';
+    else if (hadCommitted && o > 0.15 && o < 0.9)
+      cur = '<span class="badge">learned from play: ' + esc(o) + "</span>";
+    else cur = '<span class="sg-none">\\u2014</span>';
+    const on = (val) => (has && ((val === "yes" && v === true) || (val === "no" && v === false)))
+      ? "act" : "act ghost";
+    const btn = (val, label) => '<button class="' + on(val) + ' edSet" data-q="'
+      + esc(q.id) + '" data-v="' + val + '">' + label + "</button>";
     return "<tr><td class=\\"q\\">" + esc(q.text) + '<br><span class="sg-none">' + esc(q.id) + "</span></td>"
       + "<td>" + table + "</td><td>" + cur + "</td>"
-      + '<td class="row qa">'
-      + '<button class="act ghost edSet" data-q="' + esc(q.id) + '" data-v="yes">Yes</button>'
-      + '<button class="act ghost edSet" data-q="' + esc(q.id) + '" data-v="no">No</button>'
-      + (o === undefined ? ""
-         : '<button class="act ghost edSet" data-q="' + esc(q.id) + '" data-v="clear">Clear</button>')
+      + '<td class="row qa">' + btn("yes", "Yes") + btn("no", "No")
+      + ((has || hadCommitted) ? '<button class="act ghost edSet" data-q="' + esc(q.id)
+          + '" data-v="clear">Clear</button>' : "")
       + "</td></tr>";
   }).join("");
 
-  host.innerHTML =
-    '<div class="card" style="max-width:none;margin-bottom:14px" data-key="' + esc(b.k) + '">'
+  const dirty = edDirtyCount();
+  return '<div class="card" style="max-width:none;margin:4px 0" data-key="' + esc(key) + '">'
     + '<div class="field"><label>Title shown to the player</label>'
-      + '<input type="text" id="edTitle" value="' + esc(b.t) + '"></div>'
-    + '<button class="act" id="edSaveName">Save the title</button>'
+      + '<input type="text" class="edTitle" value="' + esc(b.t) + '"></div>'
+    + '<button class="act ghost edSaveName">Save the title</button>'
     + '<p class="effect">Changes only what the reveal prints. No question and no '
     + "matrix bit reads it.</p>"
     // THE AUTHOR IS NOT A TEXT FIELD ANY MORE. It used to be, next to the
@@ -1244,10 +1296,10 @@ function renderEditPanel(i){
     // rebuild, in one commit.
     + '<div class="field" style="margin-top:16px"><label>Author \\u2014 pick one the game '
       + "already holds. Attaching changes who the book is BY, not just what is printed."
-      + "</label><input type=\\"text\\" id=\\"edAuthor\\" list=\\"authorNames\\" "
+      + '</label><input type="text" class="edAuthor" list="authorNames" '
       + 'autocomplete="off" value="' + esc(b.a || "") + '">'
-      + '<p class="effect" id="edAuthorNote"></p></div>'
-    + '<button class="act ghost" id="edLinkAuthor">Attach this book to that author</button>'
+      + '<p class="effect edAuthorNote"></p></div>'
+    + '<button class="act ghost edLinkAuthor">Attach this book to that author</button>'
     + '<p class="effect">The name and the author\\u2019s known answers are instant; who the '
     + "book is BY lands at the next full build_matrix.py run, from "
     + "admin_corrections.json. Not on the list? Create the profile on the Authors tab "
@@ -1255,44 +1307,154 @@ function renderEditPanel(i){
     + "</p>"
     + '<div class="field" style="margin-top:16px"><label>First published '
       + "(feeds six era questions)</label>"
-      + '<input type="text" id="edYear" inputmode="numeric" style="width:120px" value="'
+      + '<input type="text" class="edYear" inputmode="numeric" style="width:120px" value="'
       + esc(b.y == null ? "" : b.y) + '"></div>'
-    + '<button class="act ghost" id="edSaveYear">Queue the year</button>'
+    + '<button class="act ghost edSaveYear">Queue the year</button>'
     + '<p class="effect">NOT instant. A year feeds a matrix bit that only a local '
-    + "build_matrix.py run recomputes — everything else on this page is live.</p></div>"
+    + "build_matrix.py run recomputes.</p>"
     + '<div class="scroll"><table class="qtable"><colgroup><col style="width:42%">'
     + '<col style="width:15%"><col style="width:15%"><col style="width:28%"></colgroup>'
     + "<thead><tr><th>Question</th><th>Table says</th>"
-    + "<th>Override</th><th></th></tr></thead><tbody>" + rows + "</tbody></table></div>";
+    + "<th>Override</th><th></th></tr></thead><tbody>" + rows + "</tbody></table></div>"
+    + '<div class="row" style="margin-top:12px">'
+      + '<button class="act edSave"' + (dirty ? "" : " disabled") + ">Save"
+      + (dirty ? " " + dirty + " change" + (dirty === 1 ? "" : "s") : " \\u2014 nothing changed")
+      + "</button>"
+      + '<button class="act ghost edRevert"' + (dirty ? "" : " disabled") + ">Discard</button>"
+      + "</div>"
+    + '<p class="effect">One commit for every question above, written the moment you click '
+    + "Save \\u2014 instant after that, same as before. Only the year above is different: it "
+    + "queues for the next rebuild.</p></div>";
+}
 
-  document.getElementById("edSaveName").addEventListener("click", async () => {
-    const title = document.getElementById("edTitle").value.trim();
+function renderEdRows(filter){
+  const rows = document.getElementById("edRows");
+  const f = (filter || "").toLowerCase();
+  let matching = f.length >= 2
+    ? books.map((b, i) => ({b, i})).filter(({b}) =>
+        (b.t || "").toLowerCase().includes(f) || (b.a || "").toLowerCase().includes(f))
+    : [];
+  // The open book stays visible even under a search that no longer
+  // matches it — an editor must not vanish out from under an admin
+  // mid-edit, same rule the Authors tab already keeps.
+  if (edOpenKey != null && !matching.some(({b}) => b.k === edOpenKey)) {
+    const oi = books.findIndex((b) => b.k === edOpenKey);
+    if (oi >= 0) matching.unshift({b: books[oi], i: oi});
+  }
+  if (!matching.length) {
+    rows.innerHTML = '<tr><td colspan="4">' +
+      (f.length >= 2 ? "No match." : "Type at least 2 characters to search.") + "</td></tr>";
+    return;
+  }
+  const shown = matching.slice(0, 30);
+  rows.innerHTML = shown.map(({b, i}) => {
+    const open = b.k === edOpenKey;
+    const head = "<tr><td class=\\"title\\">" + esc(b.t) + "</td><td>" + esc(b.a || "\\u2014")
+      + "</td><td>" + (b.y ?? "\\u2014") + '</td><td><button class="act ghost edOpenBtn" '
+      + 'data-i="' + i + '">' + (open ? "Close" : "Edit") + "</button></td></tr>";
+    return open
+      ? head + '<tr class="auEdit"><td class="auEditCell" colspan="4">'
+        + editPanelHtml(i) + "</td></tr>"
+      : head;
+  }).join("");
+}
+
+const edSearchBox = () => document.getElementById("edSearch");
+const edRedraw = () => renderEdRows(edSearchBox().value);
+
+document.getElementById("edSearch").addEventListener("input", edRedraw);
+
+document.getElementById("edRows").addEventListener("input", (e) => {
+  if (!e.target.classList.contains("edAuthor")) return;
+  const card = e.target.closest(".card");
+  const note = card.querySelector(".edAuthorNote");
+  const text = e.target.value.trim();
+  if (!text) { note.innerHTML = ""; return; }
+  const hit = authorByName(text);
+  note.innerHTML = hit
+    ? '<span class="sg-new">' + esc(hit.name) + "</span> \\u00b7 <code>" + esc(hit.id)
+      + "</code> \\u00b7 " + hit.books.length + (hit.books.length === 1 ? " book" : " books")
+    : '<span class="sg-over">No author by that name.</span> Create the profile on the '
+      + "Authors tab first.";
+});
+
+document.getElementById("edRows").addEventListener("click", async (e) => {
+  if (e.target.classList.contains("edOpenBtn")) {
+    const i = +e.target.dataset.i, key = books[i].k;
+    const dirty = edDirtyCount();
+    if (edOpenKey === key) {
+      if (dirty && !confirm(dirty + " unsaved change(s) will be discarded. Close anyway?")) return;
+      edClose();
+    } else {
+      if (dirty && !confirm(dirty + " unsaved change(s) on the open book will be "
+          + "discarded. Switch anyway?")) return;
+      edOpen(key);
+    }
+    edRedraw();
+    return;
+  }
+
+  const card = e.target.closest(".card");
+  if (!card) return;
+  const key = card.dataset.key;
+  const i = books.findIndex((b) => b.k === key);
+
+  // Draft edits: no network, no commit, no wait — see the note above
+  // edOpenKey for why this used to be a POST per click.
+  if (e.target.classList.contains("edSet")) {
+    const q = e.target.dataset.q, v = e.target.dataset.v;
+    if (v === "clear") delete edDraft[q];
+    else edDraft[q] = v === "yes";
+    edRedraw();
+    return;
+  }
+
+  if (e.target.classList.contains("edRevert")) { edOpen(key); edRedraw(); return; }
+
+  if (e.target.classList.contains("edSave")) {
+    const n = edDirtyCount();
+    const committed = edCommitted(key);
+    const answers = {};
+    new Set([...Object.keys(committed), ...Object.keys(edDraft)]).forEach((qid) => {
+      const a = Object.prototype.hasOwnProperty.call(committed, qid) ? committed[qid] : undefined;
+      const b2 = Object.prototype.hasOwnProperty.call(edDraft, qid) ? edDraft[qid] : undefined;
+      if (a === b2) return;
+      answers[qid] = b2 === true ? "yes" : b2 === false ? "no" : "clear";
+    });
+    e.target.disabled = true;
+    setStatus("edStatus", "Writing\\u2026");
+    try {
+      const r = await post("/api/taught/apply_batch", {work_key: key, answers});
+      Object.entries(r.applied || {}).forEach(([qid, value]) => {
+        if (value == null) delete (overrides[key] || {})[qid];
+        else (overrides[key] = overrides[key] || {})[qid] = value;
+      });
+      edOpen(key); // resync the draft to what just committed
+      edRedraw();
+      setStatus("edStatus", n + " change" + (n === 1 ? "" : "s")
+        + " saved in one commit \\u2014 " + r.note, true);
+    } catch (err) {
+      setStatus("edStatus", String(err.message || err), false);
+      e.target.disabled = false;
+    }
+    return;
+  }
+
+  if (e.target.classList.contains("edSaveName")) {
+    const title = card.querySelector(".edTitle").value.trim();
     if (!title) { setStatus("edStatus", "a title cannot be blank", false); return; }
     try {
-      const r = await post("/api/display", {work_key: b.k, title});
+      const r = await post("/api/display", {work_key: key, title});
       books[i].t = title;
+      edRedraw();
       setStatus("edStatus", "Renamed for display — " + r.effect, true);
     } catch (err) { setStatus("edStatus", String(err.message || err), false); }
-  });
-
-  function edAuthorCheck(){
-    const note = document.getElementById("edAuthorNote");
-    const text = document.getElementById("edAuthor").value.trim();
-    if (!text){ note.innerHTML = ""; return null; }
-    const hit = authorByName(text);
-    note.innerHTML = hit
-      ? '<span class="sg-new">' + esc(hit.name) + "</span> \\u00b7 <code>" + esc(hit.id)
-        + "</code> \\u00b7 " + hit.books.length
-        + (hit.books.length === 1 ? " book" : " books")
-      : '<span class="sg-over">No author by that name.</span> Create the profile on the '
-        + "Authors tab first.";
-    return hit;
+    return;
   }
-  document.getElementById("edAuthor").addEventListener("input", edAuthorCheck);
-  edAuthorCheck();
 
-  document.getElementById("edLinkAuthor").addEventListener("click", async (e) => {
-    const who = edAuthorCheck();
+  if (e.target.classList.contains("edLinkAuthor")) {
+    const text = card.querySelector(".edAuthor").value.trim();
+    const who = authorByName(text);
     if (!who) {
       setStatus("edStatus", "pick an author the game already holds \\u2014 create the "
         + "profile on the Authors tab if there is none", false);
@@ -1301,68 +1463,30 @@ function renderEditPanel(i){
     e.target.disabled = true;
     setStatus("edStatus", "Attaching\\u2026");
     try {
-      const r = await post("/api/authors/link", {work_key: b.k, key: who.id});
+      const r = await post("/api/authors/link", {work_key: key, key: who.id});
       books[i].a = r.author;
       const n = Object.keys(r.applied || {}).length;
       buildAuthorRows();
       setStatus("edStatus", "Now by " + r.author + " \\u2014 "
         + (n ? n + " answer(s) live now" : "no answers to apply") + ". "
         + r.effect + " " + r.note, true);
-      renderEditPanel(i);
+      edRedraw();
     } catch (err) {
       setStatus("edStatus", String(err.message || err), false);
       e.target.disabled = false;
     }
-  });
+    return;
+  }
 
-  document.getElementById("edSaveYear").addEventListener("click", async () => {
-    const raw = document.getElementById("edYear").value.trim();
+  if (e.target.classList.contains("edSaveYear")) {
+    const raw = card.querySelector(".edYear").value.trim();
     if (!/^\\d{1,4}$/.test(raw)) { setStatus("edStatus", "a year, digits only", false); return; }
     try {
       const r = await post("/api/correction",
-        {work_key: b.k, field: "first_publish_year", value: parseInt(raw, 10)});
+        {work_key: key, field: "first_publish_year", value: parseInt(raw, 10)});
       setStatus("edStatus", "Year queued — " + r.effect, true);
     } catch (err) { setStatus("edStatus", String(err.message || err), false); }
-  });
-
-  host.querySelector(".scroll").addEventListener("click", async (e) => {
-    if (!e.target.classList.contains("edSet")) return;
-    const q = e.target.dataset.q, v = e.target.dataset.v;
-    e.target.closest("tr").querySelectorAll("button").forEach(x => { x.disabled = true; });
-    setStatus("edStatus", "Writing\\u2026");
-    try {
-      const r = await post("/api/taught/apply", {work_key: b.k, question_id: q, verdict: v});
-      if (r.value == null) { delete (overrides[b.k] || {})[q]; }
-      else { (overrides[b.k] = overrides[b.k] || {})[q] = r.value; }
-      setStatus("edStatus", (r.value == null ? "Cleared \\u2014 " : "Set to " + r.value + " \\u2014 ")
-        + r.note, true);
-      renderEditPanel(i);
-    } catch (err) {
-      setStatus("edStatus", String(err.message || err), false);
-      renderEditPanel(i);
-    }
-  });
-}
-
-document.getElementById("edSearch").addEventListener("input", (e) => {
-  const f = (e.target.value || "").toLowerCase();
-  const host = document.getElementById("edPick");
-  if (f.length < 2) { host.innerHTML = ""; return; }
-  const hits = books.map((b, i) => ({b, i}))
-    .filter(({b}) => (b.t || "").toLowerCase().includes(f)
-                  || (b.a || "").toLowerCase().includes(f)).slice(0, 12);
-  host.innerHTML = hits.length
-    ? '<div class="scroll"><table><tbody>' + hits.map(({b, i}) =>
-        '<tr><td class="title">' + esc(b.t) + "</td><td>" + esc(b.a || "\\u2014")
-        + "</td><td>" + (b.y ?? "\\u2014") + '</td><td><button class="act ghost edPickBtn" '
-        + 'data-i="' + i + '">Edit</button></td></tr>').join("") + "</tbody></table></div>"
-    : '<p class="status">No match.</p>';
-});
-
-document.getElementById("edPick").addEventListener("click", (e) => {
-  if (!e.target.classList.contains("edPickBtn")) return;
-  document.getElementById("edPick").innerHTML = "";
-  renderEditPanel(+e.target.dataset.i);
+  }
 });
 
 // ── authors: identity, and facts that fan out to a whole shelf ───────────
