@@ -364,6 +364,12 @@ class TaughtApply(BaseModel):
     verdict: str = Field(..., max_length=8)
 
 
+class TaughtApplyBatch(BaseModel):
+    work_key: str = Field(..., max_length=220)
+    # question_id -> "yes"|"no"|"clear", same vocabulary as TaughtApply.verdict.
+    answers: dict[str, str] = Field(..., max_length=200)
+
+
 # Its own router, under the SAME secret gate as every other admin write and
 # for the same reason recorded in akinator_admin: `_require_admin` as a
 # ROUTER dependency, because FastAPI resolves dependencies before it
@@ -464,6 +470,91 @@ def apply_taught(body: TaughtApply) -> dict:
             "note": ("returned to the matrix and to the drain"
                      if value is None else
                      "held against the nightly drain until you clear it")}
+
+
+@admin_router.post("/apply_batch")
+def apply_taught_batch(body: TaughtApplyBatch) -> dict:
+    """Write every reviewed cell for ONE book, in ONE commit.
+
+    Same rule and the same two files as `apply_taught` — this is that
+    function's body, unrolled over a dict instead of one (question_id,
+    verdict) pair, so the Edit-a-book tab can hold N reviewed questions in
+    a local draft and only ever commit once, the same "one decision, one
+    write" shape already built for the Authors tab's profile editor and
+    the Add-a-book review table. `apply_taught` itself is untouched and
+    still used by the reader-taught queue, which reviews one cell at a
+    time by construction and has no draft to batch.
+    """
+    import re as _re
+    if not _re.match(r"^/(?:works|site|fandom)/[A-Za-z0-9_-]{1,200}$", body.work_key):
+        raise HTTPException(status_code=400, detail="malformed work key")
+    if not body.answers:
+        raise HTTPException(status_code=400, detail="nothing to apply")
+    for qid, verdict in body.answers.items():
+        if not _re.match(r"^[a-z]+:[a-z0-9_]{1,40}$", qid):
+            raise HTTPException(status_code=400, detail=f"malformed question id: {qid!r}")
+        if verdict not in ("yes", "no", "clear"):
+            raise HTTPException(status_code=400,
+                                detail=f"verdict for {qid} must be yes, no or clear")
+
+    art = _artifacts()
+    live_ids = set(art.get("qids") or ())
+    bad_ids = sorted(set(body.answers) - live_ids) if live_ids else []
+    if bad_ids:
+        raise HTTPException(
+            status_code=404,
+            detail=f"not questions the game asks: {bad_ids}")
+
+    raw, _sha = _get_file(OVERRIDES_PATH)
+    try:
+        overrides = json.loads(raw.decode("utf-8")) if raw else {}
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=502,
+                            detail="existing overrides.json is unparseable")
+    if not isinstance(overrides, dict):
+        overrides = {}
+    locked = _load_locked()
+
+    applied: dict[str, float | None] = {}
+    held = locked.get(body.work_key, [])
+    for qid, verdict in body.answers.items():
+        if verdict == "clear":
+            overrides.get(body.work_key, {}).pop(qid, None)
+            held = [q for q in held if q != qid]
+            applied[qid] = None
+        else:
+            value = CLAMP_HIGH if verdict == "yes" else CLAMP_LOW
+            overrides.setdefault(body.work_key, {})[qid] = value
+            if qid not in held:
+                held.append(qid)
+            applied[qid] = value
+    if held:
+        locked[body.work_key] = held
+    else:
+        locked.pop(body.work_key, None)
+    if not overrides.get(body.work_key):
+        overrides.pop(body.work_key, None)
+
+    n = len(body.answers)
+    wrote = _commit_files({
+        OVERRIDES_PATH: json.dumps(overrides, ensure_ascii=False,
+                                   separators=(",", ":")).encode("utf-8"),
+        LOCKED_PATH: json.dumps(locked, ensure_ascii=False,
+                                indent=1).encode("utf-8"),
+    }, f"mind reader admin: {body.work_key} — {n} question(s) reviewed by hand")
+    if not wrote:
+        raise HTTPException(status_code=502, detail="commit failed")
+
+    # Same cosmetic cleanup as apply_taught, over every cell just decided.
+    cache.pipeline([["HDEL", COUNTS_PREFIX + body.work_key, f"{qid}:{a}"]
+                    for qid in body.answers
+                    for a in ("yes", "probably_yes", "unknown", "probably_no", "no")])
+
+    log.info("admin batch-set %s: %d question(s)", body.work_key, n)
+    return {"ok": True, "applied": applied,
+            "effect": "instant — the page reads overrides.json on load",
+            "note": f"{n} question(s) written in one commit and held against "
+                    f"the nightly drain until cleared"}
 
 
 @router.post("/drain")
