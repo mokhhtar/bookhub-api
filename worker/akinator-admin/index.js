@@ -137,9 +137,18 @@ const ROUTES = {
   // list is a relay rather than a plain litheca.com read because it also
   // needs live_count from wikis.json in the same response, and the two
   // files are hosted from bookhub, not this Worker's own domain.
-  "/api/fandom/candidates": relay("/akinator/admin/fandom/candidates"),
-  "/api/fandom/candidates/approve": relay("/akinator/admin/fandom/candidates/approve"),
-  "/api/fandom/candidates/reject": relay("/akinator/admin/fandom/candidates/reject"),
+  // tools/fandom_admin.py's router prefix is /fandom/admin, NOT
+  // /akinator/admin/... — this pointed at the wrong path on first write,
+  // caught by directly probing the live backend (403 vs 404) rather than
+  // trusting the harness test, which stubs the CLIENT's fetch and so never
+  // exercises what a relay actually points at. check.mjs cannot catch this
+  // class of bug either: it only proves a called path exists somewhere in
+  // ROUTES, not that ROUTES' own target matches a route the Python side
+  // serves — the same "verify the wiring, not just that wiring exists"
+  // lesson as the missing /api/display relay from 2026-08-20.
+  "/api/fandom/candidates": relay("/fandom/admin"),
+  "/api/fandom/candidates/approve": relay("/fandom/admin/approve"),
+  "/api/fandom/candidates/reject": relay("/fandom/admin/reject"),
   // Author identity and hand-set author facts. `resolve` writes nothing —
   // it is the Open Library author search and the single-author Wikidata
   // join — and `save` is the only thing that touches author_overrides.json.
