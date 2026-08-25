@@ -132,6 +132,14 @@ const ROUTES = {
   // by the client, same as books.json/questions.json; only the decision
   // needs a write, hence one relay rather than two.
   "/api/candidates/decide": relay("/akinator/admin/candidates/decide"),
+  // The review gate between the game's Fandom-wiki discovery and the
+  // summarizer's live map — see tools/fandom_admin.py's module docstring.
+  // list is a relay rather than a plain litheca.com read because it also
+  // needs live_count from wikis.json in the same response, and the two
+  // files are hosted from bookhub, not this Worker's own domain.
+  "/api/fandom/candidates": relay("/akinator/admin/fandom/candidates"),
+  "/api/fandom/candidates/approve": relay("/akinator/admin/fandom/candidates/approve"),
+  "/api/fandom/candidates/reject": relay("/akinator/admin/fandom/candidates/reject"),
   // Author identity and hand-set author facts. `resolve` writes nothing —
   // it is the Open Library author search and the single-author Wikidata
   // join — and `save` is the only thing that touches author_overrides.json.
@@ -300,6 +308,7 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
   <button data-tab="suggestions">Suggestions <span class="pill" id="sgCount"></span></button>
   <button data-tab="taught">Taught <span class="pill" id="tgCount"></span></button>
   <button data-tab="candidates">Mined questions <span class="pill" id="cqCount"></span></button>
+  <button data-tab="fandom">Fandom <span class="pill" id="fdCount"></span></button>
   <button data-tab="edit">Edit a book</button>
   <button data-tab="authors">Authors <span class="pill" id="auDupPill"></span></button>
 </nav>
@@ -443,6 +452,21 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
     <span class="status" id="cqStatus" style="margin:0"></span>
   </div>
   <div id="cqList"></div>
+</section>
+
+<section id="fandom">
+  <p class="sub" style="margin-bottom:14px">Books the game's own discovery pipeline has PROVEN have a real Fandom
+  wiki (<code>scripts/akinator/discover_fandom.py</code>) but that the summarizer's live map
+  (<code>games/data/fandom/wikis.json</code>) does not know about yet — invisible to <code>/search</code>,
+  <code>quiz.py</code> and <code>summary.py</code> until one of these is approved. Proving a wiki exists is not the
+  same judgement as trusting it live: open the wiki yourself and check the alias spelling, author and cover before
+  approving. Approving writes straight into <code>wikis.json</code>, the same file <code>tools/fandom.py</code>
+  reads (cached up to an hour), in one commit.</p>
+  <div class="row" style="margin-bottom:12px">
+    <button class="act ghost" id="fdReload">Refresh</button>
+    <span class="status" id="fdStatus" style="margin:0"></span>
+  </div>
+  <div id="fdList"></div>
 </section>
 
 <footer>Verified against Google Books / Open Library before a row is added — this page cannot invent a book.
@@ -2974,6 +2998,106 @@ document.getElementById("cqList").addEventListener("click", async (e)=>{
   } catch (err) {
     setStatus("cqStatus", String(err.message || err), false);
     card.querySelectorAll("button").forEach(b => { b.disabled = false; });
+  }
+});
+
+// ── Fandom: candidates the game proved, waiting to be trusted live ──────
+//
+// NOT LOADED WITH THE PAGE, same reasoning as the clamp audit: this only
+// changes when the game's offline discovery pipeline finds something new,
+// which is rare — polling it on every page load would spend a Render
+// wake-up on an answer that is almost always identical to last time.
+let fdCandidates = [];
+
+function renderFandom(){
+  const host = document.getElementById("fdList");
+  document.getElementById("fdCount").textContent = fdCandidates.length || "";
+  if (!fdCandidates.length){
+    host.innerHTML = '<p class="status">Nothing waiting \\u2014 the summarizer\\u2019s live map already '
+      + "covers everything the game has proven.</p>";
+    return;
+  }
+  host.innerHTML = fdCandidates.map((c) => {
+    const seed = c.seed_title ? esc(c.seed_title) : "";
+    return '<div class="sg" data-sub="' + esc(c.subdomain) + '">'
+      + '<div class="sg-head"><span class="sg-reason"><code>' + esc(c.subdomain) + "</code>"
+      + (seed ? " \\u2014 " + seed : "") + "</span></div>"
+      + (c.why ? '<p class="sg-none">' + esc(c.why) + "</p>" : "")
+      + '<div class="field"><label>Aliases, comma-separated (the titles/spellings a reader might type)</label>'
+      + '<input type="text" class="fdAliases" value="' + esc(seed) + '"></div>'
+      + '<div class="row">'
+      + '<div class="field" style="flex:1"><label>Author (optional \\u2014 leave blank unless you verified it '
+      + "on the wiki; a wrong author here poisons every book this resolver enriches for them, not just this "
+      + 'one)</label><input type="text" class="fdAuthor"></div>'
+      + '<div class="field" style="flex:1"><label>Cover URL (optional)</label>'
+      + '<input type="text" class="fdCover"></div>'
+      + "</div>"
+      + '<div class="row" style="margin-top:8px">'
+      + '<a class="act ghost" href="https://' + esc(c.subdomain) + '.fandom.com/" target="_blank" rel="noopener">Open the wiki</a>'
+      + '<button class="act fdApprove">Approve \\u2014 write to wikis.json</button>'
+      + '<button class="act ghost fdReject">Reject</button>'
+      + "</div></div>";
+  }).join("");
+}
+
+async function loadFandom(){
+  setStatus("fdStatus", "Loading\\u2026");
+  try {
+    const r = await post("/api/fandom/candidates", {});
+    fdCandidates = r.candidates || [];
+    renderFandom();
+    setStatus("fdStatus", fdCandidates.length
+      ? fdCandidates.length + " waiting, " + r.live_count + " already live"
+      : "Nothing waiting (" + r.live_count + " live).", true);
+  } catch (err) {
+    setStatus("fdStatus", String(err.message || err), false);
+  }
+}
+
+document.getElementById("fdReload").addEventListener("click", loadFandom);
+
+document.getElementById("fdList").addEventListener("click", async (e) => {
+  const card = e.target.closest(".sg");
+  if (!card) return;
+  const sub = card.dataset.sub;
+
+  if (e.target.classList.contains("fdReject")){
+    if (!confirm("Reject " + sub + "? This drops it from the queue \\u2014 the game would have to "
+        + "rediscover it to see it again.")) return;
+    card.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+    setStatus("fdStatus", "Rejecting\\u2026");
+    try {
+      await post("/api/fandom/candidates/reject", {subdomain: sub});
+      fdCandidates = fdCandidates.filter((c) => c.subdomain !== sub);
+      renderFandom();
+      setStatus("fdStatus", "Rejected " + sub + ".", true);
+    } catch (err) {
+      setStatus("fdStatus", String(err.message || err), false);
+      card.querySelectorAll("button").forEach((b) => { b.disabled = false; });
+    }
+    return;
+  }
+
+  if (e.target.classList.contains("fdApprove")){
+    const aliases = card.querySelector(".fdAliases").value.split(",")
+      .map((s) => s.trim()).filter(Boolean);
+    const author = card.querySelector(".fdAuthor").value.trim();
+    const cover_url = card.querySelector(".fdCover").value.trim();
+    if (!aliases.length && !confirm(sub + " has no aliases typed \\u2014 it will only ever match a "
+        + "search for the bare subdomain. Approve anyway?")) return;
+    card.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+    setStatus("fdStatus", "Approving " + sub + "\\u2026");
+    try {
+      const r = await post("/api/fandom/candidates/approve", {
+        subdomain: sub, aliases, author: author || null, cover_url: cover_url || null,
+      });
+      fdCandidates = fdCandidates.filter((c) => c.subdomain !== sub);
+      renderFandom();
+      setStatus("fdStatus", "Approved " + sub + " \\u2014 " + r.effect, true);
+    } catch (err) {
+      setStatus("fdStatus", String(err.message || err), false);
+      card.querySelectorAll("button").forEach((b) => { b.disabled = false; });
+    }
   }
 });
 

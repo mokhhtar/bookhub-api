@@ -39,6 +39,7 @@ from tools import akinator_suggest as akinator_suggest_tool
 from tools import akinator_candidates as akinator_candidates_tool
 from tools import akinator_authors as akinator_authors_tool
 from tools import akinator_book_search as akinator_book_search_tool
+from tools import fandom_admin as fandom_admin_tool
 # from tools import recommend as recommend_tool   # pending rebuild
 # from tools import questions as questions_tool   # pending rebuild
 # from tools import compare as compare_tool       # pending rebuild
@@ -176,6 +177,10 @@ app.include_router(akinator_authors_tool.admin_router)
 # is added. Search itself reuses the public /search endpoint (below), not a
 # new one — this router only adds the preview.
 app.include_router(akinator_book_search_tool.admin_router)
+# Review gate between the game's Fandom-wiki discovery and the summarizer's
+# live-serving map — not akinator-specific despite reusing its admin auth
+# and GitHub-commit plumbing; see tools/fandom_admin.py's module docstring.
+app.include_router(fandom_admin_tool.router)
 
 
 @app.get("/health")

@@ -8,6 +8,7 @@ Exposes routes to resolve Fandom wiki subdomains and fetch detailed, grounded un
 import os
 import re
 import logging
+import time
 import urllib.parse
 import concurrent.futures
 from typing import Optional, List
@@ -380,149 +381,92 @@ def _resolve_fandom_subdomain_single(title: str, wikidata_id: Optional[str] = No
         return normalized
 
     return None
-FANDOM_WIKIS = {
-    "tbate": {
-        "subdomain": "tbate",
-        "aliases": ["beginning after the end", "the beginning after the end", "tbate"],
-        "author": "TurtleMe",
-        "cover_url": "https://covers.openlibrary.org/b/id/14815307-M.jpg"
-    },
-    "lordofthemysteries": {
-        "subdomain": "lordofthemysteries",
-        # NOTE: "Circle of Inevitability" is a SEPARATE work by the same author
-        # on the same wiki, not an alias for this book — see CATALOG_SERIES
-        # in fandom_catalog.py ("lotm" vs "coi") for the correct disambiguation.
-        # Do not add it back here; this simple map has no way to express
-        # "same subdomain, different series" and will silently merge the two.
-        "aliases": ["lord of the mysteries"],
-        "author": "Cuttlefish That Loves Diving",
-        "cover_url": "https://static.wikia.nocookie.net/lord-of-the-mystery/images/c/cd/LOM_Manhua_cover.png/revision/latest?cb=20200113124228"
-    },
-    "shadowslave": {
-        "subdomain": "shadowslave",
-        "aliases": ["shadow slave"],
-        "author": "Guiltythree",
-        "cover_url": "https://covers.openlibrary.org/b/id/15173101-M.jpg"
-    },
-    "mother-of-learning": {
-        "subdomain": "mother-of-learning",
-        "aliases": ["mother of learning"],
-        "author": "nobody103 (Domagoj Kurmaic)",
-        "cover_url": "https://covers.openlibrary.org/b/id/12836262-M.jpg"
-    },
-    "reverend-insanity": {
-        "subdomain": "reverend-insanity",
-        "aliases": ["reverend insanity"],
-        "author": "Gu Zhen Ren",
-        "cover_url": "https://static.wikia.nocookie.net/reverend-insanity/images/2/23/Fang_Yuan_2.png/revision/latest?cb=20260630200735"
-    },
-    "you-zitsu": {
-        "subdomain": "you-zitsu",
-        "aliases": ["classroom of the elite"],
-        "author": "Shōgo Kinugasa",
-        "cover_url": "https://covers.openlibrary.org/b/id/10166148-M.jpg"
-    },
-    # CORRECTED 2026-08-14: the old subdomain "omniscient-readers-point-of-
-    # view" is a clean 404 -- verified directly (HTTP 404, no redirect)
-    # during scripts/akinator/discover_fandom.py's run. It had presumably
-    # been hand-typed and never checked against a live wiki. The real
-    # subdomain, found and proven (prove_fandom.py, CONFIRMED, 1,302
-    # articles): omniscient-readers-viewpoint.
-    "omniscient-readers-viewpoint": {
-        "subdomain": "omniscient-readers-viewpoint",
-        "aliases": ["omniscient reader", "omniscient reader's viewpoint", "orvp", "orv"],
-        "cover_url": "https://covers.openlibrary.org/b/id/14321241-M.jpg"
-    },
-    "solo-leveling": {
-        "subdomain": "solo-leveling",
-        "aliases": ["solo leveling"],
-        "author": "Chugong",
-        "cover_url": "https://covers.openlibrary.org/b/id/10582298-M.jpg"
-    },
-    # 12 entries below added 2026-08-14 from scripts/akinator/
-    # discover_fandom.py's CONFIRMED results -- each individually proven
-    # (prove_fandom.py's five signals) against a live wiki, not guessed.
-    # `author` omitted where not independently grounded during proving
-    # (a book_data.py resolver reading a wrong author here would poison
-    # every book by that "author" it enriches, not just this one title —
-    # see CLAUDE.md's grounding rule). `cover_url` omitted throughout;
-    # nothing here sourced one.
-    "the-kings-avatar": {
-        "subdomain": "the-kings-avatar",
-        "aliases": ["the king's avatar", "quan zhi gao shou", "full-time master", "tka"]
-    },
-    "library-of-heavens-path": {
-        "subdomain": "library-of-heavens-path",
-        "aliases": ["library of heaven's path"]
-    },
-    "azarinth-healer": {
-        "subdomain": "azarinth-healer",
-        "aliases": ["azarinth healer", "azarinth"]
-    },
-    "bestspellever": {
-        # Legacy URL slug from whenever the wiki was first registered --
-        # unrelated to the title. Verified: sitename "Delve Wiki", 695
-        # articles, categories like "Chapters with Rain POVs" (the
-        # genre's standard character-POV chapter tagging). Not a
-        # mismatch; see the vault note dated 2026-08-14 for the evidence
-        # that cleared this exact-looking false positive.
-        "subdomain": "bestspellever",
-        "aliases": ["delve"]
-    },
-    "the-perfect-run": {
-        "subdomain": "the-perfect-run",
-        "aliases": ["the perfect run", "perfect run"]
-    },
-    "hpmor": {
-        "subdomain": "hpmor",
-        "aliases": ["hpmor", "harry potter and the methods of rationality",
-                     "methods of rationality"]
-    },
-    "thewanderinginn": {
-        "subdomain": "thewanderinginn",
-        "aliases": ["the wandering inn", "wandering inn"]
-    },
-    "worm": {
-        "subdomain": "worm",
-        "aliases": ["worm"]
-    },
-    "the-novels-extra": {
-        "subdomain": "the-novels-extra",
-        "aliases": ["the novel extra", "the novel's extra", "novel extra"]
-    },
-    "rezero": {
-        # The wiki's own sitename is short-form "Re:Zero Wiki"; its page
-        # for the novel itself carries the long original title exactly.
-        # Both aliased here for the same reason prove_fandom.py had to
-        # retry against the short form: a token-overlap match cannot
-        # bridge a six-word original title and its one-word common name.
-        "subdomain": "rezero",
-        "aliases": ["re:zero kara hajimeru isekai seikatsu", "re:zero", "rezero"]
-    },
-    "mysranks": {
-        # The wiki calls the work "The S-Ranks That I Raised" -- "also
-        # known as The S-Classes That I Raised" per its own description.
-        # A single-word translation variant ("Ranks" vs "Classes"), both
-        # aliased.
-        "subdomain": "mysranks",
-        "aliases": ["the s-classes that i raised", "the s-ranks that i raised"]
-    }
-}
+# WHERE THIS USED TO BE A HARDCODED DICT LITERAL, and why it no longer is.
+# Every entry here was once hand-pasted from scripts/akinator/'s discovery
+# pipeline into this file, by hand, as a separate step someone had to
+# remember — and measured 2026-08-25, that step had stopped happening: the
+# game's own harvest had 41 confirmed Fandom wikis and this map knew 19,
+# missing real books (Mushoku Tensei, Overlord, Martial Peak among them)
+# that /search, quiz.py and summary.py could not find purely because nobody
+# had re-typed a JSON entry into a .py file recently enough.
+#
+# So this is now loaded at runtime from games/data/fandom/wikis.json in the
+# bookhub repo — the SAME file an admin review panel writes to when a
+# candidate the game discovered gets approved. Approving is now the one
+# edit that reaches both tools, instead of a discovery step here and a
+# separate, easily-forgotten copy-paste step there.
+#
+# THE REVIEW GATE ITSELF IS UNCHANGED. games/data/fandom/candidates.json
+# holds what the game's discovery tactics (subdomain guessing, Brave
+# Search, Wikipedia scanning) have PROVEN exist — proving a wiki is real is
+# not the same judgement as trusting it in this live-serving path, which is
+# exactly why discover_fandom.py's own docstring says in capitals that it
+# never touches this map. A human still has to look at aliases/author/
+# cover_url and approve before an entry ever reaches wikis.json; only the
+# mechanical part (which file, which format) is now shared.
+FANDOM_DATA_URL = "https://litheca.com/games/data/fandom/wikis.json"
 
-# Dynamically populate for backward compatibility
-FANDOM_STATIC_MAP = {}
-for k, cfg in FANDOM_WIKIS.items():
-    for alias in cfg.get("aliases", []):
-        FANDOM_STATIC_MAP[alias] = cfg["subdomain"]
-    FANDOM_STATIC_MAP[k] = cfg["subdomain"]
+# Config data, refreshed at most this often — an approval does not need to
+# reach production within seconds, and fetching on every request would spend
+# a request's latency on a file that changes rarely.
+_FANDOM_CACHE_TTL = 3600
 
-FANDOM_SERIES_DETAILS = {
-    cfg["subdomain"]: {
-        "author": cfg.get("author"),
-        "cover_url": cfg.get("cover_url")
-    }
-    for cfg in FANDOM_WIKIS.values()
-}
+# THESE STAY AS MODULE-LEVEL DICTS, MUTATED IN PLACE, never reassigned.
+# book_data.py does `from tools.fandom import FANDOM_SERIES_DETAILS` — a
+# plain name import binds to the OBJECT, not to this module's attribute, so
+# rebinding this name to a fresh dict on refresh would freeze that import on
+# whatever it saw first and never see a later approval. clear()+update()
+# keeps the same object alive, so every existing import stays correct with
+# no changes anywhere else.
+FANDOM_WIKIS: dict = {}
+FANDOM_STATIC_MAP: dict = {}
+FANDOM_SERIES_DETAILS: dict = {}
+_fandom_cache_at = 0.0
+
+
+def _refresh_fandom_wikis() -> dict:
+    """Reload FANDOM_WIKIS (and its two derived maps) if the cache is stale.
+
+    Called at the top of every function that reads FANDOM_WIKIS directly,
+    so callers never see an unpopulated map on first use. A fetch failure
+    KEEPS the existing (possibly still-empty, possibly stale) data rather
+    than clearing it — a transient network hiccup must not silently stop
+    resolving every book this file exists for, the same fail-open shape as
+    every other provider chain in this codebase.
+    """
+    global _fandom_cache_at
+    now = time.time()
+    if FANDOM_WIKIS and now - _fandom_cache_at < _FANDOM_CACHE_TTL:
+        return FANDOM_WIKIS
+    try:
+        resp = httpx.get(FANDOM_DATA_URL, timeout=8.0)
+        resp.raise_for_status()
+        data = resp.json()
+        if not isinstance(data, dict) or not data:
+            raise ValueError(f"empty or malformed response ({type(data).__name__})")
+    except Exception as e:                                       # noqa: BLE001
+        log.warning(f"could not refresh fandom_wikis.json: {e}")
+        if FANDOM_WIKIS:
+            return FANDOM_WIKIS
+        return FANDOM_WIKIS  # empty on the very first fetch ever failing
+
+    FANDOM_WIKIS.clear()
+    FANDOM_WIKIS.update(data)
+
+    FANDOM_STATIC_MAP.clear()
+    for k, cfg in FANDOM_WIKIS.items():
+        for alias in cfg.get("aliases", []):
+            FANDOM_STATIC_MAP[alias] = cfg["subdomain"]
+        FANDOM_STATIC_MAP[k] = cfg["subdomain"]
+
+    FANDOM_SERIES_DETAILS.clear()
+    FANDOM_SERIES_DETAILS.update({
+        cfg["subdomain"]: {"author": cfg.get("author"), "cover_url": cfg.get("cover_url")}
+        for cfg in FANDOM_WIKIS.values()
+    })
+
+    _fandom_cache_at = now
+    return FANDOM_WIKIS
 
 def resolve_fandom_subdomain(title: str, wikidata_id: Optional[str] = None,
                              categories: Optional[list[str]] = None) -> Optional[str]:
@@ -536,8 +480,9 @@ def resolve_fandom_subdomain(title: str, wikidata_id: Optional[str] = None,
     """
     if is_confidently_nonfiction(categories):
         return None
+    _refresh_fandom_wikis()
     candidates = get_series_title_candidates(title)
-    
+
     # Tier 0: Static mapping lookup (fast and 100% reliable)
     for cand in candidates:
         cand_clean = re.sub(r'\s+', ' ', cand.lower()).strip()
@@ -618,6 +563,7 @@ def extract_fandom_infobox_metadata(
     # page content generalizes instead.
 
     # 1. Check configuration first (fastest, most reliable, zero API calls)
+    _refresh_fandom_wikis()
     for k, cfg in FANDOM_WIKIS.items():
         if cfg["subdomain"] == subdomain:
             return cfg.get("author"), cfg.get("cover_url")
