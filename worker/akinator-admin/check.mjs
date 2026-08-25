@@ -73,7 +73,11 @@ if (!m) {
 }
 
 // 2. every relay the client calls must exist in ROUTES
-const called = [...html.matchAll(/["'](\/api\/[a-z/]+)["']/g)].map((x) => x[1]);
+// [a-z/_] not [a-z/]: /api/taught/apply_batch has an underscore, and the
+// narrower class silently reported it as "never called" — passing, not
+// failing, so it would have hidden a real typo in a route name exactly
+// like this one just as easily as it hid a route that IS called.
+const called = [...html.matchAll(/["'](\/api\/[a-z/_]+)["']/g)].map((x) => x[1]);
 const missing = [...new Set(called)].filter((p) => !relays.includes(p));
 if (missing.length) fail.push(`client calls relays absent from ROUTES: ${missing.join(", ")}`);
 else console.log(`ok  ${new Set(called).size} relay(s) called, all present in ROUTES`);
