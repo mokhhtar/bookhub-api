@@ -85,7 +85,7 @@ CORRECTIONS: dict[str, dict] = {
 # `excluded.json`. It is layered ON TOP of the hand-curated dict here,
 # never replacing it.
 #
-# TWO WRITERS, AND THE SECOND ONE SETS DIFFERENT FIELDS.
+# THREE WRITERS, AND EACH ONE SETS DIFFERENT FIELDS.
 # `/akinator/admin/correction` is restricted to `first_publish_year` and
 # deliberately stays that narrow. `/akinator/admin/authors/link` writes
 # `author_name` and `author_key` here, because saying who a book is BY is
@@ -101,6 +101,28 @@ CORRECTIONS: dict[str, dict] = {
 # /site/ and /fandom/ supplements in `build_matrix.load_corpus`, which is
 # before `build_books` — so the corrected author reaches AuthorIndex and
 # the trait join, not just the printed name.
+#
+# The third writer is `/akinator/admin/noauthor` (and the same checkbox on
+# Add a book), which sets `no_author: true`. IT IS NOT READ BY ANYTHING YET,
+# on purpose, and that is worth stating here rather than leaving it to look
+# like an oversight. `apply_corrections` copies it onto the doc like any
+# other field and no question consults it, so today it records a verdict and
+# changes nothing.
+#
+# Why it is a hand-set verdict at all rather than derived: 173 of the 5,000
+# shipped books have no `author_name`, and reading them says absence is a
+# CATALOGUE GAP, never a fact. 154 are edition records for government
+# reports and procedure manuals; of the 19 real work records not one is
+# anonymous — they are Blue Ocean Strategy, T. Harv Eker, Cialdini in
+# Portuguese, Indonesian textbooks. Meanwhile the books that really have no
+# author say so in the name field ("Anonymous", "Various", "unknown
+# author"). A rule keyed on the empty list would answer yes for 173 books
+# that all have authors and miss the four that do not — the exact shape of
+# error rule 1 above exists to refuse.
+#
+# It also could not become a question yet: `keeps_question` needs 5% and the
+# flag would sit far under it until roughly 250 books carried one. The
+# endpoint's own comment in tools/akinator_admin.py holds the full numbers.
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ADMIN_CORRECTIONS_PATH = os.path.abspath(os.path.join(
     REPO_ROOT, "..", "bookhub", "games", "data", "akinator", "admin_corrections.json"))

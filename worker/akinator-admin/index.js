@@ -110,6 +110,11 @@ const ROUTES = {
   // other — never gained the row. Nothing logs a route that does not exist,
   // so it failed silently and only in the browser.
   "/api/display": relay("/akinator/admin/display"),
+  // "this book has no known author", set by hand on Add a book and Edit a
+  // book. A fact for the next rebuild, not a live matrix clamp — see the
+  // note above the endpoint in akinator_admin.py for why absence of an
+  // author can never stand in for it.
+  "/api/noauthor": relay("/akinator/admin/noauthor"),
   "/api/suggestions": relay("/akinator/admin/suggestions"),
   "/api/suggestions/resolve": relay("/akinator/admin/suggestions/resolve"),
   "/api/suggestions/theme": relay("/akinator/admin/suggestions/theme"),
@@ -232,6 +237,11 @@ table.qhost{table-layout:fixed}
    The break is scoped to the <code>, not the cell: applied to the cell it
    also broke "id guessed" across two lines mid-label, which is the fix
    making a second, smaller mess of the same kind. Badges never wrap. */
+/* A checkbox and its wording on one line, inside a .field whose <label> is
+   a block. Without it the box sits on its own row above the text it labels
+   and reads as belonging to the field above. */
+label.inline{display:flex;align-items:center;gap:7px;margin-top:8px;font-weight:400}
+label.inline input{width:auto;margin:0}
 td.ident{white-space:normal}
 td.ident code{overflow-wrap:anywhere}
 .badge{font-size:11px;font-weight:600;padding:1px 7px;border-radius:3px;background:var(--line);white-space:nowrap}
@@ -635,10 +645,29 @@ let addTouched = new Set(); // ids the admin actually clicked, for the
                             // addSuggest), so it alone can't distinguish
                             // "still just the suggestion" from "reviewed"
 
+const addNoAuthor = () => {
+  const b = document.getElementById("addNoAuthor");
+  return !!(b && b.checked);
+};
+
 function addAuthorCheck(){
   const box = document.getElementById("addAuthorField");
   const note = document.getElementById("addAuthorNote");
   if (!box) return null;
+  // "No known author" is a VERDICT, so it takes the field out of play rather
+  // than sitting next to a name that contradicts it. The server drops the
+  // picked record's author for the same reason.
+  if (addNoAuthor()){
+    box.disabled = true;
+    if (note) note.innerHTML = '<span class="sg-new">Recorded as having no author.</span> '
+      + "Stored as a fact on the book, not as a blank \\u2014 an empty author field means "
+      + "\\u201cwe do not know\\u201d and 173 shipped books are in that state because Open "
+      + "Library never wrote one down. No question reads this yet. The book still has to be "
+      + "picked from search: with no author to match on, a title alone can resolve to a "
+      + "different book.";
+    return null;
+  }
+  box.disabled = false;
   const text = box.value.trim();
   if (!text){ if (note) note.innerHTML = ""; return null; }
   const hit = authorByName(text);
@@ -820,6 +849,8 @@ function renderAddForm(){
       + "and the book count split between them.</label>"
       + '<input type="text" id="addAuthorField" list="authorNames" autocomplete="off" value="'
       + esc(p ? (p.author || "") : "") + '">'
+      + '<label class="inline"><input type="checkbox" id="addNoAuthor"> This book has no '
+      + "known author</label>"
       + '<p class="effect" id="addAuthorNote"></p></div>'
     + '<div class="field"><label>First published (blank = Open Library\\u2019s work-level '
       + "year; six era questions read this, and a wrong year is worse than none)</label>"
@@ -843,6 +874,7 @@ function renderAddForm(){
     + '<div class="row" style="margin-top:12px"><button class="act" id="addSubmit">Add book</button></div>'
     + '<p class="status" id="addStatus"></p></div>';
   document.getElementById("addAuthorField").addEventListener("input", addAuthorCheck);
+  document.getElementById("addNoAuthor").addEventListener("change", addAuthorCheck);
   addAuthorCheck();
 }
 
@@ -940,9 +972,23 @@ document.getElementById("addForm").addEventListener("click", async (e) => {
     const themes = document.getElementById("addThemes").value.split(",")
       .map((s) => s.trim()).filter(Boolean);
     const rawYear = document.getElementById("addYear").value.trim();
-    if (!title || !author){ setStatus("addStatus", "title and author are required", false); return; }
-    const who = addAuthorCheck();
-    if (!who){
+    const none = addNoAuthor();
+    if (!title){ setStatus("addStatus", "a title is required", false); return; }
+    // The author gate is the whole reason this form has a picker, so it is
+    // waived only by an explicit verdict, never by an empty box.
+    if (!none && !author){
+      setStatus("addStatus", "an author is required — tick \\u201cno known author\\u201d if "
+        + "the book genuinely has none", false);
+      return;
+    }
+    if (none && !addPicked){
+      setStatus("addStatus", "a book with no author has to be picked from the search above: "
+        + "with no author to match on, resolving by title alone could land on a different "
+        + "book entirely", false);
+      return;
+    }
+    const who = none ? null : addAuthorCheck();
+    if (!none && !who){
       setStatus("addStatus", "\\u201c" + author + "\\u201d is not an author the game holds. "
         + "Create the profile on the Authors tab first.", false);
       return;
@@ -954,7 +1000,7 @@ document.getElementById("addForm").addEventListener("click", async (e) => {
     setStatus("addStatus", "Verifying and adding\\u2026");
     try {
       const r = await post("/api/book", {
-        title, author: who.name, summary, themes,
+        title, author: none ? "" : who.name, no_author: none, summary, themes,
         year: rawYear ? parseInt(rawYear, 10) : null,
         google_id: addPicked ? addPicked.google_id : null,
         openlibrary_id: addPicked ? addPicked.openlibrary_id : null,
@@ -967,8 +1013,14 @@ document.getElementById("addForm").addEventListener("click", async (e) => {
         source: addPicked ? addPicked.source : null,
         answers: addAnswers,
       });
-      let linked = "";
-      try {
+      // Nothing to attach when there is deliberately no author, and calling
+      // link anyway would be asking the server to name a book after an
+      // author that does not exist. The no-author fact travelled with the
+      // row itself, in the same commit — see append_book_row's extra_files.
+      let linked = none
+        ? " Recorded as having no known author; no author was attached, which is the point."
+        : "";
+      if (!none) try {
         const l = await post("/api/authors/link", {key: who.id, work_key: r.key,
                                                    note: "attached when the book was added"});
         const n = Object.keys(l.applied || {}).length;
@@ -982,7 +1034,8 @@ document.getElementById("addForm").addEventListener("click", async (e) => {
       // below, so setting it there and then wiping the form was deleting
       // the confirmation before the admin could read it. addSearchStatus
       // sits in the persistent search card above and survives the reset.
-      setStatus("addSearchStatus", "Added \\u201c" + r.title + "\\u201d by " + r.author
+      setStatus("addSearchStatus", "Added \\u201c" + r.title + "\\u201d"
+        + (r.author ? " by " + r.author : "")
         + (r.year ? " (" + r.year + ")" : " (no year)") + " \\u2014 effect: " + r.effect
         + "." + linked, true);
       addPicked = null;
@@ -1207,6 +1260,15 @@ function renderSuggestions(){
 // cell says today is the whole point, and "set it to yes" without showing
 // that it already says yes is how you get an override that changes nothing.
 let matrix = null, meta = null, overrides = {};
+// admin_corrections.json — the queued-for-next-rebuild facts, as opposed to
+// overrides.json's live clamps. Only no_author is read here so far, and it
+// is read rather than remembered so the box is right on a fresh page load,
+// not merely for the rest of the session that ticked it.
+//
+// NO BACKTICKS IN THIS FILE'S CLIENT SCRIPT, not even in a comment: the whole
+// script is a template literal, so one closes it and the page stops parsing.
+// check.mjs catches it, which is exactly why check.mjs exists.
+let corrections = {};
 
 function cellState(bookIndex, qIndex){
   if (!matrix || !meta) return null;
@@ -1319,6 +1381,24 @@ function editPanelHtml(i){
     + "admin_corrections.json. Not on the list? Create the profile on the Authors tab "
     + "first \\u2014 a new name typed here would split an author rather than move a book."
     + "</p>"
+    // THE OTHER ANSWER TO "who wrote this", and it is a claim rather than a
+    // blank. 173 of the 5,000 shipped books carry no author at all, and
+    // reading them says that is Open Library never writing one down — not
+    // one of them is actually anonymous. So an empty author has to keep
+    // meaning "we do not know", and a book that really has none says so
+    // here, once, by hand.
+    // CHECKED FROM THE COMMITTED FILE, not from nothing. Rendered blank it
+    // sprang back up the instant the write succeeded — edRedraw() rebuilds
+    // this panel — so a fact that HAD been recorded read as unset, which is
+    // indistinguishable from a write that failed. Same failure the Add-a-book
+    // review table had: a control whose visible state was not its real one.
+    + '<label class="inline" style="margin-top:10px"><input type="checkbox" class="edNoAuthor"'
+      + ((corrections[key] || {}).no_author ? " checked" : "")
+      + "> This book has no known author</label>"
+    + '<p class="effect">Recorded as a fact for the next rebuild, and it clears any '
+    + "attachment above \\u2014 the two are the same claim negated. No question reads it yet: "
+    + "at 3.5% of the corpus one could not clear the 5% floor, and a rule guessing it from a "
+    + "blank author field would answer yes for 173 books that all have authors.</p>"
     + '<div class="field" style="margin-top:16px"><label>First published '
       + "(feeds six era questions)</label>"
       + '<input type="text" class="edYear" inputmode="numeric" style="width:120px" value="'
@@ -1424,6 +1504,37 @@ document.getElementById("edRows").addEventListener("click", async (e) => {
   }
 
   if (e.target.classList.contains("edRevert")) { edOpen(key); edRedraw(); return; }
+
+  // Its OWN write, not part of the question draft: this is a fact about the
+  // book for the next rebuild, while the draft below is a set of live matrix
+  // clamps. Batching them would make one Save mean two different kinds of
+  // thing, which is how the year field already earned its separate button.
+  if (e.target.classList.contains("edNoAuthor")) {
+    const on = e.target.checked;
+    e.target.disabled = true;
+    setStatus("edStatus", on ? "Recording that it has no author\\u2026"
+                             : "Clearing that\\u2026");
+    try {
+      const r = await post("/api/noauthor", {work_key: key, no_author: on});
+      // Kept in the same shape the file has, so the redraw below reads the
+      // committed truth rather than a second, parallel flag.
+      if (r.no_author) (corrections[key] = corrections[key] || {}).no_author = true;
+      else if (corrections[key]) delete corrections[key].no_author;
+      // Only what the reveal prints, and only when the fact was SET — the
+      // page cannot restore a name it never had, so unticking leaves the
+      // display alone rather than inventing one.
+      if (on && books[i]) books[i].a = "";
+      edRedraw();
+      setStatus("edStatus", (on
+        ? "Recorded as having no known author."
+        : "No longer marked \\u2014 back to \\u201cwe do not know\\u201d.")
+        + " " + r.note, true);
+    } catch (err) {
+      e.target.checked = !on;
+      setStatus("edStatus", String(err.message || err), false);
+    } finally { e.target.disabled = false; }
+    return;
+  }
 
   if (e.target.classList.contains("edSave")) {
     const n = edDirtyCount();
@@ -2760,9 +2871,10 @@ document.getElementById("cqList").addEventListener("click", async (e)=>{
       fetch(DATA + "/matrix.bin").then(r => r.ok ? r.arrayBuffer() : null),
       fetch(DATA + "/meta.json").then(r => r.json()),
       fetch(DATA + "/overrides.json").then(r => r.ok ? r.json() : {}).catch(() => ({})),
-    ]).then(([mb, mt, ov]) => {
+      fetch(DATA + "/admin_corrections.json").then(r => r.ok ? r.json() : {}).catch(() => ({})),
+    ]).then(([mb, mt, ov, co]) => {
       if (mb) matrix = new Uint8Array(mb);
-      meta = mt; overrides = ov || {};
+      meta = mt; overrides = ov || {}; corrections = co || {};
     }).catch(() => {});
     computeDupFlags();
     renderBooks(""); renderQuestions();

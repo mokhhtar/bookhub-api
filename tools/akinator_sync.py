@@ -477,7 +477,8 @@ def _build_book_row(doc: dict, question_ids: list[str], bpr: int, rank: int,
 
 
 def append_book_row(doc: dict, prose: str = "", commit_message: str = "",
-                    manual_answers: dict[str, bool | None] | None = None
+                    manual_answers: dict[str, bool | None] | None = None,
+                    extra_files: dict[str, bytes] | None = None
                     ) -> dict:
     """Append ONE book to the live artifacts and commit immediately.
 
@@ -494,6 +495,13 @@ def append_book_row(doc: dict, prose: str = "", commit_message: str = "",
     at creation, never as an `overrides.json` clamp: unlike a correction to
     an EXISTING shipped row, there is no prior state here for a clamp to
     sit on top of, and no drain that could later contradict it.
+
+    `extra_files` rides the SAME commit as the three artifacts. A fact about
+    the book that has to survive the next full rebuild belongs in
+    `admin_corrections.json`, and writing that separately would be two
+    commits for one decision — the shape this admin has been moving away
+    from everywhere else. The artifacts still stand or fall together; this
+    only widens what "together" covers.
     """
     if not GITHUB_PAT:
         return {"ok": False, "reason": "GITHUB_PAT not configured"}
@@ -537,6 +545,7 @@ def append_book_row(doc: dict, prose: str = "", commit_message: str = "",
             books, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
         f"{ARTIFACT_DIR}/meta.json": json.dumps(
             meta, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+        **(extra_files or {}),
     }, commit_message or f"mind reader: +1 admin-added book ({doc['title']})")
     return {"ok": wrote, "key": doc["key"], "title": doc["title"]}
 

@@ -59,6 +59,7 @@ from pydantic import BaseModel, Field                           # noqa: E402
 from tools.akinator_sync import (                       # noqa: E402
     ARTIFACT_DIR,
     _commit_files,
+    _commit_with_retry,
     _get_file,
     append_book_row,
 )
@@ -225,6 +226,102 @@ def correction(body: CorrectionRequest):
                     "a matrix bit that only a local build recomputes"}
 
 
+# ── POST /akinator/admin/noauthor ───────────────────────────────────────
+#
+# WHY A FIELD AND NOT A QUESTION, decided from the corpus rather than from
+# the shape of the idea. "Is the author unknown?" sounds like a question the
+# game could ask, and the obvious way to answer it is `author_name == []`.
+# Measured over the 5,000 shipped books, that is 173 of them (3.46%) — and
+# reading them says the signal is not what it looks like:
+#
+#   * 154 of the 173 are EDITION records (`/works/OL…M`, not `…W`) —
+#     government reports, conference proceedings, procedure manuals,
+#     bibliographies. Catalogue rows with no author statement.
+#   * of the 19 real work records, NOT ONE is genuinely anonymous. They are
+#     "blue ocean strategy" (Kim and Mauborgne), "Los secretos de la mente
+#     millonaria" (T. Harv Eker), "As armas da persuasão 2.0" (Cialdini) and
+#     a run of Indonesian and Indian exam-prep titles. Every one is a gap in
+#     Open Library, not a fact about the book.
+#   * the books that ARE anonymous carry a NAME saying so: "Anonymous"
+#     (Diary of an Oxygen Thief), "Various", "unknown author". Four of them.
+#
+# So absence means "Open Library did not record one" and nothing else, which
+# is the same distinction this whole codebase turns on: no data is not the
+# same as data saying no. A question built on it would answer yes for 173
+# books that all have authors and miss the four that do not.
+#
+# Hence a hand-set field, and hence NO question reading it yet. `no_author`
+# is written only when a person decided it, and 173 unmarked books stay
+# `unknown` rather than becoming a claim. The question also could not ship
+# today even if the field were populated: `keeps_question` needs 5% and
+# would drop it under the floor until ~250 books carry the flag. When the
+# count gets there the question is a small addition on top of this; until
+# then it would be a column of confident wrong answers.
+_NO_AUTHOR_FIELD = "no_author"
+
+
+class NoAuthorRequest(BaseModel):
+    work_key: str = Field(..., max_length=220)
+    # true records the fact; false REMOVES it, and that asymmetry is the
+    # point — "not marked" has to keep meaning "we have not decided", never
+    # "decided that it has an author".
+    no_author: bool = Field(...)
+    note: str = Field(default="", max_length=300)
+
+
+@router.post("/noauthor")
+def noauthor(body: NoAuthorRequest):
+    if not _WORK_KEY.match(body.work_key):
+        raise HTTPException(status_code=400, detail="malformed work key")
+
+    books, _ = _get_json(f"{ARTIFACT_DIR}/books.json", None)
+    if books is None:
+        raise HTTPException(status_code=502, detail="live books.json unreadable")
+    row = next((b for b in books if b.get("k") == body.work_key), None)
+    if row is None:
+        # Same refusal /display makes: a correction keyed to a book that is
+        # in no shipped row is invisible forever and indistinguishable from
+        # one that simply did not work.
+        raise HTTPException(status_code=404, detail="no such book in the shipped game")
+
+    def build(head: str):
+        current, _ = _get_json(ADMIN_CORRECTIONS_PATH, {}, head)
+        if not isinstance(current, dict):
+            current = {}
+        entry = dict(current.get(body.work_key) or {})
+        if body.no_author:
+            entry[_NO_AUTHOR_FIELD] = True
+            # THE TWO CLAIMS ARE THE SAME CLAIM NEGATED, so they cannot both
+            # stand. /authors/link writes author_name/author_key into this
+            # very entry; leaving them here beside no_author would let the
+            # next rebuild read one and a human read the other.
+            entry.pop("author_name", None)
+            entry.pop("author_key", None)
+        else:
+            entry.pop(_NO_AUTHOR_FIELD, None)
+        if entry:
+            current[body.work_key] = entry
+        else:
+            current.pop(body.work_key, None)
+
+        note = f" — {body.note}" if body.note else ""
+        return ({ADMIN_CORRECTIONS_PATH: _dump(current)},
+                f"mind reader admin: {body.work_key} "
+                f"{'has no known author' if body.no_author else 'author unknown again'}"
+                f"{note}",
+                entry.get(_NO_AUTHOR_FIELD, False))
+
+    wrote, value = _commit_with_retry(build)
+    if not wrote:
+        raise HTTPException(status_code=502, detail="commit failed")
+    return {"ok": True, "work_key": body.work_key, "no_author": bool(value),
+            "effect": "next full rebuild only",
+            "note": "Stored as a fact for the next rebuild. No question reads "
+                    "it yet — see the note above this endpoint for why, and "
+                    "for how many books would have to carry one before it "
+                    "could clear the frequency floor."}
+
+
 # ── POST /akinator/admin/question ───────────────────────────────────────
 
 class QuestionRequest(BaseModel):
@@ -338,7 +435,14 @@ def display(body: DisplayRequest):
 
 class BookRequest(BaseModel):
     title: str = Field(..., max_length=200)
-    author: str = Field(..., max_length=120)
+    # Optional ONLY together with no_author below, and only for a picked
+    # candidate — see the check in `book()`.
+    author: str = Field(default="", max_length=120)
+    # "this book has no known author", the same fact /noauthor records for a
+    # book already shipped. Written into admin_corrections.json in the SAME
+    # commit as the row, because the row itself is rebuilt from the /site/
+    # page at the next full build and would otherwise lose it.
+    no_author: bool = Field(default=False)
     year: int | None = Field(default=None, ge=1, le=2100)
     summary: str = Field(default="", max_length=4000)
     themes: list[str] = Field(default_factory=list, max_length=20)
@@ -433,6 +537,28 @@ def book(body: BookRequest):
     from book_data import BookRecord, resolve_book         # noqa: E402
     from features import normalize                         # noqa: E402
 
+    # AN EMPTY AUTHOR MAY NOT WEAKEN GROUNDING. resolve_book() matches on
+    # title AND author when it has both; with the author gone it is a title
+    # search, and a title alone lands on whatever shares that title. That is
+    # acceptable for exactly one case: the admin picked a candidate from
+    # /search, so the record is fetched by its own id and no matching
+    # happens at all. Typing a title blind with no author is refused, which
+    # is the same bar every other path here holds.
+    if not body.author.strip():
+        if not body.no_author:
+            raise HTTPException(
+                status_code=400,
+                detail="an author is required — tick “no known author” if the "
+                       "book genuinely has none, which is recorded as a fact "
+                       "rather than left as a blank")
+        if not (body.google_id or body.openlibrary_id
+                or (body.source or "").startswith("fandom")):
+            raise HTTPException(
+                status_code=400,
+                detail="a book with no author has to be picked from search: "
+                       "with no author to match on, resolving by title alone "
+                       "could land on a different book entirely")
+
     # A candidate picked from /search carries its own id — resolve_book()
     # then fetches THAT exact record instead of re-searching by title/author
     # text, which could resolve to a different edition of the same title
@@ -486,10 +612,16 @@ def book(body: BookRequest):
     # deliberately NOT a third fallback: see `_first_publish_year`.
     year = body.year or _first_publish_year(record.title, record.author)
 
+    # A picked record can carry an author the admin has just said it does not
+    # have. Theirs is the verdict — the whole premise of this page is that a
+    # person can be right where the catalogue is not — so the record's author
+    # is dropped rather than quietly kept beside the flag.
+    author = "" if body.no_author else record.author
+
     doc = {
         "key": "/site/admin-" + normalize(record.title).replace(" ", "-"),
         "title": record.title,
-        "author_name": [record.author] if record.author else [],
+        "author_name": [author] if author else [],
         "author_key": [],
         "first_publish_year": year,
         "subject": list(record.categories or []) + list(body.themes or []),
@@ -506,12 +638,31 @@ def book(body: BookRequest):
     # an admin who adds a book without typing a summary gets a row that
     # answers `unknown` to every trait question, which is the thin-row
     # problem `_mark_uncomputed_unknown` documents, not a fix for it.
+    # The flag has to be durable, not just present on this row: the next full
+    # rebuild reconstructs a /site/ book from its published page, where there
+    # is nowhere to say "no author" — so it goes through the same corrections
+    # file /noauthor writes, in the same commit as the row.
+    extra: dict[str, bytes] = {}
+    if body.no_author:
+        current, _ = _get_json(ADMIN_CORRECTIONS_PATH, {})
+        if not isinstance(current, dict):
+            current = {}
+        entry = dict(current.get(doc["key"]) or {})
+        entry[_NO_AUTHOR_FIELD] = True
+        current[doc["key"]] = entry
+        extra[ADMIN_CORRECTIONS_PATH] = _dump(current)
+
     result = append_book_row(
         doc, prose=(body.summary or record.description or ""),
+        extra_files=extra or None,
         commit_message=f"mind reader admin: +1 book ({record.title})",
         manual_answers=body.answers or None)
     if not result.get("ok"):
         raise HTTPException(status_code=502,
                             detail=result.get("reason", "append failed"))
+    # `author`, not `record.author`: the row that was actually written is
+    # what the page should confirm back, or a book stored with no author
+    # would be reported as being by whoever the catalogue named.
     return {"ok": True, "effect": "instant", "key": doc["key"],
-            "title": record.title, "author": record.author, "year": year}
+            "title": record.title, "author": author,
+            "no_author": bool(body.no_author), "year": year}
