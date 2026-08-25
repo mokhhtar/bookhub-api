@@ -220,7 +220,21 @@ td.auEditCell{white-space:normal}
    one table only: the books table on the other tab must keep sizing to its
    (much simpler) content. */
 table.qhost{table-layout:fixed}
-.badge{font-size:11px;font-weight:600;padding:1px 7px;border-radius:3px;background:var(--line)}
+/* The identity column holds the one string on this page with no spaces in
+   it — name:lord george gordon byron george gordon byron is 48 characters —
+   and it inherits nowrap from the generic th,td rule while its column is
+   capped at 20% by table-layout:fixed. Measured in a browser: 502px of
+   content in a 216px cell, with the "name only" badge printed ON TOP of the
+   id rather than after it. Only visible when rendered; the emitted HTML is
+   perfectly correct. Fourth instance of this same class of bug on this page
+   (see the two notes above) and the same shape every time — an inherited
+   nowrap meeting content that finally got long enough to show it.
+   The break is scoped to the <code>, not the cell: applied to the cell it
+   also broke "id guessed" across two lines mid-label, which is the fix
+   making a second, smaller mess of the same kind. Badges never wrap. */
+td.ident{white-space:normal}
+td.ident code{overflow-wrap:anywhere}
+.badge{font-size:11px;font-weight:600;padding:1px 7px;border-radius:3px;background:var(--line);white-space:nowrap}
 .badge.off{color:var(--work)}
 .badge.dup{color:var(--wait);cursor:pointer;border:1px solid transparent}
 .badge.dup:hover{border-color:var(--wait)}
@@ -1521,6 +1535,9 @@ function auNorm(s){
 
 function buildAuthorRows(){
   const per = (authorsData.books || []).map((r) => Array.isArray(r) ? r : []);
+  // Every id at an index below this came from the BUILD and is exactly what
+  // AuthorIndex computed. Everything above it is this file's guess.
+  const built = per.length;
   // Padding for rows appended since the last full rebuild — see above.
   for (let i = per.length; i < books.length; i++){
     const nk = auNorm(books[i].a || "");
@@ -1531,7 +1548,23 @@ function buildAuthorRows(){
 
   authorById = {};
   per.forEach((ids, i) => ids.forEach((id, slot) => {
-    const p = authorById[id] || (authorById[id] = {id, name:"", books:[]});
+    const p = authorById[id] || (authorById[id] = {id, name:"", books:[], approx:true});
+    // AN ID THIS PAGE GUESSED IS NOT AN IDENTITY, and the difference is not
+    // cosmetic. auNorm above folds case, diacritics and punctuation, but
+    // canonical_author in authors.py ALSO strips catalogue date suffixes and
+    // un-inverts "Last, First" — so a padded row for "Lord George Gordon
+    // Byron, 1788-" is called name:lord george gordon byron 1788- here and
+    // name:lord george gordon byron by the build, and "Lord George Gordon
+    // Byron, George Gordon Byron" lands on a different token order again.
+    // The first of those two is not even a key the server will accept:
+    // is_valid_key re-derives it and refuses anything that does not match.
+    //
+    // So an id is marked approximate unless a BUILD row asserted it, and
+    // auSave asks the server for the real one before writing. Copying
+    // canonical_author's rules into this file instead would be a fourth
+    // normalizer to keep in step — the exact thing author_overrides.py's
+    // docstring says produces keys that silently match nothing.
+    if (i < built) p.approx = false;
     p.books.push(i);
     // books.json's 'a' is the FIRST author only, so it names ids[0] and
     // nothing else. Claiming it for a co-author would put the lead author's
@@ -1543,7 +1576,9 @@ function buildAuthorRows(){
   // moment it was created, and Add-a-book — which will not accept an
   // author who has no profile — could never be unblocked.
   Object.keys(authorOverrides).forEach((id) => {
-    if (!authorById[id]) authorById[id] = {id, name:"", books:[], declared:true};
+    // A key already in the overlay came back from the server, so it is real.
+    if (!authorById[id]) authorById[id] = {id, name:"", books:[], declared:true,
+                                           approx:false};
   });
   Object.values(authorById).forEach((p) => {
     if (!p.name) p.name = (listed[p.id] || {}).n
@@ -1722,11 +1757,19 @@ function renderAuthorDupes(){
       + '<span class="sg-none">' + esc(p.id) + ", " + p.books.length
       + (p.books.length === 1 ? " book" : " books") + "</span><br>"
       + '<span class="sg-none">' + esc(auTitles(p)) + "</span>"
-      + (auMergeable(d)
-          ? (p.id.startsWith("name:") ? ""
-             : '<br><button class="act ghost auMerge" data-into="' + esc(p.id)
-               + '" data-alias="' + esc(other.name) + '">Fold \\u201c'
-               + esc(other.name) + '\\u201d into this one</button>')
+      // THE BUTTON BELONGS TO THE SIDE THE OTHER ONE CAN BE FOLDED INTO, and
+      // the test is on the OTHER side, not this one. It used to ask whether
+      // THIS side had an Open Library key, which is right for an OL-vs-name
+      // pair by accident and wrong for name-vs-name: both sides failed it, so
+      // five of the seven mergeable pairs — the whole Byron cluster, one poet
+      // split across four identities — printed "Folding adds one name as an
+      // alias of the other" above no button at all. An alias is only ever
+      // consulted for an author with NO key, so what has to be true is that
+      // the side being folded IN has none; where it is going does not matter.
+      + (other.id.startsWith("name:")
+          ? '<br><button class="act ghost auMerge" data-into="' + esc(p.id)
+            + '" data-alias="' + esc(other.name) + '">Fold \\u201c'
+            + esc(other.name) + '\\u201d into this one</button>'
           : "") + "</dd>";
     return '<div class="sg"><div class="sg-head"><span class="sg-reason">'
       + esc(d.why) + "</span></div>"
@@ -1773,9 +1816,12 @@ function renderAuthors(filter){
       + (p.declared && !p.books.length
           ? ' <span class="badge" title="A profile with no book yet. Created here so the author can be picked when adding one.">no books yet</span>'
           : "")
-      + "</td><td><code>" + esc(p.id) + "</code>"
+      + '</td><td class="ident"><code>' + esc(p.id) + "</code>"
       + (p.id.startsWith("name:")
           ? ' <span class="badge" title="No Open Library author key. Identified by name alone \\u2014 the fragile case.">name only</span>'
+          : "")
+      + (p.approx
+          ? ' <span class="badge off" title="This page worked the id out from the name, because the book was added after the last full rebuild and authors.json has not caught up. The build folds names by rules this page does not copy, so the real id is asked for from the server before anything is written.">id guessed</span>'
           : "") + "</td>"
       + '<td class="rich">' + p.books.length + "</td>"
       + "<td>" + (nFacts || nAl
@@ -1969,15 +2015,52 @@ function renderBookHits(host, filter, authorId){
     : '<p class="status">No match.</p>';
 }
 
+// An id this page guessed, mapped to the one the server says the build
+// computes. Cached so a second write on the same author costs no round trip,
+// and so the row keeps showing its overlay under the id it is drawn with.
+let auReal = {};
+
 async function auSave(body, okMsg){
   setStatus("auStatus", "Writing…");
+  // THE SERVER COMPUTES THE KEY. Same rule the "create a profile" flow
+  // already states: the key has to be exactly what the build computes, and
+  // this page must never hold a second copy of that rule. Only asked for
+  // when the id came from padding rather than from the build — see
+  // buildAuthorRows — because a build id is already the real one and asking
+  // about it could only make it worse: books.json carries the DISPLAY name,
+  // which display_overrides.json is allowed to rewrite, so resolving that
+  // string answers about a name the corpus may not hold. For a padded row
+  // the display name is the only name there is, so that limit stands; it is
+  // narrower than the bug it replaces, which was every padded row.
+  const shown = body.key;
+  if (body.key.startsWith("name:")){
+    const p = authorById[body.key];
+    if (auReal[body.key]) body = Object.assign({}, body, {key: auReal[body.key]});
+    else if (p && p.approx && p.name){
+      const got = await post("/api/authors/resolve", {name: p.name});
+      if (got && got.name_key && got.name_key !== body.key){
+        auReal[shown] = got.name_key;
+        body = Object.assign({}, body, {key: got.name_key});
+      }
+    }
+  }
   const r = await post("/api/authors/save", body);
   if (r.entry) authorOverrides[r.key] = r.entry;
   else delete authorOverrides[r.key];
+  // The overlay is filed under the REAL key, but the row on screen is drawn
+  // under the shown one. Without this the editor would go blank the moment
+  // it saved, which reads exactly like the write having failed.
+  if (shown !== r.key){
+    if (r.entry) authorOverrides[shown] = r.entry;
+    else delete authorOverrides[shown];
+  }
   buildAuthorRows();
-  if (auOpenId === r.key) auOpen(r.key);
+  if (auOpenId === shown) auOpen(shown);
   renderAuthors(document.getElementById("auSearch").value);
-  setStatus("auStatus", okMsg + " — effect: " + r.effect, true);
+  setStatus("auStatus", okMsg + " — effect: " + r.effect
+    + (shown !== r.key ? " (written as " + r.key + ", which is what the build "
+       + "computes for this name — the id shown here is this page's own "
+       + "approximation for a book added since the last rebuild)" : ""), true);
   return r;
 }
 
