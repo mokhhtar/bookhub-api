@@ -74,6 +74,8 @@ from tools.akinator_drain import (                                # noqa: E402
     _load_locked,
 )
 from tools.akinator_learn import _book_states                     # noqa: E402
+# The compare-and-swap wrapper, not a second copy of the retry rule.
+from tools.akinator_sync import _commit_with_retry                # noqa: E402
 
 # Importing tools.akinator_admin above is what puts scripts/akinator on
 # sys.path, so these two resolve. Stated rather than repeated: a second path
@@ -448,61 +450,70 @@ def save(body: SaveRequest):
                    "name:{merge_key} exactly as the build computes it — "
                    "call /authors/resolve to get the right one")
 
-    current, _ = _get_json(AUTHOR_OVERRIDES_PATH, {})
-    if not isinstance(current, dict):
-        current = {}
-    entry = dict(current.get(key) or {})
-    facts = dict(entry.get("facts") or {})
-    aliases = list(entry.get("aliases") or [])
     listed, per_book, shipped_names = _shipped()
-
-    if body.facts is not None:
-        unknown_ids = sorted(set(body.facts) - set(AUTHOR_QUESTIONS))
-        if unknown_ids:
-            raise HTTPException(
-                status_code=400,
-                detail=f"not author questions: {unknown_ids} — "
-                       f"settable ids are {sorted(AUTHOR_QUESTIONS)}")
-        # `null` is a VERDICT, not a deletion: it forces the question back to
-        # unknown over whatever Wikidata says, which is the answer this
-        # codebase's central rule most often wants. Clearing an override is
-        # done by leaving the id out of `facts` entirely.
-        facts = dict(body.facts)
-
-    if body.aliases is not None:
-        aliases = _clean_aliases(body.aliases, key, current, shipped_names)
-    if body.add_aliases:
-        merged = aliases + [a for a in body.add_aliases
-                            if AO.name_key(a) not in
-                            {AO.name_key(x) for x in aliases}]
-        aliases = _clean_aliases(merged, key, current, shipped_names)
-
-    if facts or aliases or body.declare:
-        current[key] = {"facts": facts, "aliases": aliases}
-    else:
-        # An empty entry is not a correction, it is clutter that makes the
-        # file look like it says something. Same reasoning as /display
-        # dropping a work key whose overrides were all cleared — unless it
-        # was DECLARED, in which case emptiness is the point: it says an
-        # author exists and has been reviewed, nothing more.
-        current.pop(key, None)
-
     note = f" — {body.note}" if body.note else ""
-    what = []
-    if body.facts is not None:
-        what.append(f"{len(facts)} fact(s)")
-    if body.aliases is not None or body.add_aliases:
-        what.append(f"{len(aliases)} alias(es)")
-    wrote = _commit_files(
-        {AUTHOR_OVERRIDES_PATH: _dump(current)},
-        f"mind reader admin: author {key} — {', '.join(what) or 'cleared'}{note}")
+
+    # The overlay is read at the commit this write will be parented on, not
+    # at "main" — see akinator_sync._get_file. Merging a duplicate author is
+    # several saves in a row against one small file, which is precisely the
+    # pattern that lost cells out of overrides.json.
+    def build(head: str):
+        current, _ = _get_json(AUTHOR_OVERRIDES_PATH, {}, head)
+        if not isinstance(current, dict):
+            current = {}
+        entry = dict(current.get(key) or {})
+        facts = dict(entry.get("facts") or {})
+        aliases = list(entry.get("aliases") or [])
+
+        if body.facts is not None:
+            unknown_ids = sorted(set(body.facts) - set(AUTHOR_QUESTIONS))
+            if unknown_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"not author questions: {unknown_ids} — "
+                           f"settable ids are {sorted(AUTHOR_QUESTIONS)}")
+            # `null` is a VERDICT, not a deletion: it forces the question back
+            # to unknown over whatever Wikidata says, which is the answer this
+            # codebase's central rule most often wants. Clearing an override is
+            # done by leaving the id out of `facts` entirely.
+            facts = dict(body.facts)
+
+        if body.aliases is not None:
+            aliases = _clean_aliases(body.aliases, key, current, shipped_names)
+        if body.add_aliases:
+            merged = aliases + [a for a in body.add_aliases
+                                if AO.name_key(a) not in
+                                {AO.name_key(x) for x in aliases}]
+            aliases = _clean_aliases(merged, key, current, shipped_names)
+
+        if facts or aliases or body.declare:
+            current[key] = {"facts": facts, "aliases": aliases}
+        else:
+            # An empty entry is not a correction, it is clutter that makes the
+            # file look like it says something. Same reasoning as /display
+            # dropping a work key whose overrides were all cleared — unless it
+            # was DECLARED, in which case emptiness is the point: it says an
+            # author exists and has been reviewed, nothing more.
+            current.pop(key, None)
+
+        what = []
+        if body.facts is not None:
+            what.append(f"{len(facts)} fact(s)")
+        if body.aliases is not None or body.add_aliases:
+            what.append(f"{len(aliases)} alias(es)")
+        return ({AUTHOR_OVERRIDES_PATH: _dump(current)},
+                f"mind reader admin: author {key} — "
+                f"{', '.join(what) or 'cleared'}{note}",
+                current.get(key))
+
+    wrote, saved_entry = _commit_with_retry(build)
     if not wrote:
         raise HTTPException(status_code=502, detail="commit failed")
 
     return {
         "ok": True,
         "key": key,
-        "entry": current.get(key),
+        "entry": saved_entry,
         "effect": "next full rebuild only",
         "note": "facts feed matrix bits and aliases feed the author grouping; "
                 "only a local build_matrix.py run recomputes either. Merging "
@@ -620,58 +631,69 @@ def link(body: LinkRequest):
             lead = books[i].get("k")
             break
 
-    raw_ov, _ = _get_json(AUTHOR_OVERRIDES_PATH, {})
-    facts, source = _author_facts_now(
-        key, lead, raw_ov if isinstance(raw_ov, dict) else {})
-
-    files: dict[str, bytes] = {}
-
-    # 1. durable: the corpus row itself, at the next rebuild
-    corrections, _ = _get_json(ADMIN_CORRECTIONS_PATH, {})
-    if not isinstance(corrections, dict):
-        corrections = {}
-    entry = dict(corrections.get(body.work_key) or {})
-    previous = entry.get("author_name")
-    entry["author_name"] = [name]
-    entry["author_key"] = [ol_key] if ol_key else []
-    corrections[body.work_key] = entry
-    files[ADMIN_CORRECTIONS_PATH] = _dump(corrections)
-
-    # 2. instant: what the reveal prints
-    display, _ = _get_json(DISPLAY_PATH, {})
-    if not isinstance(display, dict):
-        display = {}
-    renamed = False
-    if (row.get("a") or "") != name:
-        d = dict(display.get(body.work_key) or {})
-        d["a"] = name
-        display[body.work_key] = d
-        files[DISPLAY_PATH] = _dump(display)
-        renamed = True
-
-    # 3. instant: the author's answers, as clamps the drain will not touch
-    raw, _ = _get_json(OVERRIDES_PATH, {})
-    live = raw if isinstance(raw, dict) else {}
-    locked = _load_locked()
-    if facts:
-        cells = dict(live.get(body.work_key) or {})
-        held = list(locked.get(body.work_key) or [])
-        for qid, value in facts.items():
-            cells[qid] = CLAMP_HIGH if value else CLAMP_LOW
-            if qid not in held:
-                held.append(qid)
-        live[body.work_key] = cells
-        locked[body.work_key] = held
-        files[OVERRIDES_PATH] = _dump_shipped(live)
-        files[LOCKED_PATH] = _dump(locked)
-
     note = f" — {body.note}" if body.note else ""
-    wrote = _commit_files(
-        files,
-        f"mind reader admin: {body.work_key} is by {name} "
-        f"({key}), {len(facts)} answer(s) applied{note}")
+
+    # ALL FOUR FILES AT ONE COMMIT, read and written. Linking touches
+    # admin_corrections, display_overrides, overrides and overrides_locked
+    # together; reading them at four independent "main"s could mix a fresh
+    # snapshot of one with a stale snapshot of another, and writing the pair
+    # back would erase whatever landed in between. That is not hypothetical
+    # here — the two clamp files are the ones it already happened to.
+    def build(head: str):
+        raw_ov, _ = _get_json(AUTHOR_OVERRIDES_PATH, {}, head)
+        facts, source = _author_facts_now(
+            key, lead, raw_ov if isinstance(raw_ov, dict) else {})
+
+        files: dict[str, bytes] = {}
+
+        # 1. durable: the corpus row itself, at the next rebuild
+        corrections, _ = _get_json(ADMIN_CORRECTIONS_PATH, {}, head)
+        if not isinstance(corrections, dict):
+            corrections = {}
+        entry = dict(corrections.get(body.work_key) or {})
+        previous = entry.get("author_name")
+        entry["author_name"] = [name]
+        entry["author_key"] = [ol_key] if ol_key else []
+        corrections[body.work_key] = entry
+        files[ADMIN_CORRECTIONS_PATH] = _dump(corrections)
+
+        # 2. instant: what the reveal prints
+        display, _ = _get_json(DISPLAY_PATH, {}, head)
+        if not isinstance(display, dict):
+            display = {}
+        renamed = False
+        if (row.get("a") or "") != name:
+            d = dict(display.get(body.work_key) or {})
+            d["a"] = name
+            display[body.work_key] = d
+            files[DISPLAY_PATH] = _dump(display)
+            renamed = True
+
+        # 3. instant: the author's answers, as clamps the drain will not touch
+        raw, _ = _get_json(OVERRIDES_PATH, {}, head)
+        live = raw if isinstance(raw, dict) else {}
+        locked = _load_locked(head)
+        if facts:
+            cells = dict(live.get(body.work_key) or {})
+            held = list(locked.get(body.work_key) or [])
+            for qid, value in facts.items():
+                cells[qid] = CLAMP_HIGH if value else CLAMP_LOW
+                if qid not in held:
+                    held.append(qid)
+            live[body.work_key] = cells
+            locked[body.work_key] = held
+            files[OVERRIDES_PATH] = _dump_shipped(live)
+            files[LOCKED_PATH] = _dump(locked)
+
+        return (files,
+                f"mind reader admin: {body.work_key} is by {name} "
+                f"({key}), {len(facts)} answer(s) applied{note}",
+                (facts, source, previous, renamed))
+
+    wrote, outcome = _commit_with_retry(build)
     if not wrote:
         raise HTTPException(status_code=502, detail="commit failed")
+    facts, source, previous, renamed = outcome
 
     return {
         "ok": True,

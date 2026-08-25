@@ -59,7 +59,8 @@ import cache  # noqa: E402
 from fastapi import APIRouter, Header, HTTPException, Query  # noqa: E402
 from tools.akinator_learn import (ARTIFACTS, COUNTS_PREFIX,  # noqa: E402
                                   TOUCHED_SET, _artifacts, _book_states)
-from tools.akinator_sync import _commit_files, _get_file  # noqa: E402
+from tools.akinator_sync import (_commit_files, _commit_with_retry,  # noqa: E402
+                                 _get_file, _head_sha)
 
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -138,13 +139,20 @@ def drain(dry_run: bool = False) -> dict:
     if not _artifacts():
         return {"ok": False, "reason": "artifacts unreadable; cannot anchor priors"}
 
-    raw, _sha = _get_file(OVERRIDES_PATH)
+    # Both files at ONE commit, and the write below is parented on it. The
+    # drain reads what the admin page writes, so an admin verdict landing
+    # mid-drain would otherwise be read as absent and written back as gone —
+    # the same loss `_get_file` documents, but a whole night's worth of it.
+    # No retry loop here: the counts stay in Redis, so a rejected commit is
+    # simply the next scheduled run's work.
+    head = _head_sha()
+    raw, _sha = _get_file(OVERRIDES_PATH, head or None)
     try:
         overrides = json.loads(raw.decode("utf-8")) if raw else {}
     except json.JSONDecodeError:
         return {"ok": False, "reason": "existing overrides.json is unparseable"}
 
-    locked = _load_locked()
+    locked = _load_locked(head or None)
 
     written = skipped = held = retired = 0
     for work_key in touched:
@@ -215,7 +223,8 @@ def drain(dry_run: bool = False) -> dict:
     payload = json.dumps(overrides, ensure_ascii=False,
                          separators=(",", ":")).encode("utf-8")
     ok = _commit_files({OVERRIDES_PATH: payload},
-                       f"mind reader: {written} learned cell(s) from play")
+                       f"mind reader: {written} learned cell(s) from play",
+                       expect_head=head or None)
     if not ok:
         # Counts are left in Redis on purpose — an uncommitted drain must be
         # retryable, and these counters are idempotent to re-read.
@@ -232,7 +241,7 @@ def drain(dry_run: bool = False) -> dict:
             "skipped": skipped, "held": held, "retired": retired}
 
 
-def _load_locked() -> dict:
+def _load_locked(ref: str | None = None) -> dict:
     """{work_key: [question_id, ...]} the owner decided by hand.
 
     An unreadable or malformed file returns {} — the drain then treats every
@@ -240,8 +249,13 @@ def _load_locked() -> dict:
     than losing the file. Refusing to drain at all because a lock list would
     not parse would be a worse trade: the locks are a refinement, the drain
     is the loop.
+
+    `ref` pins the read to one commit, so a caller that also reads
+    overrides.json sees BOTH files as they were at the same instant. They
+    are two halves of one decision and had drifted apart in exactly this
+    way: two cells are locked today with no value behind them.
     """
-    raw, _sha = _get_file(LOCKED_PATH)
+    raw, _sha = _get_file(LOCKED_PATH, ref)
     if not raw:
         return {}
     try:
@@ -419,40 +433,48 @@ def apply_taught(body: TaughtApply) -> dict:
             status_code=404,
             detail=f"'{body.question_id}' is not a question the game asks")
 
-    raw, _sha = _get_file(OVERRIDES_PATH)
-    try:
-        overrides = json.loads(raw.decode("utf-8")) if raw else {}
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=502,
-                            detail="existing overrides.json is unparseable")
-    if not isinstance(overrides, dict):
-        overrides = {}
-    locked = _load_locked()
+    # READ AND WRITE AS ONE TRANSACTION. Both files are read at a single
+    # commit and the write is parented on it, so a rapid second click cannot
+    # be built on a snapshot that predates the first. Reading `?ref=main`
+    # and hoping did lose six cells out of this very file — see `_get_file`.
+    def build(head: str):
+        raw, _sha = _get_file(OVERRIDES_PATH, head)
+        try:
+            overrides = json.loads(raw.decode("utf-8")) if raw else {}
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=502,
+                                detail="existing overrides.json is unparseable")
+        if not isinstance(overrides, dict):
+            overrides = {}
+        locked = _load_locked(head)
 
-    if body.verdict == "clear":
-        overrides.get(body.work_key, {}).pop(body.question_id, None)
-        if not overrides.get(body.work_key):
-            overrides.pop(body.work_key, None)
-        rest = [q for q in locked.get(body.work_key, []) if q != body.question_id]
-        if rest:
-            locked[body.work_key] = rest
+        if body.verdict == "clear":
+            overrides.get(body.work_key, {}).pop(body.question_id, None)
+            if not overrides.get(body.work_key):
+                overrides.pop(body.work_key, None)
+            rest = [q for q in locked.get(body.work_key, []) if q != body.question_id]
+            if rest:
+                locked[body.work_key] = rest
+            else:
+                locked.pop(body.work_key, None)
+            value = None
         else:
-            locked.pop(body.work_key, None)
-        value = None
-    else:
-        value = CLAMP_HIGH if body.verdict == "yes" else CLAMP_LOW
-        overrides.setdefault(body.work_key, {})[body.question_id] = value
-        held = locked.setdefault(body.work_key, [])
-        if body.question_id not in held:
-            held.append(body.question_id)
+            value = CLAMP_HIGH if body.verdict == "yes" else CLAMP_LOW
+            overrides.setdefault(body.work_key, {})[body.question_id] = value
+            held = locked.setdefault(body.work_key, [])
+            if body.question_id not in held:
+                held.append(body.question_id)
 
-    wrote = _commit_files({
-        OVERRIDES_PATH: json.dumps(overrides, ensure_ascii=False,
-                                   separators=(",", ":")).encode("utf-8"),
-        LOCKED_PATH: json.dumps(locked, ensure_ascii=False,
-                                indent=1).encode("utf-8"),
-    }, f"mind reader admin: {body.work_key} {body.question_id} "
-       f"-> {'cleared' if value is None else value} (reviewed by hand)")
+        return ({
+            OVERRIDES_PATH: json.dumps(overrides, ensure_ascii=False,
+                                       separators=(",", ":")).encode("utf-8"),
+            LOCKED_PATH: json.dumps(locked, ensure_ascii=False,
+                                    indent=1).encode("utf-8"),
+        }, f"mind reader admin: {body.work_key} {body.question_id} "
+           f"-> {'cleared' if value is None else value} (reviewed by hand)",
+           value)
+
+    wrote, value = _commit_with_retry(build)
     if not wrote:
         raise HTTPException(status_code=502, detail="commit failed")
 
@@ -505,43 +527,51 @@ def apply_taught_batch(body: TaughtApplyBatch) -> dict:
             status_code=404,
             detail=f"not questions the game asks: {bad_ids}")
 
-    raw, _sha = _get_file(OVERRIDES_PATH)
-    try:
-        overrides = json.loads(raw.decode("utf-8")) if raw else {}
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=502,
-                            detail="existing overrides.json is unparseable")
-    if not isinstance(overrides, dict):
-        overrides = {}
-    locked = _load_locked()
-
-    applied: dict[str, float | None] = {}
-    held = locked.get(body.work_key, [])
-    for qid, verdict in body.answers.items():
-        if verdict == "clear":
-            overrides.get(body.work_key, {}).pop(qid, None)
-            held = [q for q in held if q != qid]
-            applied[qid] = None
-        else:
-            value = CLAMP_HIGH if verdict == "yes" else CLAMP_LOW
-            overrides.setdefault(body.work_key, {})[qid] = value
-            if qid not in held:
-                held.append(qid)
-            applied[qid] = value
-    if held:
-        locked[body.work_key] = held
-    else:
-        locked.pop(body.work_key, None)
-    if not overrides.get(body.work_key):
-        overrides.pop(body.work_key, None)
-
     n = len(body.answers)
-    wrote = _commit_files({
-        OVERRIDES_PATH: json.dumps(overrides, ensure_ascii=False,
-                                   separators=(",", ":")).encode("utf-8"),
-        LOCKED_PATH: json.dumps(locked, ensure_ascii=False,
-                                indent=1).encode("utf-8"),
-    }, f"mind reader admin: {body.work_key} — {n} question(s) reviewed by hand")
+
+    # Same transaction as apply_taught, for the same reason. Batching lowers
+    # the exposure — N cells in one commit cannot lose each other — but two
+    # batches in a row race exactly as two single clicks did.
+    def build(head: str):
+        raw, _sha = _get_file(OVERRIDES_PATH, head)
+        try:
+            overrides = json.loads(raw.decode("utf-8")) if raw else {}
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=502,
+                                detail="existing overrides.json is unparseable")
+        if not isinstance(overrides, dict):
+            overrides = {}
+        locked = _load_locked(head)
+
+        applied: dict[str, float | None] = {}
+        held = locked.get(body.work_key, [])
+        for qid, verdict in body.answers.items():
+            if verdict == "clear":
+                overrides.get(body.work_key, {}).pop(qid, None)
+                held = [q for q in held if q != qid]
+                applied[qid] = None
+            else:
+                value = CLAMP_HIGH if verdict == "yes" else CLAMP_LOW
+                overrides.setdefault(body.work_key, {})[qid] = value
+                if qid not in held:
+                    held.append(qid)
+                applied[qid] = value
+        if held:
+            locked[body.work_key] = held
+        else:
+            locked.pop(body.work_key, None)
+        if not overrides.get(body.work_key):
+            overrides.pop(body.work_key, None)
+
+        return ({
+            OVERRIDES_PATH: json.dumps(overrides, ensure_ascii=False,
+                                       separators=(",", ":")).encode("utf-8"),
+            LOCKED_PATH: json.dumps(locked, ensure_ascii=False,
+                                    indent=1).encode("utf-8"),
+        }, f"mind reader admin: {body.work_key} — {n} question(s) reviewed by hand",
+           applied)
+
+    wrote, applied = _commit_with_retry(build)
     if not wrote:
         raise HTTPException(status_code=502, detail="commit failed")
 

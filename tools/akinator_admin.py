@@ -118,8 +118,15 @@ _QUESTION_ID = re.compile(r"^[a-z]+:[a-z0-9_]{1,40}$")
 _CORRECTABLE_FIELDS = {"first_publish_year"}
 
 
-def _get_json(path: str, default):
-    raw, sha = _get_file(path)
+def _get_json(path: str, default, ref: str | None = None):
+    """(parsed, blob sha), read at `ref` when the caller is about to write.
+
+    Pass the commit a write will be parented on for any file this call is
+    going to modify — see `akinator_sync._get_file` for the six cells that
+    were silently erased by reading the branch name instead. Read-only
+    lookups (the shipped artifacts) can leave it out.
+    """
+    raw, sha = _get_file(path, ref)
     if not raw:
         return default, sha
     try:

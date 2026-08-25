@@ -74,17 +74,60 @@ def _url(path: str) -> str:
     return f"{GITHUB_API}/repos/{GITHUB_REPO}/contents/{path}"
 
 
-def _get_file(path: str) -> tuple[bytes, str]:
-    """(raw bytes, blob sha). Empty bytes when absent."""
+def _head_sha() -> str:
+    """The branch tip, read through the Git Data API. "" if unreadable.
+
+    A SEPARATE REQUEST ON PURPOSE, and the reason is measured. See
+    `_get_file` below: the Contents API's `?ref=main` is served from a cache
+    that lags a commit by seconds, while `/git/ref/heads/{branch}` is not.
+    Resolving the branch here and reading blobs at the resulting COMMIT is
+    what makes a read-modify-write see its own last write.
+    """
+    r = httpx.get(f"{GITHUB_API}/repos/{GITHUB_REPO}/git/ref/heads/{GITHUB_BRANCH}",
+                  headers=_HEADERS, timeout=30.0)
+    if r.status_code != 200:
+        log.warning("could not resolve %s: HTTP %s", GITHUB_BRANCH, r.status_code)
+        return ""
+    return (r.json().get("object") or {}).get("sha", "") or ""
+
+
+def _get_file(path: str, ref: str | None = None) -> tuple[bytes, str]:
+    """(raw bytes, blob sha) at a specific commit. Empty bytes when absent.
+
+    THE BUG THIS SHAPE EXISTS FOR, found 2026-08-25 by reading the history
+    of the file it damaged. This used to pass `?ref=main`, and GitHub serves
+    that form from a cache which can still hold the PREVIOUS commit's blob
+    for several seconds. Every admin write in this system is a
+    read-modify-write of a small JSON file, so a stale read does not merely
+    return old data — it is written back, silently erasing the cell written
+    a moment earlier.
+
+    It happened. Over the 41 commits that built `overrides.json`, six cells
+    were lost from it and four from `overrides_locked.json`, always when two
+    admin clicks landed 4-6 seconds apart and never when they were 30+
+    seconds apart. Four hand-reviewed verdicts vanished outright
+    (`shadowslave t:powersystem`, `rezero author:american`,
+    `lordofthemysteries t:family` and `t:realevents`), and two more survived
+    as locks with no value behind them — a cell held against the drain
+    forever while asserting nothing.
+
+    A commit sha, unlike a branch name, has exactly one possible answer, so
+    reading at one is cache-safe by construction rather than by hope. `ref`
+    lets a caller resolve the head ONCE and read several files at that same
+    commit — both cheaper and a consistent snapshot, which is what
+    `_load_live_artifacts` needs and could not previously promise.
+    """
+    ref = ref or _head_sha() or GITHUB_BRANCH
     r = httpx.get(_url(path), headers=_HEADERS,
-                  params={"ref": GITHUB_BRANCH}, timeout=30.0)
+                  params={"ref": ref}, timeout=30.0)
     if r.status_code != 200:
         return b"", ""
     data = r.json()
     return base64.b64decode(data.get("content", "") or ""), data.get("sha", "") or ""
 
 
-def _commit_files(files: dict[str, bytes], message: str) -> bool:
+def _commit_files(files: dict[str, bytes], message: str,
+                  expect_head: str | None = None) -> bool:
     """Write several files in ONE commit, via the Git Trees API.
 
     Three separate Contents PUTs would be three separate commits, and a run
@@ -97,13 +140,24 @@ def _commit_files(files: dict[str, bytes], message: str) -> bool:
     later pass, so it gets a real transaction.
 
     Either all three land or none do.
+
+    `expect_head` turns that into a compare-and-swap: the commit is parented
+    on the sha the CALLER read at, and GitHub refuses a ref update that is
+    not a fast-forward, so a write racing another writer fails loudly
+    instead of overwriting them. Without it the parent is whatever HEAD is
+    now, which is the pre-existing behaviour and correct for a caller that
+    read nothing. Consistent reads (see `_get_file`) close the seconds-wide
+    window; this closes the milliseconds-wide one, which is the nightly
+    drain landing between an admin's read and their commit.
     """
     base = f"{GITHUB_API}/repos/{GITHUB_REPO}"
     try:
-        ref = httpx.get(f"{base}/git/ref/heads/{GITHUB_BRANCH}",
-                        headers=_HEADERS, timeout=30.0)
-        ref.raise_for_status()
-        head_sha = ref.json()["object"]["sha"]
+        head_sha = expect_head
+        if not head_sha:
+            ref = httpx.get(f"{base}/git/ref/heads/{GITHUB_BRANCH}",
+                            headers=_HEADERS, timeout=30.0)
+            ref.raise_for_status()
+            head_sha = ref.json()["object"]["sha"]
 
         commit = httpx.get(f"{base}/git/commits/{head_sha}",
                            headers=_HEADERS, timeout=30.0)
@@ -130,6 +184,10 @@ def _commit_files(files: dict[str, bytes], message: str) -> bool:
                              "parents": [head_sha]})
         c.raise_for_status()
 
+        # `force` is left at its default of false, which is the whole point
+        # when `expect_head` was given: the update is a fast-forward only if
+        # the branch is still where the caller read it, so a lost race is a
+        # 422 rather than a silent overwrite.
         u = httpx.patch(f"{base}/git/refs/heads/{GITHUB_BRANCH}",
                         headers=_HEADERS, timeout=30.0,
                         json={"sha": c.json()["sha"]})
@@ -138,6 +196,34 @@ def _commit_files(files: dict[str, bytes], message: str) -> bool:
     except Exception as exc:  # noqa: BLE001
         log.warning("atomic commit failed: %s", exc)
         return False
+
+
+def _commit_with_retry(build, attempts: int = 3) -> tuple[bool, object]:
+    """A read-modify-write that cannot lose the write it raced with.
+
+    `build(head_sha)` reads whatever it needs AT THAT COMMIT — passing
+    `ref=head_sha` to `_get_file` — and returns `(files, message, result)`.
+    An empty `files` means there was nothing to write, which is a success
+    with no commit. Returns `(ok, result)`.
+
+    Every admin endpoint here is read-modify-write over a small JSON file
+    and none of them held a guard; `_get_file` records what that cost. This
+    is the second half: the read is now consistent, and a commit that turns
+    out to have been parented on a superseded head is retried against the
+    new one rather than winning.
+    """
+    for attempt in range(attempts):
+        head = _head_sha()
+        if not head:
+            return False, None
+        files, message, result = build(head)
+        if not files:
+            return True, result
+        if _commit_files(files, message, expect_head=head):
+            return True, result
+        log.warning("commit at %s rejected (attempt %d/%d); rebuilding",
+                    head[:8], attempt + 1, attempts)
+    return False, None
 
 
 def _list_book_pages() -> list[str]:
@@ -274,11 +360,17 @@ def _load_live_artifacts() -> dict:
     to the live matrix needs the same self-consistency check and the same
     question_hash check first, and needed it duplicated once already (this
     function is the fix for that, not a hypothetical).
+
+    ONE commit for all four. Guard 1 compares matrix.bin's length against
+    meta.json's book count, which is only a real check if both came from the
+    same commit — four independent `?ref=main` reads could straddle a write
+    and make a consistent pair look corrupt, or a corrupt pair look fine.
     """
-    meta_raw, _ = _get_file(f"{ARTIFACT_DIR}/meta.json")
-    q_raw, _ = _get_file(f"{ARTIFACT_DIR}/questions.json")
-    books_raw, _ = _get_file(f"{ARTIFACT_DIR}/books.json")
-    matrix, _ = _get_file(f"{ARTIFACT_DIR}/matrix.bin")
+    at = _head_sha() or None
+    meta_raw, _ = _get_file(f"{ARTIFACT_DIR}/meta.json", at)
+    q_raw, _ = _get_file(f"{ARTIFACT_DIR}/questions.json", at)
+    books_raw, _ = _get_file(f"{ARTIFACT_DIR}/books.json", at)
+    matrix, _ = _get_file(f"{ARTIFACT_DIR}/matrix.bin", at)
     if not (meta_raw and q_raw and books_raw and matrix):
         return {"ok": False, "reason": "artifacts missing or unreadable"}
 
