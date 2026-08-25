@@ -123,6 +123,10 @@ const ROUTES = {
   // One commit for every reviewed question on the Edit-a-book tab, instead
   // of one per Yes/No/Clear click — see akinator_drain.py's apply_taught_batch.
   "/api/taught/apply_batch": relay("/akinator/admin/taught/apply_batch"),
+  // Read-only: every hand-set clamp against what the CURRENT matrix says
+  // about the same cell. A clamp outlives the correction that made it
+  // unnecessary, and nothing else in this system would ever mention it.
+  "/api/taught/audit": relay("/akinator/admin/taught/audit"),
   // Verdicts on scripts/akinator/propose_questions.py's mined candidates —
   // the candidates themselves are read straight off question_candidates.json
   // by the client, same as books.json/questions.json; only the decision
@@ -396,6 +400,22 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
     <th title="What tonight's drain would write, if the cell ever clears the 8-play floor.">Drain would</th><th></th></tr></thead>
     <tbody id="tgRows"></tbody>
   </table></div>
+
+  <h2 style="margin-top:30px">Clamps the rebuilt table has caught up with <span class="badge" id="auditPill"></span></h2>
+  <p class="sub" style="margin-bottom:14px">Every cell you clamped by hand is held against the drain
+  <strong>forever</strong>, until you clear it. So when a rebuild reaches a different conclusion — an author link
+  now writes into admin_corrections.json, and book_traits() recomputes from it — the old clamp goes on overriding
+  the new answer silently. This is the only place that says so.
+  <br><br>A clamp counts as doing nothing only when it equals what the engine would answer <em>without</em> it, and
+  for an absent cell that is absence_confidence(richness) — 0.45 on a bare record, 0.15 only on a richly documented
+  one — never a flat 0.15. Comparing states instead of values would offer to delete clamps that are actually
+  holding a cell, so it compares values. Conflicts are shown and never decided here.</p>
+  <div class="row" style="margin-bottom:12px">
+    <button class="act ghost" id="adReload">Run the audit</button>
+    <button class="act ghost" id="adClear" disabled>Clear what is doing nothing</button>
+    <span class="status" id="adStatus" style="margin:0"></span>
+  </div>
+  <div id="adRows"></div>
 </section>
 
 <section id="suggestions">
@@ -2546,6 +2566,118 @@ async function loadTaught(){
 }
 
 document.getElementById("tgReload").addEventListener("click", loadTaught);
+
+// ── the clamp audit ──────────────────────────────────────────────────────
+//
+// NOT LOADED WITH THE PAGE. Every other count on this page is a queue that
+// grows on its own and wants a badge; this one only changes when the owner
+// rebuilds the corpus, so polling it on every load would spend a Render
+// wake-up on an answer that is almost always the same one.
+let auditRows = [];
+
+const AUDIT_WHY = {
+  conflicts: "The table now says the OPPOSITE. One of the two is out of date "
+    + "and only you can say which.",
+  orphan_lock: "Held against the drain with no value behind it — it asserts "
+    + "nothing and only stops the cell being learned. Safe to clear.",
+  stale: "The book or the question is no longer in the shipped game, so the "
+    + "lock guards a cell that is not there.",
+  redundant: "The engine would answer exactly this without the clamp. Safe "
+    + "to clear.",
+  stronger: "Same answer, held firmer than the record alone would justify. "
+    + "That is a standing assertion, not drift — left alone.",
+  asserts: "The table asserts nothing here, so the clamp is the only answer. "
+    + "This is what most of them are for.",
+};
+
+function renderAudit(counts){
+  const host = document.getElementById("adRows");
+  const shown = auditRows.filter((r) => r.verdict !== "asserts");
+  const pill = document.getElementById("auditPill");
+  pill.textContent = counts.conflicts ? counts.conflicts + " to look at" : "";
+  if (!auditRows.length){
+    host.innerHTML = '<p class="status">No clamp is held anywhere. Nothing to audit.</p>';
+    return;
+  }
+  const state = (m) => m === true ? '<span class="sg-new">yes</span>'
+    : m === false ? "no" : '<span class="sg-none">no record</span>';
+  const rows = (shown.length ? shown : []).map((r) =>
+    '<tr><td class="q">' + esc(r.question_id) + '<br><span class="sg-none">'
+    + esc(r.work_key) + "</span></td>"
+    + "<td>" + (r.clamp == null ? '<span class="sg-none">none</span>' : esc(r.clamp))
+    + "</td><td>" + esc(r.without_clamp) + '<br><span class="sg-none">richness '
+    + esc(r.richness == null ? "?" : r.richness) + "</span></td>"
+    + "<td>" + state(r.matrix) + "</td>"
+    + '<td><span class="badge' + (r.verdict === "conflicts" ? "" : " off") + '">'
+    + esc(r.verdict) + "</span></td></tr>").join("");
+  host.innerHTML = '<p class="status">' + esc(auditRows.length) + " held cell(s): "
+    + Object.entries(counts).filter(([, n]) => n)
+        .map(([k, n]) => esc(n + " " + k)).join(", ") + ".</p>"
+    + (shown.length
+        ? '<div class="scroll"><table class="qtable"><colgroup><col style="width:40%">'
+          + '<col style="width:12%"><col style="width:18%"><col style="width:14%">'
+          + '<col style="width:16%"></colgroup><thead><tr><th>Cell</th><th>Clamp</th>'
+          + "<th>Without it</th><th>Table says</th><th></th></tr></thead><tbody>"
+          + rows + "</tbody></table></div>"
+        : '<p class="sg-none">Nothing needs attention — every held cell is answering a '
+          + "question the table has no record for, which is what they are for.</p>")
+    + Object.keys(AUDIT_WHY).filter((v) => counts[v])
+        .map((v) => '<p class="effect"><strong>' + esc(v) + ":</strong> "
+          + esc(AUDIT_WHY[v]) + "</p>").join("");
+}
+
+async function loadAudit(){
+  setStatus("adStatus", "Reading the live matrix against every held cell\\u2026");
+  const clear = document.getElementById("adClear");
+  clear.disabled = true;
+  try {
+    const r = await post("/api/taught/audit", {});
+    auditRows = r.cells || [];
+    renderAudit(r.counts || {});
+    const n = (r.clearable || []).length;
+    clear.disabled = !n;
+    clear.dataset.cells = JSON.stringify(r.clearable || []);
+    setStatus("adStatus", auditRows.length + " held cell(s) across " + r.books
+      + " book(s) \\u2014 " + (r.counts.conflicts || 0) + " conflict(s), "
+      + n + " doing nothing.", true);
+  } catch (err) {
+    setStatus("adStatus", String(err.message || err), false);
+  }
+}
+
+document.getElementById("adReload").addEventListener("click", loadAudit);
+
+// ONE COMMIT PER BOOK, through apply_batch — the same "one decision, one
+// write" the Edit tab and the Authors tab already hold, and the reason
+// apply_batch exists. Only redundant and orphaned cells are ever sent: a
+// conflict is a judgement and has no button here at all.
+document.getElementById("adClear").addEventListener("click", async (e) => {
+  const cells = JSON.parse(e.target.dataset.cells || "[]");
+  if (!cells.length) return;
+  const byBook = {};
+  cells.forEach((c) => {
+    (byBook[c.work_key] = byBook[c.work_key] || {})[c.question_id] = "clear";
+  });
+  const books = Object.keys(byBook);
+  if (!confirm("Clear " + cells.length + " clamp(s) across " + books.length
+      + " book(s)? Each one either equals what the engine already answers, or "
+      + "holds a cell with no value behind it. Nothing in conflict is touched.")) return;
+  e.target.disabled = true;
+  let done = 0;
+  try {
+    for (const key of books){
+      setStatus("adStatus", "Clearing " + key + "\\u2026");
+      await post("/api/taught/apply_batch", {work_key: key, answers: byBook[key]});
+      done += Object.keys(byBook[key]).length;
+    }
+    setStatus("adStatus", "Cleared " + done + " clamp(s). Re-running the audit\\u2026", true);
+    await loadAudit();
+  } catch (err) {
+    setStatus("adStatus", "Cleared " + done + " of " + cells.length + ", then stopped: "
+      + String(err.message || err) + " \\u2014 run the audit again to see what is left.", false);
+    e.target.disabled = false;
+  }
+});
 
 document.getElementById("tgRows").addEventListener("click", async (e)=>{
   if (!e.target.classList.contains("tgSet")) return;

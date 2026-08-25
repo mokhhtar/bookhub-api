@@ -370,6 +370,121 @@ def _taught_rows(limit: int = MAX_TAUGHT_BOOKS) -> tuple[list, int]:
     return rows, total, retired_rows
 
 
+def _audit_rows() -> tuple[list, dict]:
+    """Every locked cell, against what the matrix says about it TODAY.
+
+    THE GAP THIS CLOSES. A clamp written by `apply_taught`, `apply_batch` or
+    `/authors/link` is held against the drain by `overrides_locked.json`
+    FOREVER, until somebody removes it by hand. Rebuild the corpus after a
+    correction — `/authors/link` now writes `author_name`/`author_key` into
+    `admin_corrections.json`, so `book_traits()` can reach a different
+    conclusion than the clamp did — and the old clamp goes on overriding the
+    new computation silently. No warning, no indicator, nothing to look at.
+
+    WHAT "REDUNDANT" MEANS HERE, and it is NOT "the states agree". The
+    obvious test is to compare `present`/`absent` against the clamp's
+    0.90/0.15 and call a match redundant, and that test is wrong in a way
+    that would quietly weaken cells: removing a clamp does not return the
+    cell to a STATE, it returns it to a PROBABILITY, and for an absent cell
+    that probability is `absence_confidence(richness)` — 0.45 for a bare
+    record, 0.25 for a middling one, and only 0.15 for a richly documented
+    book. Measured over the four clamped books today: their richness is 1, 6,
+    13 and 13, so `absence_confidence` gives 0.45/0.35/0.25/0.25 and NOT ONE
+    absent-state clamp of 0.15 is actually redundant. Deleting the two the
+    naive test calls redundant would have moved both cells.
+
+    So the comparison is against `_matrix_prior` — the same function the
+    drain anchors its posterior with, so the audit and the loop cannot hold
+    different ideas of what a cell is worth without the clamp. Equal means
+    the clamp is genuinely doing nothing and can go; anything else is a real
+    difference for a person to look at.
+
+    Four verdicts, and only the first is ever safe to act on automatically:
+
+      redundant  the clamp equals what the engine would say anyway
+      asserts    the matrix asserts NOTHING (unknown, prior 0.5) and the
+                 clamp is the only thing answering — the common case, and
+                 the reason most of these were written
+      stronger   both point the same way and the clamp is firmer. An absent
+                 cell on a thin record answers 0.45, and an owner who looked
+                 the book up and wrote 0.15 is saying "absence really does
+                 mean something here". That is a standing assertion, not
+                 drift, and lumping it in with a contradiction would bury
+                 the rows that matter under rows that do not.
+      conflicts  the clamp and the matrix point in OPPOSITE directions. NOT
+                 resolved here, on purpose: which one is right is a
+                 judgement, and this is the same "human eye on the diff"
+                 rule the merge cards and the taught queue already keep.
+
+    A LOCK WITH NO CLAMP is reported too, as `orphan_lock`. Six of those were
+    created by the stale-read bug in `akinator_sync._get_file` — a cell held
+    against the drain forever while asserting nothing at all, which is pure
+    cost. They are safe to clear by the same argument as `redundant`.
+    """
+    art = _artifacts()
+    if not art:
+        raise HTTPException(status_code=503,
+                            detail="shipped artifacts unreadable right now — "
+                                   "this is not the same as there being no clamps")
+    head = _head_sha()
+    raw, _ = _get_file(OVERRIDES_PATH, head or None)
+    try:
+        overrides = json.loads(raw.decode("utf-8")) if raw else {}
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=502,
+                            detail="existing overrides.json is unparseable")
+    if not isinstance(overrides, dict):
+        overrides = {}
+    locked = _load_locked(head or None)
+
+    live_ids = set(art.get("qids") or ())
+    index = art.get("index") or {}
+    rows: list[dict] = []
+    for work_key in sorted(locked):
+        states = _book_states(work_key)
+        shipped = work_key in index
+        for qid in locked[work_key]:
+            clamp = (overrides.get(work_key) or {}).get(qid)
+            prior = _matrix_prior(work_key, qid, states)
+            if not shipped or (live_ids and qid not in live_ids):
+                # The book left the shipped list, or the question was
+                # retired. Either way the lock guards a cell that is not
+                # there — reported rather than deleted, because a rebuild
+                # that dropped a book is worth noticing on its own.
+                verdict = "stale"
+            elif clamp is None:
+                verdict = "orphan_lock"
+            elif abs(clamp - prior) < 1e-9:
+                verdict = "redundant"
+            elif qid not in states:
+                verdict = "asserts"
+            elif (clamp >= 0.5) == states[qid]:
+                # Same answer, firmer. 0.5 is the split because it is what
+                # the engine treats as "tells us nothing" everywhere else.
+                verdict = "stronger"
+            else:
+                verdict = "conflicts"
+            rows.append({
+                "work_key": work_key,
+                "question_id": qid,
+                "clamp": clamp,
+                # What the engine would answer with the clamp removed. The
+                # number, not the state, because the number is the thing
+                # that would actually change.
+                "without_clamp": round(prior, 4),
+                "matrix": states.get(qid),          # True / False / None
+                "richness": (art.get("richness") or {}).get(work_key),
+                "verdict": verdict,
+            })
+
+    # Conflicts first — they are the only rows that need a decision.
+    order = {"conflicts": 0, "orphan_lock": 1, "stale": 2, "redundant": 3,
+             "stronger": 4, "asserts": 5}
+    rows.sort(key=lambda r: (order.get(r["verdict"], 9), r["work_key"], r["question_id"]))
+    counts = {v: sum(1 for r in rows if r["verdict"] == v) for v in order}
+    return rows, counts
+
+
 class TaughtApply(BaseModel):
     work_key: str = Field(..., max_length=220)
     question_id: str = Field(..., max_length=42)
@@ -402,6 +517,20 @@ def list_taught():
     rows, books, retired = _taught_rows()
     return {"ok": True, "cells": rows, "books": books,
             "min_plays": MIN_PLAYS, "retired": retired}
+
+
+@admin_router.post("/audit")
+def audit_taught():
+    """Which hand-set clamps the rebuilt matrix has caught up with."""
+    rows, counts = _audit_rows()
+    return {"ok": True, "cells": rows, "counts": counts,
+            "books": len({r["work_key"] for r in rows}),
+            "clearable": [r for r in rows
+                          if r["verdict"] in ("redundant", "orphan_lock")],
+            "note": "A clamp is redundant only when it equals what the engine "
+                    "would answer WITHOUT it, which for an absent cell is "
+                    "absence_confidence(richness) and not a flat 0.15. "
+                    "Conflicts are shown and never resolved here."}
 
 
 @admin_router.post("/apply")
