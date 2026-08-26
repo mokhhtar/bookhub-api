@@ -576,6 +576,14 @@ function renderBooks(filter){
 function setStatus(id, msg, ok){
   const el = document.getElementById(id);
   el.textContent = msg; el.className = "status " + (ok===true?"ok":ok===false?"err":"");
+  // Reported live, 2026-08-26: three real merges landed correctly in
+  // author_overrides.json while the admin saw "no evidence of success" —
+  // #auStatus sits BELOW the whole (potentially long) duplicate-pairs list,
+  // so a click on a card near the top writes a real confirmation that is
+  // simply off-screen. Only for a TERMINAL result (ok is true or false, not
+  // the null/undefined "Writing…" placeholder) — scrolling on every
+  // keystroke-triggered status would be its own annoyance.
+  if (ok === true || ok === false) el.scrollIntoView({block: "nearest", behavior: "smooth"});
 }
 
 document.getElementById("bookSearch").addEventListener("input", (e)=>renderBooks(e.target.value));
@@ -1901,6 +1909,20 @@ function auMergeable(pair){
 
 function auOverlay(id){ return authorOverrides[id] || null; }
 
+// Was this name already folded into this id? The dupe DETECTOR has no way
+// to know — computeAuthorDupes() groups purely on name-string similarity
+// and never reads authorOverrides, so a pair stays flagged identically
+// forever after a successful Fold. Checked against the SAVED data, not a
+// this-session flag, so it survives a redraw or a page reload — and reads
+// straight off authorOverrides, which is refreshed from the live file on
+// every save, not a second copy of what "folded" means.
+function auAlreadyFolded(intoId, name){
+  const ov = auOverlay(intoId);
+  const want = (name || "").trim().toLowerCase();
+  return !!(ov && Array.isArray(ov.aliases)
+    && ov.aliases.some((a) => (a || "").trim().toLowerCase() === want));
+}
+
 function auTitles(p, limit){
   return p.books.slice(0, limit || 4)
     .map((i) => books[i] ? books[i].t : "?").join(" \\u00b7 ")
@@ -1931,9 +1953,14 @@ function renderAuthorDupes(){
       // consulted for an author with NO key, so what has to be true is that
       // the side being folded IN has none; where it is going does not matter.
       + (other.id.startsWith("name:")
-          ? '<br><button class="act ghost auMerge" data-into="' + esc(p.id)
-            + '" data-alias="' + esc(other.name) + '">Fold \\u201c'
-            + esc(other.name) + '\\u201d into this one</button>'
+          ? (auAlreadyFolded(p.id, other.name)
+              ? '<br><span class="sg-new">\\u2713 Already folded into this one</span>'
+                + '<p class="effect">Still listed as a possible duplicate because the '
+                + "detector cannot see author_overrides.json \\u2014 that is expected, not "
+                + "a sign anything failed.</p>"
+              : '<br><button class="act ghost auMerge" data-into="' + esc(p.id)
+                + '" data-alias="' + esc(other.name) + '">Fold \\u201c'
+                + esc(other.name) + '\\u201d into this one</button>')
           : "") + "</dd>";
     return '<div class="sg"><div class="sg-head"><span class="sg-reason">'
       + esc(d.why) + "</span></div>"
