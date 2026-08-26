@@ -2118,9 +2118,19 @@ function authorPanelHtml(id){
     + (isLead || !p.books.length ? "" : '<p class="sg-dupe">Not the FIRST author on any '
         + "book we ship, so \\u201cthe game says\\u201d below is read from a row whose facts "
         + "come from somebody else.</p>")
+    // ONE PER LINE, NOT COMMA-SEPARATED — found live, 2026-08-26: "Lord George
+    // Gordon Byron, 1788-" is a real catalogued name that itself CONTAINS a
+    // comma (Open Library's own "Name, birth-" convention). A comma-joined
+    // field has no way to tell that internal comma apart from a delimiter,
+    // so re-saving the field after it already held that name split it into
+    // "Lord George Gordon Byron" and "1788-" — the second half carries no
+    // letters, name_key() returns empty, and the save 400s. A newline can
+    // never appear inside a name typed into a single-line browser field, so
+    // it is the one delimiter that cannot collide with real content.
     + '<div class="field"><label>Aliases \\u2014 other spellings that fold into this author, '
-      + "comma-separated. Only consulted for a book with no Open Library key.</label>"
-      + '<input type="text" class="auAliases" value="' + esc(auDraft.aliases.join(", ")) + '"></div>'
+      + "one per line. Only consulted for a book with no Open Library key.</label>"
+      + '<textarea class="auAliases" rows="' + Math.max(2, auDraft.aliases.length) + '">'
+      + esc(auDraft.aliases.join("\\n")) + '</textarea></div>'
     + '<div class="scroll"><table class="qtable"><colgroup><col style="width:42%">'
       + '<col style="width:15%"><col style="width:15%"><col style="width:28%"></colgroup>'
       + "<thead><tr><th>Question</th>"
@@ -2302,7 +2312,7 @@ document.getElementById("auDupes").addEventListener("click", async (e) => {
 // ONE listener for the whole table, because the editor lives inside it now.
 document.getElementById("auRows").addEventListener("input", (e) => {
   if (e.target.classList.contains("auAliases")){
-    auDraft.aliases = e.target.value.split(",").map((s) => s.trim()).filter(Boolean);
+    auDraft.aliases = e.target.value.split("\\n").map((s) => s.trim()).filter(Boolean);
     // Only the two buttons are refreshed, never the whole panel: redrawing
     // here would take the caret out of the box being typed in.
     const card = e.target.closest(".card");
@@ -3032,8 +3042,12 @@ function renderFandom(){
       + '<div class="sg-head"><span class="sg-reason"><code>' + esc(c.subdomain) + "</code>"
       + (seed ? " \\u2014 " + seed : "") + "</span></div>"
       + (c.why ? '<p class="sg-none">' + esc(c.why) + "</p>" : "")
-      + '<div class="field"><label>Aliases, comma-separated (the titles/spellings a reader might type)</label>'
-      + '<input type="text" class="fdAliases" value="' + esc(seed) + '"></div>'
+      // One per line, not comma-separated — see the Authors editor's aliases
+      // field for why: a title that itself contains a comma (a subtitle, a
+      // translated variant with punctuation) would otherwise be silently
+      // torn in two on save.
+      + '<div class="field"><label>Aliases, one per line (the titles/spellings a reader might type)</label>'
+      + '<textarea class="fdAliases" rows="2">' + esc(seed) + '</textarea></div>'
       + '<div class="row">'
       + '<div class="field" style="flex:1"><label>Author (optional \\u2014 leave blank unless you verified it '
       + "on the wiki; a wrong author here poisons every book this resolver enriches for them, not just this "
@@ -3088,7 +3102,7 @@ document.getElementById("fdList").addEventListener("click", async (e) => {
   }
 
   if (e.target.classList.contains("fdApprove")){
-    const aliases = card.querySelector(".fdAliases").value.split(",")
+    const aliases = card.querySelector(".fdAliases").value.split("\\n")
       .map((s) => s.trim()).filter(Boolean);
     const author = card.querySelector(".fdAuthor").value.trim();
     const cover_url = card.querySelector(".fdCover").value.trim();
