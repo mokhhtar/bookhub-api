@@ -364,13 +364,14 @@ def _clean_aliases(names: list[str], key: str, overrides: dict,
                    shipped_names: dict[str, str]) -> list[str]:
     """Aliases that will actually do something, or a 400 saying why not.
 
-    Three refusals, and all three are "this would look like a correction and
-    change nothing" — the same bar `/display` sets when it refuses a rename
-    keyed to no shipped row:
+    Four refusals, and all four are "this would look like a correction and
+    change nothing — or worse, silently contradict a decision already made":
 
       * a name with no identifying content, which `merge_key` returns "" for
       * a name already claimed as an alias by a DIFFERENT entry, which
         `alias_index` would resolve to whichever key sorts first
+      * a name that IS another overlay entry's own key — see below, this is
+        the one that actually happened live
       * a name that belongs to an author the corpus already has an Open
         Library key for. `AuthorIndex` consults aliases only when there is
         no key — a real id outranks a spelling — so such an alias can never
@@ -382,6 +383,26 @@ def _clean_aliases(names: list[str], key: str, overrides: dict,
     `authors.json`'s `authors` array, and checking only that array would
     have let exactly the low-book-count authors this tab is for slip
     through with an alias that does nothing.
+
+    THE THIRD CHECK, FOUND LIVE 2026-08-26, over Lord Byron. `name:lord
+    byron` already held `lord George Gordon Noel Byron` as an alias — a
+    prior, correct Fold. The owner then separately folded `Lord Byron` INTO
+    `name:lord george gordon noel byron`, the opposite direction, on a
+    SEPARATE dupe card the same real person can appear on twice. Nothing
+    caught it: the alias-string check above only looks at OTHER entries'
+    ALIAS LISTS, and "name:lord byron" was not sitting in anyone's alias
+    list — it was a KEY, the entry it names is what everyone else's aliases
+    were pointing INTO. `alias_index()` breaks a tie between two entries
+    that both claim the other by "first key alphabetically", silently and
+    per-lookup rather than raising — so the result was not a merge at all:
+    simulated against the real 5 Byron rows, "Childe Harold's Pilgrimage"
+    (credited to plain "Lord Byron") got redirected OFF `name:lord byron`
+    and left alone under `name:lord george gordon noel byron`, splitting
+    Byron's best-known work away from the other three variants that
+    correctly consolidated. Refusing this the moment it is typed is strictly
+    better than a person having to notice a circular pair after the fact —
+    `alias_index`'s own docstring already says the admin endpoint is
+    SUPPOSED to refuse this; it just did not check for it.
     """
     out: list[str] = []
     seen = set()
@@ -407,6 +428,16 @@ def _clean_aliases(names: list[str], key: str, overrides: dict,
                 status_code=400,
                 detail=f"{alias!r} IS this entry's own key — an alias to itself "
                        f"teaches nothing")
+        if nk in overrides and nk != key:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{alias!r} is itself the key of another entry ({nk}), which "
+                       f"holds its own facts/aliases. Adding it here would point the "
+                       f"two entries at EACH OTHER, and whichever way a lookup breaks "
+                       f"the tie, the merge does not actually happen. Fold the other "
+                       f"way instead — add this entry's name as an alias on {nk} — or "
+                       f"clear {nk}'s aliases first if it should not exist as its own "
+                       f"entry at all.")
         for other, entry in overrides.items():
             if other == key or not isinstance(entry, dict):
                 continue
