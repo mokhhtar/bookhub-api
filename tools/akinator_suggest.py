@@ -223,6 +223,13 @@ def _shipped_index() -> dict:
 
 
 _TITLES: dict = {}
+_TITLES_AT = 0.0
+
+# Same hour, and the same reason, as akinator_learn._ART_TTL: held for the life
+# of the process, this went stale the moment a book was added — so a title the
+# owner had just approved still read as "not in the game", and the summarizer
+# would queue it a second time.
+_TITLES_TTL = 3600
 
 
 def _shipped_titles() -> set:
@@ -233,18 +240,23 @@ def _shipped_titles() -> set:
     second, against turning an artifact hiccup into a refusal that tells a
     reader their real book does not exist.
     """
+    global _TITLES_AT
     from features import normalize                       # noqa: E402
-    if _TITLES:
+    if _TITLES and time.time() - _TITLES_AT < _TITLES_TTL:
         return _TITLES["set"]
     try:
         import httpx
         from tools.akinator_learn import ARTIFACTS       # noqa: E402
         books = httpx.get(ARTIFACTS + "books.json", timeout=15.0).json()
     except Exception as exc:                             # noqa: BLE001
-        log.warning("could not load books.json for the title check: %s",
+        log.warning("could not refresh books.json for the title check: %s",
                     str(exc)[:90])
-        return set()
+        # Stale beats empty: a failed refresh is not evidence the catalogue
+        # emptied, and returning set() here would silently re-enable queuing
+        # for every book we already know we ship.
+        return _TITLES.get("set", set())
     _TITLES["set"] = {normalize(b.get("t") or "") for b in books}
+    _TITLES_AT = time.time()
     return _TITLES["set"]
 
 

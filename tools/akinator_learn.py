@@ -46,6 +46,7 @@ import logging
 import os
 import re
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -257,23 +258,36 @@ def submit(body: Submission, request: Request):
 
 ARTIFACTS = "https://litheca.com/games/data/akinator/"
 
-# The shipped artifacts, loaded once per process and kept: meta, the
-# question ids in column order, a work_key -> row index map, and the raw
-# packed matrix. ~75 KB of bytes plus a 5,000-entry dict — small enough to
-# hold, and it saves a fetch per submission on a free-tier instance.
+# The shipped artifacts: meta, the question ids in column order, a work_key ->
+# row index map, and the raw packed matrix. ~75 KB of bytes plus a 5,000-entry
+# dict — small enough to hold, and it saves a fetch per submission on a
+# free-tier instance.
 _ART: dict = {}
+_ART_AT = 0.0
+
+# An hour, the same figure tools/fandom.py uses for wikis.json, and for the
+# same reason: these are published artifacts that change on a deploy, not
+# constants. Held for the life of the PROCESS originally, which had a silent
+# failure mode — after a rebuild changed the question list, the server kept
+# answering with the old question_hash and rejected EVERY submission as
+# stale_client until Render happened to restart. Nothing surfaced that; the
+# endpoint answers 202 regardless.
+_ART_TTL = 3600
 
 
 def _artifacts() -> dict:
     """Lazily fetch what the consistency check and hash guard need.
 
-    Failure leaves the cache EMPTY rather than half-filled, so the next
-    request retries instead of inheriting a broken state. Every caller
+    Failure leaves the PREVIOUS artifacts in place rather than clearing them
+    (fail-open to stale, like fandom.py's loader) and, on the very first fetch
+    ever failing, leaves the cache empty rather than half-filled. Every caller
     treats an empty artifact set as "cannot check", which skips the guard
     rather than rejecting the submission — an outage here must not look
     like a wave of bad clients.
     """
-    if _ART:
+    global _ART_AT
+    now = time.time()
+    if _ART and now - _ART_AT < _ART_TTL:
         return _ART
     try:
         import httpx
@@ -283,8 +297,8 @@ def _artifacts() -> dict:
         matrix = httpx.get(ARTIFACTS + "matrix.bin", timeout=15.0).content
         if len(matrix) != meta["books"] * meta["bytes_per_row"]:
             log.warning("artifact size mismatch; consistency check disabled")
-            return {}
-        _ART.update({
+            return _ART          # stale if we have it, empty if we never did
+        fresh = {
             "meta": meta,
             "qids": [q["id"] for q in questions],
             "index": {b.get("k"): i for i, b in enumerate(books) if b.get("k")},
@@ -294,10 +308,19 @@ def _artifacts() -> dict:
             "richness": {b.get("k"): (b.get("r") or 0)
                          for b in books if b.get("k")},
             "matrix": matrix,
-        })
-    except Exception as exc:  # noqa: BLE001
-        log.warning("could not load artifacts: %s", str(exc)[:90])
+        }
+        # clear()+update() rather than a rebind, the same shape fandom.py uses:
+        # a rebuild can REMOVE a row, and merging over the old dict would keep
+        # a work_key the game no longer ships — which the membership check in
+        # submit() would then read as a real book.
         _ART.clear()
+        _ART.update(fresh)
+        _ART_AT = now
+    except Exception as exc:  # noqa: BLE001
+        # Keep whatever we already had: a refresh failing is not evidence that
+        # the artifacts changed, and going empty here would disable the
+        # membership and hash guards for everyone until the next success.
+        log.warning("could not refresh artifacts: %s", str(exc)[:90])
     return _ART
 
 

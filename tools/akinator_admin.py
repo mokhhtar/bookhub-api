@@ -47,6 +47,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -85,7 +86,8 @@ def _require_admin(x_admin_secret: str = Header(default="")) -> None:
     rule /akinator/sync states, and the reason these were already 403 on
     Render before AKINATOR_ADMIN_SECRET was configured at all.
     """
-    if not ADMIN_SECRET or x_admin_secret != ADMIN_SECRET:
+    if not ADMIN_SECRET or not secrets.compare_digest(x_admin_secret.encode("utf-8"),
+                               ADMIN_SECRET.encode("utf-8")):
         raise HTTPException(status_code=403, detail="forbidden")
 
 

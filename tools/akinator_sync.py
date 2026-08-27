@@ -40,6 +40,7 @@ import hashlib
 import json
 import logging
 import os
+import secrets
 import sys
 import time
 
@@ -681,7 +682,8 @@ def sync_endpoint(
     means the endpoint is closed, not open — a missing secret must never
     be the thing that makes a write endpoint public.
     """
-    if not SYNC_SECRET or x_sync_secret != SYNC_SECRET:
+    if not SYNC_SECRET or not secrets.compare_digest(x_sync_secret.encode("utf-8"),
+                                  SYNC_SECRET.encode("utf-8")):
         raise HTTPException(status_code=403, detail="forbidden")
     result = sync(dry_run=dry_run)
     if not result.get("ok"):

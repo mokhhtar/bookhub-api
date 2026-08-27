@@ -51,6 +51,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import secrets
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -743,7 +744,8 @@ def drain_endpoint(x_sync_secret: str = Header(default=""),
     An unset secret closes the endpoint rather than opening it — a missing
     secret must never be the thing that makes a write endpoint public.
     """
-    if not DRAIN_SECRET or x_sync_secret != DRAIN_SECRET:
+    if not DRAIN_SECRET or not secrets.compare_digest(x_sync_secret.encode("utf-8"),
+                                  DRAIN_SECRET.encode("utf-8")):
         raise HTTPException(status_code=403, detail="forbidden")
     result = drain(dry_run=dry_run)
     if not result.get("ok"):

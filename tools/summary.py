@@ -2642,7 +2642,14 @@ def summary_stream(req: SummaryRequest, background_tasks: BackgroundTasks, reque
 # unlimited requests. Bound the body in Pydantic and rate-limit per real
 # client IP (see _client_ip — Render runs uvicorn without --proxy-headers, so
 # request.client.host is the proxy, shared by everyone; the true client is the
-# first hop in X-Forwarded-For). 30000 is ~6x the largest real summary body.
+# RIGHTMOST X-Forwarded-For entry, the one Render's own proxy appended).
+#
+# This comment said "first hop" until 2026-08-27, contradicting the function it
+# points at, which has always taken hops[-1]. The leftmost entries are whatever
+# the caller sent, so "fixing" the code to match the old wording would have
+# made every rate limit in this project bypassable with one header — the note
+# is corrected here rather than deleted so nobody re-derives the wrong answer.
+# 30000 is ~6x the largest real summary body.
 LIMIT_SUMMARY_CHAT_DAILY = int(os.environ.get("SUMMARY_CHAT_DAILY", 60))
 MAX_CHAT_SUMMARY_CHARS = 30000
 MAX_CHAT_HISTORY_TURNS = 20
