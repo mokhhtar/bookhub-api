@@ -326,6 +326,19 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
   <input type="search" id="bookSearch" placeholder="Search by title or author…">
   <div class="toolbar">
     <label><input type="checkbox" id="dupOnly"> Only duplicate candidates (<span id="dupCount">0</span>)</label>
+    <select id="bookOrigin" title="How the row was added — only tracked for rows added after this filter shipped; older rows show as Unknown.">
+      <option value="">Added via: all</option>
+      <option value="resolved">Summarizer (auto-detected)</option>
+      <option value="suggestion">Reader suggestion</option>
+      <option value="manual">Manual (admin-typed)</option>
+      <option value="unknown">Unknown (bulk harvest / pre-existing)</option>
+    </select>
+    <select id="bookPeriod">
+      <option value="">Added: any time</option>
+      <option value="1">Today</option>
+      <option value="7">Last 7 days</option>
+      <option value="30">Last 30 days</option>
+    </select>
     <span id="shownCount"></span>
   </div>
   <div class="scroll"><table>
@@ -389,6 +402,19 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
   <input type="search" id="auSearch" placeholder="Find an author by name…">
   <div class="toolbar">
     <label><input type="checkbox" id="auDupOnly"> Only possible duplicates (<span id="auDupCount">0</span>)</label>
+    <select id="auOrigin" title="Matches an author with at least one book added this way — origin/date are tracked per BOOK, not per author.">
+      <option value="">Added via: all</option>
+      <option value="resolved">Summarizer (auto-detected)</option>
+      <option value="suggestion">Reader suggestion</option>
+      <option value="manual">Manual (admin-typed)</option>
+      <option value="unknown">Unknown (bulk harvest / pre-existing)</option>
+    </select>
+    <select id="auPeriod">
+      <option value="">Added: any time</option>
+      <option value="1">Today</option>
+      <option value="7">Last 7 days</option>
+      <option value="30">Last 30 days</option>
+    </select>
     <span id="auShown"></span>
     <button class="act ghost" id="auNew">New author profile</button>
   </div>
@@ -443,6 +469,19 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
   Approving runs the same action as doing it by hand on the other tabs.</p>
   <div class="row" style="margin-bottom:12px">
     <button class="act ghost" id="sgReload">Refresh</button>
+    <select id="sgReason">
+      <option value="">All reasons</option>
+      <option value="missing">Not in the game (reader)</option>
+      <option value="resolved">Found via summarizer</option>
+      <option value="wrong_year">Wrong year</option>
+      <option value="unreadable">Unreadable title</option>
+    </select>
+    <select id="sgPeriod">
+      <option value="">All time</option>
+      <option value="1">Today</option>
+      <option value="7">Last 7 days</option>
+      <option value="30">Last 30 days</option>
+    </select>
     <span class="status" id="sgStatus" style="margin:0"></span>
   </div>
   <div id="sgAsks"></div>
@@ -543,10 +582,18 @@ function renderBooks(filter){
   const rows = document.getElementById("bookRows");
   const f = (filter||"").toLowerCase();
   const dupOnly = document.getElementById("dupOnly").checked;
+  const originFilter = document.getElementById("bookOrigin").value;
+  const periodDays = parseInt(document.getElementById("bookPeriod").value, 10);
+  const cutoff = periodDays ? (Date.now() / 1000) - periodDays * 86400 : 0;
   const matching = books
     .map((b,i)=>({b,i}))
     .filter(({b,i}) => (!dupOnly || dupFlag[i])
-      && (!f || (b.t||"").toLowerCase().includes(f) || (b.a||"").toLowerCase().includes(f)));
+      && (!f || (b.t||"").toLowerCase().includes(f) || (b.a||"").toLowerCase().includes(f))
+      // Rows added before this filter shipped carry neither field — treated
+      // as "unknown" origin and excluded from every period bucket except
+      // "any time", never as a false match for either filter.
+      && (!originFilter || (b.origin || "unknown") === originFilter)
+      && (!cutoff || (b.addedAt || 0) >= cutoff));
   const shown = matching.slice(0, 300);
   document.getElementById("shownCount").textContent =
     matching.length > shown.length
@@ -588,6 +635,10 @@ function setStatus(id, msg, ok){
 
 document.getElementById("bookSearch").addEventListener("input", (e)=>renderBooks(e.target.value));
 document.getElementById("dupOnly").addEventListener("change", ()=>
+  renderBooks(document.getElementById("bookSearch").value));
+document.getElementById("bookOrigin").addEventListener("change", ()=>
+  renderBooks(document.getElementById("bookSearch").value));
+document.getElementById("bookPeriod").addEventListener("change", ()=>
   renderBooks(document.getElementById("bookSearch").value));
 
 document.getElementById("bookRows").addEventListener("click", async (e)=>{
@@ -1129,6 +1180,10 @@ const REASON_LABEL = {
   missing: "Not in the game",
   wrong_year: "Wrong year",
   unreadable: "Unreadable title",
+  // Machine-detected via /summary (queue_resolved_book), not reader-typed —
+  // see tools/akinator_suggest.py's docstring for why this reason can never
+  // arrive through the public /suggest endpoint.
+  resolved: "Found via summarizer, not in game",
 };
 
 // Which resolutions each reason offers. Mirrors _ALLOWED in
@@ -1139,6 +1194,7 @@ const REASON_ACTIONS = {
   wrong_year: [["correction", "Apply the year fix", "act"]],
   unreadable: [["display", "Rename for display", "act"],
                ["exclude", "Exclude the row instead", "act danger"]],
+  resolved: [["book", "Add this book", "act"]],
 };
 
 function when(ts){
@@ -1204,15 +1260,27 @@ function similarRows(title, limit){
 function renderSuggestions(){
   const host = document.getElementById("sgList");
   document.getElementById("sgCount").textContent = suggestions.length || "";
-  if (!suggestions.length){
-    host.innerHTML = '<p class="status">Nothing pending. Reports arrive from the ' +
-      'give-up screen when a reader taps one of the three buttons there.</p>';
+
+  const reasonFilter = document.getElementById("sgReason").value;
+  const periodDays = parseInt(document.getElementById("sgPeriod").value, 10);
+  const cutoff = periodDays ? (Date.now() / 1000) - periodDays * 86400 : 0;
+  const shown = suggestions.filter((s) =>
+    (!reasonFilter || s.reason === reasonFilter)
+    && (!cutoff || (s.last_seen || s.first_seen || 0) >= cutoff));
+
+  if (!shown.length){
+    host.innerHTML = '<p class="status">' + (suggestions.length
+      ? "Nothing matches this filter."
+      : "Nothing pending. Reports arrive from the give-up screen when a "
+        + "reader taps one of the three buttons there, or automatically "
+        + "when the summarizer resolves a book the game does not have.")
+      + "</p>";
     return;
   }
   const byKey = {};
   books.forEach((b) => { byKey[b.k] = b; });
 
-  host.innerHTML = suggestions.map((s) => {
+  host.innerHTML = shown.map((s) => {
     const row = s.work_key ? byKey[s.work_key] : null;
     let current = "";
     if (s.work_key){
@@ -1232,8 +1300,10 @@ function renderSuggestions(){
                   : ' <span class="sg-none">(no author found)</span>');
       // The year the row would actually get if added. Six era questions read
       // it, so "no year" is a real cost and worth seeing BEFORE approving —
-      // it was invisible until it was already committed.
-      if (s.reason === "missing"){
+      // it was invisible until it was already committed. "resolved" behaves
+      // identically here — it becomes a row through the exact same /book
+      // action as "missing", just detected by the summarizer instead of typed.
+      if (s.reason === "missing" || s.reason === "resolved"){
         proposed += s.year_hint
           ? ' <span class="badge">first published ' + esc(s.year_hint) + "</span>"
           : ' <span class="badge off" title="Open Library has no work-level year.'
@@ -1251,10 +1321,11 @@ function renderSuggestions(){
       }
     }
 
-    // Duplicate hints, for a "missing" claim only — the other two reasons
-    // already name a row.
+    // Duplicate hints, for "missing"/"resolved" claims only — the other two
+    // reasons already name a row, so there is nothing to check for a
+    // collision against.
     let dupes = "";
-    if (s.reason === "missing"){
+    if (s.reason === "missing" || s.reason === "resolved"){
       const exact = s.ol_key ? byKey[s.ol_key] : null;
       const near = similarRows(s.title, 4).filter((h) => books[h.i].k !== s.ol_key);
       if (exact){
@@ -1283,7 +1354,8 @@ function renderSuggestions(){
     }
 
     const votes = (s.votes || 1) > 1
-      ? '<span class="badge">reported ' + esc(s.votes) + " times</span>" : "";
+      ? '<span class="badge">' + (s.reason === "resolved" ? "seen " : "reported ")
+        + esc(s.votes) + " times</span>" : "";
     const buttons = (REASON_ACTIONS[s.reason] || []).map(([action, label, cls]) =>
       '<button class="' + cls + ' sgAct" data-id="' + esc(s.id) + '" data-action="' +
       action + '">' + label + "</button>").join("");
@@ -1294,7 +1366,7 @@ function renderSuggestions(){
         '<span class="sg-when">first seen ' + esc(when(s.first_seen)) +
         ((s.votes || 1) > 1 ? ", last " + esc(when(s.last_seen)) : "") + "</span></div>" +
       '<dl class="sg-cmp"><dt>Current</dt><dd>' + current + "</dd>" +
-        "<dt>Reader</dt><dd>" + proposed + "</dd></dl>" + dupes +
+        "<dt>" + (s.reason === "resolved" ? "Summarizer" : "Reader") + "</dt><dd>" + proposed + "</dd></dl>" + dupes +
       '<div class="row">' + buttons +
         '<button class="act ghost sgAct" data-id="' + esc(s.id) +
         '" data-action="reject">Dismiss</button></div></div>';
@@ -1981,11 +2053,20 @@ function renderAuthors(filter){
   const rows = document.getElementById("auRows");
   const f = auNorm(filter || "");
   const dupOnly = document.getElementById("auDupOnly").checked;
+  const originFilter = document.getElementById("auOrigin").value;
+  const periodDays = parseInt(document.getElementById("auPeriod").value, 10);
+  const cutoff = periodDays ? (Date.now() / 1000) - periodDays * 86400 : 0;
   const inDupe = new Set();
   authorDupes.forEach((d) => { inDupe.add(d.a.id); inDupe.add(d.b.id); });
+  // Origin/addedAt are tracked per BOOK (see akinator_sync.append_book_row),
+  // not per author — authors.json has no such field, and doesn't need one:
+  // an author is just whoever wrote the books they're credited on here. So
+  // an author matches an origin/period filter if ANY of their books does.
   const matching = authorRows.filter((p) =>
     (!dupOnly || inDupe.has(p.id))
-    && (!f || auNorm(p.name).includes(f) || p.id.toLowerCase().includes(f)));
+    && (!f || auNorm(p.name).includes(f) || p.id.toLowerCase().includes(f))
+    && (!originFilter || p.books.some((i) => (books[i].origin || "unknown") === originFilter))
+    && (!cutoff || p.books.some((i) => (books[i].addedAt || 0) >= cutoff)));
   const shown = matching.slice(0, 200);
   document.getElementById("auShown").textContent = matching.length > shown.length
     ? "showing " + shown.length + " of " + matching.length + " \\u2014 narrow the search"
@@ -2270,6 +2351,8 @@ const auRedraw = () => renderAuthors(auSearchBox().value);
 
 document.getElementById("auSearch").addEventListener("input", auRedraw);
 document.getElementById("auDupOnly").addEventListener("change", auRedraw);
+document.getElementById("auOrigin").addEventListener("change", auRedraw);
+document.getElementById("auPeriod").addEventListener("change", auRedraw);
 
 // A profile BEFORE a book, which is the order Add-a-book now forces: that
 // form refuses an author it does not know, so there has to be somewhere to
@@ -2899,6 +2982,8 @@ async function loadSuggestions(){
 }
 
 document.getElementById("sgReload").addEventListener("click", loadSuggestions);
+document.getElementById("sgReason").addEventListener("change", renderSuggestions);
+document.getElementById("sgPeriod").addEventListener("change", renderSuggestions);
 
 document.getElementById("sgList").addEventListener("click", async (e)=>{
   if (!e.target.classList.contains("sgAct")) return;
