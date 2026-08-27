@@ -73,6 +73,30 @@ COUNTS_TTL = 60 * 60 * 24 * 45
 # Redis commands on a free tier.
 DAILY_SUBMISSIONS = 40
 
+# Per-client, per-BOOK daily cap, and the arithmetic is why it exists. One
+# submission carries every answer of one game, so it moves ~47 cells of ONE
+# book at once. Against the 40 above, that made a single IP with no account
+# enough to decide a book outright in a single day:
+#
+#   8 submissions  -> every cell clears MIN_PLAYS and starts being written
+#   40 submissions -> p = (40 + 10*0.5) / (40 + 10) = 0.90 = CLAMP_HIGH
+#
+# 0.90 is PRESENCE_CONFIDENCE — what the game says about a VERIFIED fact. The
+# drain's own docstring says play data must never outrank verified data; at 40
+# plays it tied it, for free. The contradiction guard does not help against
+# the surgical version: answering honestly on 46 of 47 questions and lying on
+# the 47th is a 2% contradiction rate against a 75% threshold.
+#
+# At 2/day the same 40 plays need 20 distinct IPs in a day, or one IP for 20
+# days. Chosen over a distinct-client set (which would mean storing a per-book
+# fingerprint of every player, contradicting this module's "no identity, no
+# session" promise) and over Turnstile (worth adding only if abuse is actually
+# observed): this reuses the limiter already here, and its stored key is the
+# same (kind, day, client) counter shape that already exists, so it adds no
+# new privacy surface at all. A reader replaying a favourite a third time in
+# one day simply stops contributing, which costs nothing.
+MAX_PER_BOOK_DAILY = 2
+
 # A submission whose answers contradict its claimed book this badly is not
 # evidence about that book. Someone answering an all-"no" game and then
 # naming Harry Potter is either confused or testing us; either way the
@@ -204,6 +228,18 @@ def submit(body: Submission, request: Request):
         log.info("rejected: %.0f%% of answers contradict %s",
                  rate * 100, body.book)
         return {"ok": False, "reason": "inconsistent"}
+
+    # Charged LAST, so only a submission that is actually about to be stored
+    # spends the book's budget — a stale tab or an incoherent game must not
+    # consume the quota that real plays of this book need. See
+    # MAX_PER_BOOK_DAILY for what this bounds and why it is a counter rather
+    # than a set of client fingerprints.
+    try:
+        _rate_limit(f"akinator_book:{body.book}", MAX_PER_BOOK_DAILY,
+                    _client_id(request), namespace="akin")
+    except HTTPException:
+        log.info("per-book cap reached for %s", body.book[:60])
+        return {"ok": False, "reason": "rate_limited"}
 
     commands = [["HINCRBY", COUNTS_PREFIX + body.book, f"{q}:{a}", 1]
                 for q, a in pairs]
