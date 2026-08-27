@@ -115,6 +115,11 @@ const ROUTES = {
   // note above the endpoint in akinator_admin.py for why absence of an
   // author can never stand in for it.
   "/api/noauthor": relay("/akinator/admin/noauthor"),
+  // Read-only. The prefix is /akinator/admin/drain (drain_admin_router in
+  // tools/akinator_drain.py) — checked against the router, not guessed, since
+  // a relay whose VALUE points at a path the backend does not serve is the
+  // one thing check.mjs cannot catch: it only proves the KEY exists.
+  "/api/drain/history": relay("/akinator/admin/drain/history"),
   "/api/suggestions": relay("/akinator/admin/suggestions"),
   "/api/suggestions/resolve": relay("/akinator/admin/suggestions/resolve"),
   "/api/suggestions/theme": relay("/akinator/admin/suggestions/theme"),
@@ -281,6 +286,16 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
 .pill{display:inline-block;min-width:17px;padding:0 5px;border-radius:9px;background:var(--work);
   color:#fff;font-size:11px;line-height:17px;text-align:center;vertical-align:1px}
 .pill:empty{display:none}
+/* The learning-loop alert. --work (the red already used for "excluded" and
+   destructive buttons) rather than a new colour: this page has three status
+   colours and a fourth would mean nothing to anyone. */
+#drainAlert{border:1px solid var(--work);border-left-width:4px;border-radius:3px;
+  background:var(--card);padding:12px 15px;margin:0 0 18px}
+#drainAlert h2{font-size:14px;margin:0 0 6px;color:var(--work)}
+#drainAlert p{margin:0 0 8px;font-size:13px}
+#drainAlert ul{margin:0 0 8px;padding-left:20px;font-size:13px}
+#drainAlert code{font-size:12px}
+#drainAlert .sg-none{font-size:12px}
 .sg{background:var(--card);border:1px solid var(--line);border-radius:3px;padding:14px 16px;margin-bottom:10px}
 .sg-head{display:flex;gap:9px;align-items:baseline;flex-wrap:wrap;margin-bottom:9px}
 .sg-reason{font-weight:600}
@@ -309,6 +324,12 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
 </style></head><body><div class="wrap">
 <h1>Book Mind Reader — admin</h1>
 <p class="sub">Every action here commits directly to the live game. Nothing is automatic — nothing applies without you clicking it.</p>
+
+<!-- Above the tabs, not inside one: the whole point is that it is seen
+     without going looking, on whichever tab the page opens on. Hidden
+     entirely unless something is actually flagged — a banner that is always
+     there is furniture, and gets read as furniture. -->
+<div id="drainAlert" hidden></div>
 
 <nav>
   <button data-tab="books" class="on">Books</button>
@@ -3268,6 +3289,60 @@ document.getElementById("fdList").addEventListener("click", async (e) => {
   }
 });
 
+// ── has the learning loop done anything strange? ─────────────────────────
+//
+// The per-book cap in akinator_learn.py raises the price of poisoning the
+// table; it cannot make it impossible (see H-06 in SECURITY_AUDIT.md). This
+// is the other half: every drain commits overrides.json with its counts in
+// the message, so an unusual run is visible whether or not it was preventable
+// — and revertible, because it is a commit.
+//
+// Deliberately silent when there is nothing to say. It renders only when the
+// server flags a run, so the banner appearing at all MEANS something.
+async function loadDrainAlert(){
+  const host = document.getElementById("drainAlert");
+  let d;
+  try {
+    d = await post("/api/drain/history", {});
+  } catch (err) {
+    // A failed read is NOT "nothing happened", and on a monitor those must
+    // never look alike. Says so plainly instead of staying silent, but stays
+    // quiet in the console-only sense — it does not shout in red as if a run
+    // had been flagged, because none has been observed either way.
+    host.hidden = false;
+    host.style.borderColor = "var(--line)";
+    host.innerHTML = '<h2 style="color:var(--mut)">Learning-loop check unavailable</h2>'
+      + '<p class="sg-none">Could not read the drain history: ' + esc(String(err.message || err))
+      + " \\u2014 this is not the same as there being nothing to report.</p>";
+    return;
+  }
+  if (!d || !d.flagged) return;                 // nothing odd: stay invisible
+
+  const odd = (d.runs || []).filter((r) => r.flagged);
+  host.hidden = false;
+  host.innerHTML =
+    "<h2>" + odd.length + " unusual drain run"
+      + (odd.length === 1 ? "" : "s") + " in the last " + (d.total_runs || 0)
+      + " write(s) to overrides.json</h2>"
+    + "<p>A drain turns what players answered into shipped probabilities. These "
+      + "runs are larger, or more concentrated on one book, than the thresholds "
+      + "below \\u2014 which can be real enthusiasm, or one person pushing one book.</p>"
+    + "<ul>" + odd.map((r) =>
+        "<li><code>" + esc(r.sha) + "</code> " + esc((r.date || "").slice(0, 10))
+        + " \\u2014 <strong>" + esc(r.cells) + " cells</strong> across "
+        + esc(r.books == null ? "?" : r.books) + " book(s)"
+        + (r.per_book == null ? "" : " (" + esc(r.per_book) + " per book)")
+        + '<br><span class="sg-none">' + esc(r.why.join("; ")) + "</span></li>").join("")
+    + "</ul>"
+    + '<p class="sg-none">Thresholds: '
+      + esc(d.thresholds.cells_per_run) + " cells per run, "
+      + esc(d.thresholds.cells_per_book) + " per book \\u2014 raise them with "
+      + "DRAIN_ALERT_CELLS / DRAIN_ALERT_CELLS_PER_BOOK on Render if real traffic "
+      + "makes this noisy. Every run above is a commit in the bookhub repo and can "
+      + "be undone with <code>git revert</code>; learned values are clamped to "
+      + "[0.15, 0.90] either way, so none of this can outrank a verified fact.</p>";
+}
+
 (async function init(){
   try {
     // authors.json and author_overrides.json join the first paint rather
@@ -3314,6 +3389,11 @@ document.getElementById("fdList").addEventListener("click", async (e) => {
   loadSuggestions();
   loadTaught();
   loadCandidates();
+  // Same reasoning as the badges above, one step further: this one is not
+  // even a badge the owner could go looking for. If the learning loop did
+  // something strange last night, the only way to find out without this is to
+  // read the bookhub commit log by hand.
+  loadDrainAlert();
 })();
 </script>
 </body></html>`;
