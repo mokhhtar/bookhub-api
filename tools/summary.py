@@ -2231,6 +2231,27 @@ def _publish_quota_ok(request: Request) -> bool:
         return False
 
 
+# Same interim, weak, per-IP shape as _publish_quota_ok above (H-04) — a
+# rotating attacker sails past this too. What it protects is cheaper than a
+# GitHub commit (one Redis hash in the reader-suggestion queue), so a more
+# generous daily allowance than the publish quota is fine.
+LIMIT_RESOLVED_QUEUE_DAILY = int(os.environ.get("RESOLVED_QUEUE_DAILY", 30))
+
+
+def _resolved_quota_ok(request: Request) -> bool:
+    """True if this request's IP can still queue an auto-detected "book the
+    game doesn't have" candidate today. Swallows _rate_limit's HTTPException
+    itself — the reader's own summary is never gated by this."""
+    from tools.quiz_core import _rate_limit, _client_ip
+    client_ip = _client_ip(request)
+    try:
+        _rate_limit("summaryresolved", LIMIT_RESOLVED_QUEUE_DAILY, client_ip, namespace="pub")
+        return True
+    except HTTPException:
+        log.info(f"Resolved-queue quota exceeded for {client_ip}; skipping akinator queue task.")
+        return False
+
+
 # ── Route ───────────────────────────────────────────────────
 @router.post("/summary")
 def summary(req: SummaryRequest, background_tasks: BackgroundTasks, request: Request):
@@ -2518,6 +2539,14 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks, request: Req
             background_tasks.add_task(github_publisher.publish_character,
                                       ch, record.title, result.get("slug") or "")
 
+    # A fresh resolution only — a cache hit means this book was already
+    # checked the first time it was summarized, so rechecking on every
+    # repeat view would just spend quota for nothing. English only, same
+    # reasoning as the publish gate above (canonical Latin-alphabet titles).
+    if req.language == "en" and _resolved_quota_ok(request):
+        from tools import akinator_suggest
+        background_tasks.add_task(akinator_suggest.queue_resolved_book, record)
+
     return result
 
 
@@ -2594,6 +2623,9 @@ def summary_stream(req: SummaryRequest, background_tasks: BackgroundTasks, reque
                 for ch in (result.get("characters") or [])[:12]:
                     background_tasks.add_task(github_publisher.publish_character,
                                               ch, record.title, result.get("slug") or "")
+            if req.language == "en" and _resolved_quota_ok(request):
+                from tools import akinator_suggest
+                background_tasks.add_task(akinator_suggest.queue_resolved_book, record)
             yield sse({"done": result})
         finally:
             executor.shutdown(wait=False)
