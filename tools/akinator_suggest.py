@@ -145,6 +145,24 @@ DAILY_SUGGESTIONS = 15
 # listing the queue reads every entry.
 MAX_PENDING = 300
 
+# The ceiling for MACHINE-detected entries (queue_resolved_book), deliberately
+# below MAX_PENDING so the two cannot compete for the last slot.
+#
+# WHY THIS EXISTS. Auto-detected books share this one queue and this one cap
+# with reader reports, and they arrive far faster: every fresh English summary
+# of a book the game lacks files one, and it sits for the full 90-day TTL. At
+# more than ~3 new books a day the queue fills, and from then on /suggest
+# answers a real reader "the suggestion queue is full" — the cheap automatic
+# signal locking out the expensive human one, which is exactly backwards. A
+# reader noticed something and took the trouble to say so; the summarizer just
+# saw traffic.
+#
+# 200 leaves readers 100 slots that machine detection can never occupy. Kept as
+# a second ceiling on the same set rather than a second Redis set: the caller
+# already reads PENDING_SET, so this costs no extra key, no extra command
+# against the free-tier budget, and no change to _read_queue/resolve/the sweep.
+MAX_PENDING_RESOLVED = 200
+
 REASONS = ("missing", "wrong_year", "unreadable", "resolved")
 
 # Same shape as akinator_admin's, and for the same measured reason: the
@@ -669,9 +687,10 @@ def queue_resolved_book(record: "BookRecord") -> None:
             return
 
         pending = cache.set_members(PENDING_SET)
-        if pending is not None and len(pending) >= MAX_PENDING:
-            log.info("suggestion queue full (%d) — dropping auto-detected %r",
-                     len(pending), record.title[:60])
+        if pending is not None and len(pending) >= MAX_PENDING_RESOLVED:
+            log.info("queue at %d/%d for auto-detected books — dropping %r, "
+                     "leaving the remaining slots for reader reports",
+                     len(pending), MAX_PENDING_RESOLVED, record.title[:60])
             return
 
         fields = {"reason": "resolved", "title": record.title,
