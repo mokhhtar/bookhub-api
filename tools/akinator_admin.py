@@ -461,6 +461,13 @@ class BookRequest(BaseModel):
     # or empty is not an error: a book added with no review still gets the
     # automatic extract()/trait-model pass, exactly as before this existed.
     answers: dict[str, bool | None] = Field(default_factory=dict)
+    # How this row came to exist: "manual" (the admin typed it), "suggestion"
+    # (approved from a reader's "missing" report), or "resolved" (approved
+    # from a book `/summary` resolved that the game didn't have — see
+    # akinator_suggest.queue_resolved_book). Written straight into the row so
+    # the Books/Authors admin lists can filter by it; unrelated to `source`
+    # above, which names the book-DATA provider, not how the row was queued.
+    origin: str = Field(default="manual", max_length=20)
 
 
 def _first_publish_year(title: str, author: str) -> int | None:
@@ -656,7 +663,8 @@ def book(body: BookRequest):
         doc, prose=(body.summary or record.description or ""),
         extra_files=extra or None,
         commit_message=f"mind reader admin: +1 book ({record.title})",
-        manual_answers=body.answers or None)
+        manual_answers=body.answers or None,
+        origin=body.origin or "manual")
     if not result.get("ok"):
         raise HTTPException(status_code=502,
                             detail=result.get("reason", "append failed"))

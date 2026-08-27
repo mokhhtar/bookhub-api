@@ -41,6 +41,7 @@ import json
 import logging
 import os
 import sys
+import time
 
 import httpx
 
@@ -478,7 +479,8 @@ def _build_book_row(doc: dict, question_ids: list[str], bpr: int, rank: int,
 
 def append_book_row(doc: dict, prose: str = "", commit_message: str = "",
                     manual_answers: dict[str, bool | None] | None = None,
-                    extra_files: dict[str, bytes] | None = None
+                    extra_files: dict[str, bytes] | None = None,
+                    origin: str = "manual"
                     ) -> dict:
     """Append ONE book to the live artifacts and commit immediately.
 
@@ -502,6 +504,14 @@ def append_book_row(doc: dict, prose: str = "", commit_message: str = "",
     commits for one decision — the shape this admin has been moving away
     from everywhere else. The artifacts still stand or fall together; this
     only widens what "together" covers.
+
+    `origin` is recorded on the row as-is ("manual", "suggestion",
+    "resolved" — see `akinator_admin.BookRequest.origin`), alongside an
+    `addedAt` timestamp, purely so the admin's Books/Authors lists can
+    filter by how and when a row arrived. Rows built by `sync()` (bulk,
+    from published pages) and every row that existed before this field was
+    added simply carry neither key — read as "unknown" in the admin UI,
+    not backfilled.
     """
     if not GITHUB_PAT:
         return {"ok": False, "reason": "GITHUB_PAT not configured"}
@@ -530,6 +540,7 @@ def append_book_row(doc: dict, prose: str = "", commit_message: str = "",
         "y": doc.get("first_publish_year"),
         "p": doc.get("readinglog_count") or 0,
         "r": book["richness"], "w": None, "c": None,
+        "addedAt": int(time.time()), "origin": origin,
     }]
     meta = {**meta, "books": len(books), "question_hash": live["live_hash"]}
 
