@@ -145,7 +145,7 @@ DAILY_SUGGESTIONS = 15
 # listing the queue reads every entry.
 MAX_PENDING = 300
 
-REASONS = ("missing", "wrong_year", "unreadable")
+REASONS = ("missing", "wrong_year", "unreadable", "resolved")
 
 # Same shape as akinator_admin's, and for the same measured reason: the
 # longest /site/ key that actually ships is 85 characters, so the 64 that
@@ -631,6 +631,78 @@ def suggest(body: SuggestRequest, request: Request):
     return {"ok": True, "id": entry_id, "reason": body.reason}
 
 
+def queue_resolved_book(record: "BookRecord") -> None:
+    """A `/summary` call resolved a real book the shipped game does not have.
+
+    THIS IS THE SAME QUEUE `/suggest`'s `"missing"` reason feeds, with the
+    reader's typing replaced by something more solid: `record` already came
+    back from `book_data.resolve_book()`, verified, before this is ever
+    called (`tools/summary.py` calls this only after a fresh, successful
+    resolution). So there is no title/author to re-resolve and no 404 path —
+    every branch here either finds nothing to do or queues.
+
+    NEVER RAISES. This runs inside `BackgroundTasks`, after the `/summary`
+    response has already been assembled — an exception here reaches no one
+    and must not turn into a log-spam loop, so everything risky is guarded.
+
+    Deliberately NOT reachable from `SuggestRequest`/`/akinator/suggest`:
+    `"resolved"` is not in that model's `Literal`, so nothing a stranger
+    posts can ever create one of these entries — only a verified resolution
+    can.
+    """
+    try:
+        if not record or not record.found or not (record.title or "").strip():
+            return
+
+        from features import normalize                       # noqa: E402
+
+        work_key = record.open_library_work_key or ""
+        # Only trust it as a WORK key if it plainly is one — `resolve_book`'s
+        # by-id path can echo back whatever id the caller supplied
+        # unverified, and an edition key (…M) matched against `books.json`'s
+        # work keys would be a false "already shipped".
+        if work_key and work_key.rstrip("/").endswith("W"):
+            key = work_key if work_key.startswith("/works/") else f"/works/{work_key}"
+            if key in _shipped_index():
+                return
+        if normalize(record.title) in _shipped_titles():
+            return
+
+        pending = cache.set_members(PENDING_SET)
+        if pending is not None and len(pending) >= MAX_PENDING:
+            log.info("suggestion queue full (%d) — dropping auto-detected %r",
+                     len(pending), record.title[:60])
+            return
+
+        fields = {"reason": "resolved", "title": record.title,
+                 "author": record.author or "", "source": record.source or ""}
+        fields.update(_missing_book_hints(record.title, record.author or "",
+                                          work_key))
+
+        entry_id = _entry_id(fields)
+        key = SUGGEST_PREFIX + entry_id
+        flat: list = []
+        for name, value in fields.items():
+            flat += [name, str(value)]
+
+        stored = cache.pipeline([
+            ["HSET", key, *flat, "last_seen", str(int(time.time()))],
+            ["HSETNX", key, "first_seen", str(int(time.time()))],
+            ["HINCRBY", key, "votes", 1],
+            ["EXPIRE", key, SUGGEST_TTL],
+            ["SADD", PENDING_SET, entry_id],
+            ["EXPIRE", PENDING_SET, SUGGEST_TTL],
+        ])
+        if stored is None:
+            log.warning("could not queue auto-detected book %r: Redis unavailable",
+                        record.title[:60])
+            return
+        log.info("queued auto-detected book %s (%r)", entry_id, record.title[:60])
+    except Exception as exc:                                  # noqa: BLE001
+        log.warning("queue_resolved_book failed for %r: %s",
+                    (getattr(record, "title", "") or "")[:60], str(exc)[:120])
+
+
 # ── what readers keep asking for ─────────────────────────────────────────
 
 _CORPUS_SHARE: dict = {}
@@ -950,6 +1022,9 @@ _ALLOWED = {
     "missing": {"book", "reject"},
     "wrong_year": {"correction", "reject"},
     "unreadable": {"display", "exclude", "reject"},
+    # Machine-detected, not reader-typed (see `queue_resolved_book`), but it
+    # resolves the exact same way "missing" does: a new row via /book.
+    "resolved": {"book", "reject"},
 }
 
 
@@ -1001,8 +1076,13 @@ def resolve(body: ResolveRequest):
         # answer to and the catalogue did not.
         subjects = _subject_words(
             entry["themes"].split(",") if entry.get("themes") else [])
+        # "resolved" entries are machine-detected (queue_resolved_book), not
+        # reader-typed, and get their own origin tag; "missing" ones keep the
+        # existing "suggestion" label.
+        origin = "resolved" if reason == "resolved" else "suggestion"
         result = admin_book(BookRequest(title=title, author=author,
-                                        summary="", themes=subjects))
+                                        summary="", themes=subjects,
+                                        origin=origin))
         result = {**(result or {}), "subjects_added": subjects}
     elif body.action == "correction":
         year = entry.get("year")
