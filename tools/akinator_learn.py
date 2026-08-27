@@ -82,13 +82,31 @@ DAILY_SUBMISSIONS = 40
 MAX_CONTRADICTION_RATE = 0.75
 MIN_ANSWERS_TO_JUDGE = 8
 
-_WORK_KEY = re.compile(r"^/(?:works|site)/[A-Za-z0-9_-]{1,64}$")
+# Must match akinator_admin.py and akinator_suggest.py, which were both
+# widened away from an earlier `(works|site)` / 64-char version that this copy
+# kept. What that cost, measured against the live catalogue: 76 shipped books
+# could not be taught AT ALL — every /fandom/ row (Worm, Solo Leveling, Lord of
+# the Mysteries, Mushoku Tensei, the whole web-novel catalogue) plus three
+# /site/ keys longer than 64 characters. The page sends books[i].k verbatim and
+# this endpoint answers 202 either way, so a player teaching one of them saw
+# success and nothing was recorded, for as long as those rows have shipped.
+#
+# This regex is deliberately NOT the security boundary — the index-membership
+# check in submit() is, so being a little too broad here costs nothing while
+# being too narrow silently deletes a feature.
+_WORK_KEY = re.compile(r"^/(?:works|site|fandom)/[A-Za-z0-9_-]{1,200}$")
 _QUESTION_ID = re.compile(r"^[a-z]+:[a-z0-9_]{1,40}$")
 
 
 class Submission(BaseModel):
     """One finished game the player chose to share."""
-    book: str = Field(..., max_length=80)
+    # 220, matching akinator_suggest.SuggestRequest.work_key, and NOT the 80
+    # this used to be: the longest /site/ key that actually ships is 85
+    # characters, so 80 rejected three real rows here with a 422 before the
+    # handler could even answer its usual soft 202. Same lesson, same three
+    # rows, as the _WORK_KEY width below — a limit that looks obviously
+    # generous is still a guess until it is measured against the catalogue.
+    book: str = Field(..., max_length=220)
     question_hash: str = Field(..., max_length=64)
     answers: list[tuple[str, str]] = Field(..., max_length=60)
 
