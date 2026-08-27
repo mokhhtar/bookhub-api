@@ -2204,9 +2204,36 @@ def resolve_share_slug(share_slug: str):
     return {"found": True, **m}
 
 
+# ── Publish abuse control (H-04, interim) ──────────────────
+# Anonymous /summary requests can enqueue up to 14 GitHub writes (book +
+# author + up to 12 characters) via background_tasks. Cap NEW publish
+# scheduling per real client IP (see quiz_core._client_ip) so a single
+# non-rotating attacker can't cheaply spam repo noise or drain the
+# GitHub/Gemini quota. This is explicitly NOT the full H-04 fix — an
+# attacker who rotates IPs sails straight past it. See SECURITY_AUDIT.md
+# H-04 for the accepted-gap rationale; the real fix (queue + moderation/
+# allow-list) is still open and tracked there. The reader's own summary is
+# NEVER gated by this — only whether publish tasks get scheduled.
+LIMIT_SUMMARY_PUBLISH_DAILY = int(os.environ.get("SUMMARY_PUBLISH_DAILY", 8))
+
+
+def _publish_quota_ok(request: Request) -> bool:
+    """True if this request's IP still has publish quota today; False (and
+    logged) once it's exhausted. Swallows _rate_limit's HTTPException itself
+    — callers must never let this raise into the reader-facing response."""
+    from tools.quiz_core import _rate_limit, _client_ip
+    client_ip = _client_ip(request)
+    try:
+        _rate_limit("summarypublish", LIMIT_SUMMARY_PUBLISH_DAILY, client_ip, namespace="pub")
+        return True
+    except HTTPException:
+        log.info(f"Publish quota exceeded for {client_ip}; skipping GitHub publish tasks (summary response unaffected).")
+        return False
+
+
 # ── Route ───────────────────────────────────────────────────
 @router.post("/summary")
-def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
+def summary(req: SummaryRequest, background_tasks: BackgroundTasks, request: Request):
     # v5: response gained categories/slug/static_page — never serve stale v4 shapes.
     # v6: volume page_count/ratings/consistent-categories fixes — stale v5
     # entries held page_count=None / wrong values for series volumes.
@@ -2448,7 +2475,7 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
             # published in an older content format gets rewritten by
             # publish_book (version-gated → a cheap Redis-flag no-op once the
             # page is current). Runs in the background; never blocks the read.
-            if github_publisher.is_enabled() and req.language == "en":
+            if github_publisher.is_enabled() and req.language == "en" and _publish_quota_ok(request):
                 background_tasks.add_task(github_publisher.publish_book, cached)
         return cached
 
@@ -2484,7 +2511,7 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
     # Publish the static SEO pages in the background — commit failures are
     # logged inside the publisher and never affect this response. English
     # only: Arabic summaries are an on-page toggle, not separate /ar/ pages.
-    if github_publisher.is_enabled() and req.language == "en":
+    if github_publisher.is_enabled() and req.language == "en" and _publish_quota_ok(request):
         background_tasks.add_task(github_publisher.publish_book, result)
         background_tasks.add_task(github_publisher.publish_author, record.author, record.title)
         for ch in (result.get("characters") or [])[:12]:
@@ -2495,7 +2522,7 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks):
 
 
 @router.post("/summary/stream")
-def summary_stream(req: SummaryRequest, background_tasks: BackgroundTasks):
+def summary_stream(req: SummaryRequest, background_tasks: BackgroundTasks, request: Request):
     """
     SSE variant of /summary: streams the Gemini summary text as it
     generates (events {"t": chunk}), then one final {"done": payload}
@@ -2521,7 +2548,8 @@ def summary_stream(req: SummaryRequest, background_tasks: BackgroundTasks):
             # Refresh a stale-format static page on view (version-gated; cheap
             # no-op once current). Background task runs after the stream ends.
             if isinstance(cached, dict) and cached.get("found") \
-                    and github_publisher.is_enabled() and req.language == "en":
+                    and github_publisher.is_enabled() and req.language == "en" \
+                    and _publish_quota_ok(request):
                 background_tasks.add_task(github_publisher.publish_book, cached)
             yield sse({"done": cached})
             return
@@ -2560,7 +2588,7 @@ def summary_stream(req: SummaryRequest, background_tasks: BackgroundTasks):
             summary_text = "".join(parts)
             result = _assemble_result(record, req.depth, summary_text, future_extras.result())
             cache.set(result, *cache_key)
-            if github_publisher.is_enabled() and req.language == "en":
+            if github_publisher.is_enabled() and req.language == "en" and _publish_quota_ok(request):
                 background_tasks.add_task(github_publisher.publish_book, result)
                 background_tasks.add_task(github_publisher.publish_author, record.author, record.title)
                 for ch in (result.get("characters") or [])[:12]:
