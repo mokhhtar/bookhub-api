@@ -180,7 +180,7 @@ nav button{background:none;border:none;padding:9px 14px;font:inherit;font-weight
   color:var(--mut);cursor:pointer;border-bottom:2px solid transparent}
 nav button.on{color:var(--fg);border-bottom-color:var(--accent)}
 section{display:none}section.on{display:block}
-input,textarea{font:inherit;background:var(--card);color:var(--fg);border:1px solid var(--line);
+input,select,textarea{font:inherit;background:var(--card);color:var(--fg);border:1px solid var(--line);
   border-radius:3px;padding:6px 9px}
 input[type=text],input[type=search],textarea{width:100%}
 textarea{resize:vertical;min-height:70px}
@@ -1154,6 +1154,7 @@ document.getElementById("addForm").addEventListener("click", async (e) => {
       document.getElementById("addSearch").value = "";
       document.getElementById("addResults").innerHTML = "";
       renderAddForm();
+      await refreshBookCatalog();
     } catch (err) { setStatus("addStatus", String(err.message || err), false); }
     finally { e.target.disabled = false; }
   }
@@ -2985,6 +2986,36 @@ document.getElementById("sgReload").addEventListener("click", loadSuggestions);
 document.getElementById("sgReason").addEventListener("change", renderSuggestions);
 document.getElementById("sgPeriod").addEventListener("change", renderSuggestions);
 
+// books/authors are fetched ONCE, in init() below, and nothing since has
+// ever re-fetched them — every resolve() action here except "reject" writes
+// straight to books.json/matrix.bin (book/correction/display/exclude all
+// commit through akinator_admin.py), so the in-memory books array this page
+// has been holding since page load goes stale the moment any of them succeeds.
+// Reported live: a book approved from a "resolved" suggestion committed
+// correctly (confirmed directly against books.json) but never appeared on
+// the Books tab — not a commit failure, a stale-page one. Re-fetching only
+// books.json/authors.json (not the 63KB matrix.bin/meta.json, which the
+// Edit tab alone needs) keeps this cheap enough to run after every action.
+async function refreshBookCatalog(){
+  try {
+    const [b, a] = await Promise.all([
+      fetch(DATA+"/books.json").then(r=>r.json()),
+      fetch(DATA+"/authors.json").then(r=>r.ok?r.json():{}).catch(()=>({})),
+    ]);
+    books = b;
+    authorsData = a && typeof a === "object" ? a : {};
+    computeDupFlags();
+    renderBooks(document.getElementById("bookSearch").value);
+    buildAuthorRows();
+    renderAuthors(auSearchBox().value);
+  } catch (e) {
+    // The action itself already succeeded and said so — a failed refetch
+    // here just means the tables show what they showed before, corrected
+    // by the next manual reload. Never turn this into a second error.
+    console.warn("catalogue refresh failed:", e);
+  }
+}
+
 document.getElementById("sgList").addEventListener("click", async (e)=>{
   if (!e.target.classList.contains("sgAct")) return;
   const id = e.target.dataset.id, action = e.target.dataset.action;
@@ -2995,6 +3026,7 @@ document.getElementById("sgList").addEventListener("click", async (e)=>{
     const r = await post("/api/suggestions/resolve", {id, action});
     suggestions = suggestions.filter(s => s.id !== id);
     renderSuggestions();
+    if (action !== "reject" && r.ok) await refreshBookCatalog();
     const effect = (r.result && r.result.effect) ? " — effect: " + r.result.effect : "";
     setStatus("sgStatus", (action === "reject" ? "Dismissed." : "Applied.") + effect +
       (r.removed === false ? " (committed, but it could not be cleared from the "
