@@ -165,6 +165,9 @@ app.include_router(akinator_suggest_tool.router)
 app.include_router(akinator_suggest_tool.admin_router)
 # The manual route around the drain's 8-play floor. Same secret gate.
 app.include_router(akinator_drain_tool.admin_router)
+# Read-only: what the learning loop has actually committed, so an unusual run
+# is noticed rather than merely being unpreventable (H-06's detection half).
+app.include_router(akinator_drain_tool.drain_admin_router)
 # Verdicts on scripts/akinator/propose_questions.py's mined candidates. Same
 # secret gate; the candidates themselves are read straight off
 # question_candidates.json by the client, same as books.json/questions.json.

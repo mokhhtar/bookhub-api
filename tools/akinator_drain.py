@@ -51,6 +51,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import secrets
 import sys
 
@@ -60,8 +61,11 @@ import cache  # noqa: E402
 from fastapi import APIRouter, Header, HTTPException, Query  # noqa: E402
 from tools.akinator_learn import (ARTIFACTS, COUNTS_PREFIX,  # noqa: E402
                                   TOUCHED_SET, _artifacts, _book_states)
-from tools.akinator_sync import (_commit_files, _commit_with_retry,  # noqa: E402
-                                 _get_file, _head_sha)
+import httpx  # noqa: E402
+from tools.akinator_sync import (GITHUB_API, GITHUB_BRANCH,  # noqa: E402
+                                 GITHUB_PAT, GITHUB_REPO, _commit_files,
+                                 _commit_with_retry, _get_file, _head_sha,
+                                 _HEADERS)
 
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -169,6 +173,7 @@ def drain(dry_run: bool = False) -> dict:
     index = _artifacts().get("index") or {}
 
     written = skipped = held = retired = unknown = 0
+    books_written: set[str] = set()
     for work_key in touched:
         if work_key not in index:
             unknown += 1
@@ -224,6 +229,7 @@ def drain(dry_run: bool = False) -> dict:
             p = max(CLAMP_LOW, min(CLAMP_HIGH, p))
             overrides.setdefault(work_key, {})[qid] = round(p, 4)
             written += 1
+            books_written.add(work_key)
 
     if not written:
         return {"ok": True, "books": len(touched), "cells": 0, "held": held,
@@ -241,8 +247,16 @@ def drain(dry_run: bool = False) -> dict:
 
     payload = json.dumps(overrides, ensure_ascii=False,
                          separators=(",", ":")).encode("utf-8")
+    # THE COMMIT MESSAGE IS THE AUDIT TRAIL, so it carries both numbers rather
+    # than just the total. overrides.json is committed to a public repo on
+    # every run, which makes git history the one permanent, un-expirable
+    # record of what this loop has ever learned — the counts in Redis expire,
+    # this does not. Cells alone cannot distinguish a busy night across the
+    # catalogue from one book being pushed hard by one person, and that
+    # distinction is exactly what /akinator/admin/drain/history reads back.
     ok = _commit_files({OVERRIDES_PATH: payload},
-                       f"mind reader: {written} learned cell(s) from play",
+                       f"mind reader: {written} learned cell(s) across "
+                       f"{len(books_written)} book(s) from play",
                        expect_head=head or None)
     if not ok:
         # Counts are left in Redis on purpose — an uncommitted drain must be
@@ -751,3 +765,111 @@ def drain_endpoint(x_sync_secret: str = Header(default=""),
     if not result.get("ok"):
         raise HTTPException(status_code=409, detail=result.get("reason", "refused"))
     return result
+
+
+# ── what the learning loop has actually been doing ───────────────────────
+#
+# THE DETECTION HALF OF H-06, and it costs nothing to keep because it is
+# already being written. The per-book cap raises the price of poisoning the
+# table; it does not make it impossible, and an attacker with twenty addresses
+# still gets through (see SECURITY_AUDIT.md). What closes the gap between
+# "cannot be prevented" and "cannot pass unnoticed" is that every drain
+# COMMITS overrides.json to a public repo with its counts in the message. That
+# history is permanent, ordered, attributable to a run, and revertible with a
+# git revert — everything Redis counters are not, since they expire.
+#
+# So this endpoint invents no new storage and no new logging. It reads the
+# commit log back, parses the numbers the drain already writes, and says which
+# runs are unusual. The owner still decides what to do about one; nothing here
+# reverts anything on its own.
+
+drain_admin_router = APIRouter(prefix="/akinator/admin/drain", tags=["akinator"],
+                               dependencies=[Depends(_require_admin)])
+
+# A run bigger than this is worth a look. Deliberately an ABSOLUTE floor and
+# not only a multiple of the recent median: with a handful of runs in history
+# a median is easy to drag, and an attacker who ramps up slowly would move it
+# with them. Every cell here costs MIN_PLAYS (8) judged answers, so 50 cells is
+# already 400+ submissions in one night — far past anything this site's real
+# traffic produces today. Tune from the Render env once real volume exists.
+ALERT_CELLS_PER_RUN = int(os.environ.get("DRAIN_ALERT_CELLS", 50))
+
+# The concentration signal, and the sharper of the two. Poisoning aims at ONE
+# book, so a run that wrote many cells across one or two books looks very
+# different from the same number spread over the catalogue — which is why the
+# commit message carries the book count and not just the cell count.
+ALERT_CELLS_PER_BOOK = int(os.environ.get("DRAIN_ALERT_CELLS_PER_BOOK", 25))
+
+_DRAIN_MSG = re.compile(
+    r"(\d+)\s+learned cell\(s\)(?:\s+across\s+(\d+)\s+book\(s\))?")
+
+
+@drain_admin_router.post("/history")
+def drain_history(limit: int = Query(default=30, ge=1, le=100)):
+    """Every drain that ever committed, newest first, with the odd ones flagged.
+
+    Reads git, not Redis, on purpose — see the note above this router. A run
+    with no parsable counts in its message is returned with `cells: null`
+    rather than dropped: the format changed once (the book count was added
+    2026-08-27), and silently hiding older runs would make the history look
+    like it started then.
+    """
+    # Reading a PUBLIC repo's log needs no credential, so the token is used
+    # when present (5,000 req/hour instead of 60) and simply omitted when it
+    # is not. Sending `Authorization: Bearer ` with an empty PAT — which is
+    # what the shared _HEADERS builds — is rejected by httpx as an illegal
+    # header value, so an unset GITHUB_PAT would otherwise turn a read-only
+    # endpoint into a 502 for a reason that has nothing to do with the read.
+    headers = {k: v for k, v in _HEADERS.items()
+               if k != "Authorization" or GITHUB_PAT}
+    try:
+        r = httpx.get(f"{GITHUB_API}/repos/{GITHUB_REPO}/commits",
+                      headers=headers, timeout=30.0,
+                      params={"path": OVERRIDES_PATH, "sha": GITHUB_BRANCH,
+                              "per_page": limit})
+        r.raise_for_status()
+        commits = r.json()
+    except Exception as exc:                                  # noqa: BLE001
+        # 502, not an empty list: "we could not look" and "nothing happened"
+        # must not read the same on a page whose whole job is noticing.
+        log.warning("could not read drain history: %s", str(exc)[:120])
+        raise HTTPException(status_code=502,
+                            detail="could not read the commit history — this is "
+                                   "NOT the same as there being no drains")
+
+    runs = []
+    for c in commits if isinstance(commits, list) else []:
+        message = ((c.get("commit") or {}).get("message") or "").splitlines()[0]
+        author = (c.get("commit") or {}).get("author") or {}
+        m = _DRAIN_MSG.search(message)
+        cells = int(m.group(1)) if m else None
+        books = int(m.group(2)) if (m and m.group(2)) else None
+        per_book = round(cells / books, 1) if (cells and books) else None
+
+        why = []
+        if cells is not None and cells >= ALERT_CELLS_PER_RUN:
+            why.append(f"{cells} cells in one run (alert at {ALERT_CELLS_PER_RUN})")
+        if per_book is not None and per_book >= ALERT_CELLS_PER_BOOK:
+            why.append(f"{per_book} cells per book (alert at {ALERT_CELLS_PER_BOOK})")
+
+        # Both kinds of write land in this file and both belong in the log,
+        # but only one of them is a vote. A hand edit is the owner deciding a
+        # cell after looking the book up, so it is never "unusual" however
+        # many cells it touches; flagging it would train the owner to dismiss
+        # the banner, which is the only failure mode a monitor really has.
+        runs.append({"sha": c.get("sha", "")[:10], "date": author.get("date", ""),
+                     "message": message[:160], "cells": cells, "books": books,
+                     "per_book": per_book, "kind": "drain" if m else "manual",
+                     "flagged": bool(why), "why": why})
+
+    drains = [r_ for r_ in runs if r_["kind"] == "drain"]
+    counted = [r_["cells"] for r_ in drains if r_["cells"] is not None]
+    return {"ok": True, "runs": runs,
+            "flagged": sum(1 for r_ in runs if r_["flagged"]),
+            "total_runs": len(runs), "drains": len(drains),
+            "manual": len(runs) - len(drains),
+            "largest_run": max(counted) if counted else 0,
+            "thresholds": {"cells_per_run": ALERT_CELLS_PER_RUN,
+                           "cells_per_book": ALERT_CELLS_PER_BOOK},
+            "note": "Learned cells are clamped to [0.15, 0.90] and every run "
+                    "here is a commit — a bad one is revertible with git revert."}
