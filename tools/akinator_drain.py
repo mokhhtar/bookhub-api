@@ -154,8 +154,24 @@ def drain(dry_run: bool = False) -> dict:
 
     locked = _load_locked(head or None)
 
-    written = skipped = held = retired = 0
+    # A book that is not in the shipped index is not a cell either, and the
+    # same argument the retired-question filter below makes applies with more
+    # force: an override keyed on a book nobody ships is downloaded by every
+    # player, read by nothing, and never pruned. Counts can carry such a key
+    # legitimately (a row dropped by a rebuild between submission and drain)
+    # or maliciously (/akinator/submit validated only the key's SHAPE until
+    # the check added alongside this one).
+    #
+    # Failing closed is free here, unlike at submission time: drain() has
+    # already returned above if `_artifacts()` came back empty, so this index
+    # is known-good rather than possibly-an-outage.
+    index = _artifacts().get("index") or {}
+
+    written = skipped = held = retired = unknown = 0
     for work_key in touched:
+        if work_key not in index:
+            unknown += 1
+            continue
         counts = cache.hgetall(COUNTS_PREFIX + work_key)
         if not counts:
             continue
@@ -210,15 +226,17 @@ def drain(dry_run: bool = False) -> dict:
 
     if not written:
         return {"ok": True, "books": len(touched), "cells": 0, "held": held,
-                "retired": retired,
+                "retired": retired, "unknown": unknown,
                 "reason": f"{skipped} cells below the {MIN_PLAYS}-play floor"
                           + (f", {held} held by a manual decision" if held else "")
-                          + (f", {retired} for retired questions" if retired else "")}
+                          + (f", {retired} for retired questions" if retired else "")
+                          + (f", {unknown} for books not in the shipped index"
+                             if unknown else "")}
 
     if dry_run:
         return {"ok": True, "dry_run": True, "books": len(overrides),
                 "cells": written, "skipped": skipped, "held": held,
-                "retired": retired}
+                "retired": retired, "unknown": unknown}
 
     payload = json.dumps(overrides, ensure_ascii=False,
                          separators=(",", ":")).encode("utf-8")
@@ -235,10 +253,11 @@ def drain(dry_run: bool = False) -> dict:
     # otherwise be dropped from the queue while its counts sat unread —
     # a silent partial loss, which is this project's most repeated bug.
     cache.pipeline([["SREM", TOUCHED_SET, k] for k in touched])
-    log.info("drained %d cells across %d books (%d held by hand)",
-             written, len(touched), held)
+    log.info("drained %d cells across %d books (%d held by hand, %d unknown)",
+             written, len(touched), held, unknown)
     return {"ok": True, "books": len(touched), "cells": written,
-            "skipped": skipped, "held": held, "retired": retired}
+            "skipped": skipped, "held": held, "retired": retired,
+            "unknown": unknown}
 
 
 def _load_locked(ref: str | None = None) -> dict:

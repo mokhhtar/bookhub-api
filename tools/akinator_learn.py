@@ -145,6 +145,25 @@ def submit(body: Submission, request: Request):
         log.info("rejected: malformed work key %r", body.book[:40])
         return {"ok": False, "reason": "bad_key"}
 
+    # A WELL-FORMED KEY IS NOT A BOOK. Without this, any string matching the
+    # regex above is accepted, stored, and eventually written into
+    # overrides.json by the drain — a file every player downloads — for a book
+    # that does not exist. `_book_states` cannot catch it: it answers {} both
+    # for "no such book" and "artifacts unreachable", so the contradiction
+    # check below skips rather than rejects.
+    #
+    # Fails OPEN when the artifacts are unreachable, unlike the same check in
+    # akinator_suggest.py (which fails closed): a reader there is waiting on a
+    # form and can be told to retry, while this is a silent courtesy at the end
+    # of a game, and refusing a whole outage's worth of real submissions costs
+    # more than the counts a fail-open lets through. The drain-side check is
+    # the authoritative one and CAN fail closed, because drain() already
+    # refuses to run at all without artifacts.
+    art = _artifacts()
+    if art and body.book not in art["index"]:
+        log.info("rejected: %r is not a shipped book", body.book[:60])
+        return {"ok": False, "reason": "unknown_book"}
+
     pairs = [(q, a) for q, a in body.answers
              if _QUESTION_ID.match(q) and a in ANSWERS]
     if not pairs:
