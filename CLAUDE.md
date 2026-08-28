@@ -187,6 +187,55 @@ message, not just a "what." Follow that pattern.
   text before being shown — this is the anti-hallucination mechanism for
   quizzes specifically; don't bypass it.
 
+## Cover images — where they may come from
+
+Verified against each provider's own terms, 2026-08-28.
+
+**Never copy a cover into either repo.** Every book cover on the site is
+**hotlinked** — the browser fetches it from the provider, we store only the
+URL. That is the whole reason the licensing position is comfortable, so do
+not "fix" a slow-loading cover by downloading and committing it.
+
+Allowed sources, in order of preference:
+
+1. **Open Library** — `covers.openlibrary.org/b/id/{cover_i}-M.jpg`. Open
+   Library explicitly provides this API to "display covers on public-facing
+   pages" and asks only for a courtesy link back. `/b/id/` (CoverID) is
+   **not** rate-limited; lookups by ISBN and other ids are (100/IP/5min).
+2. **Google Books** — the `imageLinks` thumbnail the API itself returns.
+   Google's API terms forbid "permanent copies … or keep cached copies longer
+   than permitted by the cache header", which is another reason the image
+   itself is never stored: hotlinking keeps us on the right side of it.
+3. **Nothing.** `cover_url` is `Optional` everywhere it is read and every
+   template guards it. A book with no cover renders fine.
+
+**Forbidden: any Fandom wiki image** (`*.wikia.nocookie.net`,
+`*.fandom.com`). A wiki's TEXT is CC-BY-SA; its **images are not**. Fandom's
+own help pages state that non-text media does not inherit the wiki licence,
+that most images are user uploads under a fair-use rationale, that Fandom
+"is unable to either give or deny permission for their reuse", and that they
+run no licence verification. A fair-use claim for an encyclopedic wiki does
+not transfer to this site. Two such entries existed and were removed
+2026-08-28; `tools/fandom_admin.py`'s approve endpoint now refuses them with
+a 400, because the review card's editable `cover_url` field sits next to the
+very wiki page whose image is easiest to grab.
+
+Never substitute a lookalike cover from a different edition or a different
+book to fill a gap — that is the same "no data beats wrong data" rule this
+file opens with, applied to images.
+
+**Project Gutenberg** images (the only ones actually committed, in
+`bookhub/assets/games/gtb/`) are fine: the texts are US public domain and
+need no permission. Keep crediting them as the puzzle JSON already does —
+and keep that credit as *attribution*, never styled as an endorsement, since
+"Project Gutenberg" is a trademark and its licence has terms for trading on
+the name.
+
+**Amazon** is links only, never images (their PA-API image terms are far
+stricter). The "As an Amazon Associate…" disclosure must stay next to the
+link itself — it is in `_layouts/book.html`, not only on `/about` — and
+links keep `rel="noopener sponsored"`.
+
 ## Sibling repo
 
 Static site: `../bookhub` (Jekyll, GitHub Pages, auto-deploys from

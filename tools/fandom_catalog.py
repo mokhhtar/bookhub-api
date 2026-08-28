@@ -3,6 +3,27 @@ tools/fandom_catalog.py — Structured Fandom series catalog.
 
 Provides reliable volume indexes and chapter lists for series whose Fandom wikis
 have known (or discoverable) layout patterns.  Pilot series: Shadow Slave, COTE.
+
+COVER SOURCES — `cover_url` MAY NOT POINT AT A FANDOM WIKI.
+
+Text on a Fandom wiki is CC-BY-SA. **Images are not.** Fandom's own help pages
+say non-text media does not inherit the wiki's licence, that most images are
+uploaded by users under a fair-use rationale, that Fandom "is unable to either
+give or deny permission for their reuse", and that they run no licence
+verification at all. A fair-use claim made for an encyclopedic wiki does not
+transfer to this site, which is a different work with a commercial arm.
+
+Two entries here used to carry `static.wikia.nocookie.net` URLs — official
+manhua cover art and official character art, i.e. publisher/author copyright,
+all rights reserved. Hotlinking them also served the images off Fandom's CDN,
+which their terms do not invite and which they can break at any moment.
+
+Use, in order: Open Library's covers API (`covers.openlibrary.org/b/id/...`,
+which Open Library explicitly provides for displaying covers on public-facing
+pages), then a Google Books thumbnail returned by their API, then NOTHING.
+`cover_url` is Optional everywhere it is read, and the site's own governing
+rule applies: no data beats wrong data. Never substitute a lookalike cover
+from another edition or another book to fill the gap.
 """
 
 from __future__ import annotations
@@ -125,7 +146,13 @@ CATALOG_SERIES: dict[str, FandomSeriesConfig] = {
         series_display_name="Lord of the Mysteries",
         author="Cuttlefish That Loves Diving",
         aliases=["lord of the mysteries", "lord of mystery"],
-        cover_url="https://static.wikia.nocookie.net/lord-of-the-mystery/images/c/cd/LOM_Manhua_cover.png/revision/latest?cb=20200113124228",
+        # Open Library, not the Fandom wiki. See the COVER SOURCES note at the
+        # top of this file: the wiki image was official manhua cover art whose
+        # copyright belongs to its publisher, and Fandom says outright that it
+        # cannot grant permission to reuse it. This is the official English
+        # release's cover, served by the API Open Library provides for exactly
+        # this purpose.
+        cover_url="https://covers.openlibrary.org/b/id/15123148-M.jpg",
         structure_type=StructureType.MASTER_SECTIONS,
         volumes_master_page="Volumes and Chapters",
         page_pattern=r"^Volume\s+\d+(?:\.\d+)?(?::\s*.+)?$",
@@ -139,7 +166,13 @@ CATALOG_SERIES: dict[str, FandomSeriesConfig] = {
         series_display_name="Circle of Inevitability",
         author="Cuttlefish That Loves Diving",
         aliases=["circle of inevitability", "coi"],
-        cover_url="https://static.wikia.nocookie.net/lord-of-the-mystery/images/d/dd/Circle_of_Inevitability_Official_Art.jpg/revision/latest/scale-to-width-down/268?cb=20230615130622",
+        # NO COVER, deliberately. Open Library has no edition of this book, and
+        # the previous value was official art lifted from the Fandom wiki. The
+        # site's own rule decides it: no data beats wrong data, and a book with
+        # no cover renders without one — every consumer of this field already
+        # treats it as Optional. Set it if a legitimately licensed cover ever
+        # exists; do not substitute a lookalike.
+        cover_url=None,
         structure_type=StructureType.MASTER_SECTIONS,
         volumes_master_page="Volumes and Chapters",
         page_pattern=r"^Volume\s+\d+(?:\.\d+)?(?::\s*.+)?$",

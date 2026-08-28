@@ -44,6 +44,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -62,6 +63,12 @@ log = logging.getLogger("bookhub-api.fandom_admin")
 DATA_DIR = "games/data/fandom"
 WIKIS_PATH = f"{DATA_DIR}/wikis.json"
 CANDIDATES_PATH = f"{DATA_DIR}/candidates.json"
+
+# Hosts a cover may never be served from. Fandom serves wiki uploads off
+# static.wikia.nocookie.net (and older vignette.wikia.nocookie.net); the
+# *.fandom.com match catches a direct file link. Substring on the host, not an
+# exact equality, because the CDN prefixes vary by wiki.
+_WIKI_HOST = re.compile(r"(?:wikia\.nocookie\.net|\.fandom\.com)", re.I)
 
 router = APIRouter(prefix="/fandom/admin", tags=["fandom"],
                    dependencies=[Depends(_require_admin)])
@@ -129,6 +136,31 @@ def approve(body: ApproveRequest):
     sub = body.subdomain.strip()
     if not sub or not all(c.isalnum() or c in "-_" for c in sub):
         raise HTTPException(status_code=400, detail="malformed subdomain")
+
+    # A COVER MAY NOT COME FROM THE WIKI, and this is checked here rather than
+    # left as a note because the review card puts an editable cover_url field
+    # in front of a human looking at a wiki page — the wiki image is precisely
+    # the one within easiest reach, and a rule that lives only in a comment
+    # would be re-broken by the next reviewer who is moving quickly.
+    #
+    # Fandom's own help pages: non-text media does not inherit the wiki's
+    # CC-BY-SA, most images are user uploads under a fair-use rationale,
+    # Fandom "is unable to either give or deny permission for their reuse",
+    # and there is no licence verification. Two entries got here that way
+    # before this check existed (official manhua cover art and official
+    # character art) and were removed 2026-08-28. See the COVER SOURCES note
+    # in tools/fandom_catalog.py.
+    cover = (body.cover_url or "").strip()
+    if cover and _WIKI_HOST.search(cover):
+        raise HTTPException(
+            status_code=400,
+            detail="that cover is hosted on the Fandom wiki. Wiki IMAGES are "
+                   "not covered by the wiki's CC-BY-SA licence — they are "
+                   "usually publisher artwork uploaded under fair use, and "
+                   "Fandom cannot grant permission to reuse them. Use an Open "
+                   "Library cover (covers.openlibrary.org/b/id/...), a Google "
+                   "Books thumbnail, or leave it empty: a book with no cover "
+                   "renders fine, and no data beats wrong data.")
 
     def build(head: str):
         live = _load_json(WIKIS_PATH, head, {})
