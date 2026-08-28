@@ -32,6 +32,13 @@ Read in two places, same file, same reasoning as `excluded.json`: the
 CLIENT applies it at load so a fix is live as soon as Pages redeploys, and
 `build_matrix.py` applies it when writing `books.json` so the next full
 rebuild does not silently undo it.
+
+A `t` RENAME ALSO STASHES THE TITLE IT REPLACED under `o`. The give-up
+screen's book search is a substring match against the printed title, so a
+rename that makes "La sombra del viento" print as "The Shadow of the Wind"
+would otherwise make the Spanish title unsearchable — trading one blind
+spot for another. `o` mirrors what the client's own `applyDisplayNames`
+does, so a live client apply and a full rebuild produce the same shape.
 """
 from __future__ import annotations
 
@@ -63,7 +70,8 @@ def apply_display(rows: list[dict], verbose: bool = False) -> int:
     Takes books.json-shaped rows (`k`/`t`/`a`), not corpus docs, because
     that is the only shape where these fields mean "what is printed". A
     blank or non-string override is ignored rather than allowed to erase a
-    real title.
+    real title. A `t` rename writes the replaced title to `o` first — see
+    the module docstring for why.
     """
     overrides = load_display_overrides()
     if not overrides:
@@ -73,11 +81,17 @@ def apply_display(rows: list[dict], verbose: bool = False) -> int:
         fix = overrides.get(row.get("k") or "")
         if not fix:
             continue
-        for src, dst in (("t", "t"), ("a", "a")):
-            value = fix.get(src)
-            if isinstance(value, str) and value.strip() and row.get(dst) != value:
-                if verbose:
-                    print(f"    display {row.get('k')}: {dst} {row.get(dst)!r} -> {value!r}")
-                row[dst] = value
-                applied += 1
+        title = fix.get("t")
+        if isinstance(title, str) and title.strip() and row.get("t") != title:
+            if verbose:
+                print(f"    display {row.get('k')}: t {row.get('t')!r} -> {title!r}")
+            row["o"] = row.get("t")
+            row["t"] = title
+            applied += 1
+        author = fix.get("a")
+        if isinstance(author, str) and author.strip() and row.get("a") != author:
+            if verbose:
+                print(f"    display {row.get('k')}: a {row.get('a')!r} -> {author!r}")
+            row["a"] = author
+            applied += 1
     return applied
