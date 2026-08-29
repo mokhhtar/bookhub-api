@@ -145,6 +145,19 @@ DK_BEFORE_DIMENSION_DROPPED = 2
 # character questions disabled (76% / 56%).
 NAMED_CHARS_GATE = 0.75
 
+# How many character-name questions the engine will ask BACK TO BACK before
+# it is forced to spend a turn on something else, if anything else still
+# qualifies. Uncapped, a name that keeps winning on raw information gain
+# keeps winning turn after turn — mathematically correct, and it is what
+# produced seven straight "is one of the characters called X?" questions in
+# one real game (all from one candidate's cast). A person answering that
+# streak is not being read; they are being interrogated about a book that
+# is not theirs. See _pool(), which is where this is enforced — the cap
+# only withholds the character pool for the one turn it is at, and only
+# when a non-character question is still there to fall back to; the pool
+# still empties out the ordinary way if it is not.
+CHAR_STREAK_CAP = 2
+
 
 def _binary_entropy(p: float) -> float:
     """H_b(p), in nats. 0 at the ends, where an answer is certain."""
@@ -305,12 +318,16 @@ class Engine:
             dim: [-1e9, 1e9] for dim in LADDERS
         }
         self.dk_count: dict[str, int] = {dim: 0 for dim in LADDERS}
+        # How many character questions have just been asked IN A ROW, reset
+        # by any non-character question. See CHAR_STREAK_CAP.
+        self.char_streak = 0
 
     # -- inference ---------------------------------------------------------
 
     def update(self, question: str, answer: str) -> None:
         """Fold one answer into the belief state."""
         self.asked.add(question)
+        self.char_streak = self.char_streak + 1 if question.startswith("char:") else 0
         weight = ANSWER_WEIGHTS[answer]
         if answer == "yes":
             # A firm yes rules out the questions that cannot also be true.
@@ -463,6 +480,15 @@ class Engine:
         if self.effective_candidates() > ENDGAME_CANDIDATES:
             return pool
         if not self._expects_named_characters():
+            return pool
+        # CHAR_STREAK_CAP: withhold names for this one turn if the streak is
+        # already at the cap AND a subject question is still unasked — the
+        # ordinary case, where continuing the streak was a choice, not a
+        # necessity. If every subject question is already asked, a capped
+        # turn would just return None a turn early for no reason, so the
+        # cap is skipped rather than enforced.
+        if (self.char_streak >= CHAR_STREAK_CAP
+                and any(q not in self.asked for q in self.m.questions)):
             return pool
 
         live = {idx for idx, _p in self.ranking(ENDGAME_CANDIDATES)}
