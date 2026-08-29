@@ -45,6 +45,23 @@ _QUALIFIER = re.compile(
     r"\s*\((fictitious|fictional|fictitous|spirit|legendary|biblical)[^)]*\)",
     re.I,
 )
+
+# OL sometimes files the SAME qualifier as a LIST-LEVEL LABEL on the first
+# entry instead of a per-name parenthetical: "Fictitious characters: Lisbeth
+# Salander", "WWI fictional characters: Winnie-the-Pooh", "Fictional
+# character: Jean des Esseintes". `_QUALIFIER` never sees these — there is
+# no parenthesis — so "Fictitious" and "Characters" survived tokenization as
+# if they were the name itself, becoming two real, askable, meaningless
+# character questions ("is one of the characters called Fictitious?").
+# Confirmed on the exact book that surfaced it: The Girl with the Dragon
+# Tattoo, whose actual protagonist name was hiding behind this same prefix.
+# Rare in the corpus (6 of 20,000 sampled docs) but a real name lost is
+# worse than a rare one, matching this project's own grounding rule.
+_LABEL_PREFIX = re.compile(
+    r"^(?:\w+\s+){0,3}(?:fictitious|fictional|fictitous|spirit|legendary|"
+    r"biblical)\w*\s+characters?\s*:\s*",
+    re.I,
+)
 _DATES = re.compile(r",?\s*\d{3,4}\s*[-–]\s*\d{0,4}\s*$")
 _HONORIFICS = re.compile(
     r"^(mr|mrs|ms|miss|dr|doctor|prof|professor|sir|lady|lord|capt|captain|"
@@ -67,7 +84,8 @@ def canonical_name(raw: str) -> str:
     become 'sherlock holmes', which is what lets a player's guess meet our
     record. Returns '' for entries that are not usable character names.
     """
-    s = _QUALIFIER.sub("", raw or "")
+    s = _LABEL_PREFIX.sub("", raw or "")
+    s = _QUALIFIER.sub("", s)
     s = _DATES.sub("", s)
     s = normalize(s)
     s = _HONORIFICS.sub("", s).strip()
