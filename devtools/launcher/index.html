@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>Litheca — لوحة التشغيل المحلية</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #0f1417; --card: #161d21; --border: #262f34; --ink: #e7edf0; --muted: #8b9aa1;
+    --accent: #4fb3a9; --idle: #5b6870; --running: #4fb3a9; --done: #5fbf6e; --error: #e0665a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Tahoma, sans-serif;
+    padding: 28px 20px 60px;
+  }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 24px; }
+  .wrap { max-width: 780px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 18px 20px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 12px; display: flex; align-items: center; gap: 10px; }
+  .pill {
+    font-size: 11px; padding: 3px 10px; border-radius: 999px; font-weight: 600;
+    background: var(--idle); color: #fff;
+  }
+  .pill[data-s="running"] { background: var(--running); }
+  .pill[data-s="done"] { background: var(--done); }
+  .pill[data-s="error"] { background: var(--error); }
+  .pill[data-s="stopping"] { background: var(--error); }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+  input[type=text], input[type=number] {
+    background: #0d1215; border: 1px solid var(--border); color: var(--ink);
+    padding: 8px 10px; border-radius: 6px; font-size: 13px; min-width: 140px;
+  }
+  label.chk { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+  button {
+    background: var(--accent); color: #06201d; border: none; border-radius: 6px;
+    padding: 9px 16px; font-weight: 700; font-size: 13px; cursor: pointer;
+  }
+  button.secondary { background: transparent; color: var(--ink); border: 1px solid var(--border); font-weight: 500; }
+  button:disabled { opacity: .45; cursor: default; }
+  .log {
+    background: #0a0e10; border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px 12px; font-family: ui-monospace, Consolas, monospace; font-size: 12px;
+    max-height: 260px; overflow-y: auto; white-space: pre-wrap; color: #b9c4c9;
+    margin-top: 10px; direction: ltr; text-align: left;
+  }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 8px; line-height: 1.6; }
+  fieldset { border: none; padding: 0; margin: 0; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div>
+      <h1>Litheca — لوحة التشغيل المحلية</h1>
+      <p class="sub">أداة تطوير محلية فقط — لا تُنشر ولا يقرؤها أي كود إنتاجي.</p>
+    </div>
+
+    <div class="card">
+      <h2>الخادم (bookhub-api) <span class="pill" id="backend-pill" data-s="idle">idle</span></h2>
+      <div class="row">
+        <button id="backend-start">تشغيل الخادم</button>
+        <button id="backend-stop" class="secondary">إيقاف</button>
+        <a id="backend-link" href="http://localhost:8000/health" target="_blank" class="hint">http://localhost:8000/health</a>
+      </div>
+      <p class="hint">uvicorn main:app --reload --port 8000 — يقرأ .env تلقائياً قبل التشغيل.</p>
+      <div class="log" id="backend-log"></div>
+    </div>
+
+    <div class="card">
+      <h2>تسجيل لعبة (play-bot.js) <span class="pill" id="record-pill" data-s="idle">idle</span></h2>
+      <fieldset class="row">
+        <input type="text" id="rec-title" placeholder="عنوان الكتاب (مثال: Dune)">
+        <input type="text" id="rec-author" placeholder="المؤلف (اختياري)">
+      </fieldset>
+      <div class="row">
+        <label class="chk"><input type="checkbox" id="rec-pick"> اختر من الفهرس عشوائياً</label>
+        <label class="chk"><input type="checkbox" id="rec-offline"> بلا اتصال (بدون Groq)</label>
+        <label class="chk"><input type="checkbox" id="rec-sheet"> جدول إجابات دفعة واحدة</label>
+      </div>
+      <div class="row">
+        <label class="chk">النمط:
+          <select id="rec-mode" style="background:#0d1215;color:#e7edf0;border:1px solid #262f34;border-radius:6px;padding:6px 8px;">
+            <option value="">قياس فقط (بلا فيديو)</option>
+            <option value="video">تسجيل فيديو (headless)</option>
+            <option value="record">تسجيل للعرض (نافذة مرئية)</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <button id="record-start">ابدأ</button>
+        <button id="record-stop" class="secondary">إيقاف</button>
+        <button id="open-folder" class="secondary">فتح مجلد التسجيلات</button>
+      </div>
+      <p class="hint">بلا عنوان: فعّل "اختر من الفهرس" ليختار كتاباً عشوائياً بدلاً منه.</p>
+      <div class="log" id="record-log"></div>
+    </div>
+  </div>
+
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+
+  function renderJob(prefix, j) {
+    var pill = $(prefix + '-pill');
+    pill.textContent = j.status;
+    pill.setAttribute('data-s', j.status);
+    var log = $(prefix + '-log');
+    var atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
+    log.textContent = j.log || '(no output yet)';
+    if (atBottom) { log.scrollTop = log.scrollHeight; }
+    var running = j.status === 'running' || j.status === 'stopping';
+    $(prefix + '-start') && ($(prefix + '-start').disabled = running);
+    $(prefix + '-stop') && ($(prefix + '-stop').disabled = !running);
+  }
+
+  function poll() {
+    fetch('/api/status').then(function (r) { return r.json(); }).then(function (s) {
+      renderJob('backend', s.backend);
+      renderJob('record', s.record);
+    }).catch(function () {});
+  }
+  setInterval(poll, 1000);
+  poll();
+
+  $('backend-start').addEventListener('click', function () {
+    fetch('/api/backend/start', { method: 'POST' }).then(poll);
+  });
+  $('backend-stop').addEventListener('click', function () {
+    fetch('/api/backend/stop', { method: 'POST' }).then(poll);
+  });
+
+  $('record-start').addEventListener('click', function () {
+    var body = {
+      title: $('rec-title').value.trim(),
+      author: $('rec-author').value.trim(),
+      pick: $('rec-pick').checked,
+      offline: $('rec-offline').checked,
+      sheet: $('rec-sheet').checked,
+      mode: $('rec-mode').value
+    };
+    fetch('/api/record/start', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    }).then(function (r) { return r.json(); }).then(function (out) {
+      if (!out.ok) { alert(out.error); }
+      poll();
+    });
+  });
+  $('record-stop').addEventListener('click', function () {
+    fetch('/api/record/stop', { method: 'POST' }).then(poll);
+  });
+  $('open-folder').addEventListener('click', function () {
+    fetch('/api/open-takes-folder', { method: 'POST' });
+  });
+})();
+</script>
+</body>
+</html>
