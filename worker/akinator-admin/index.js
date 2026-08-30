@@ -772,6 +772,7 @@ document.getElementById("qRows").addEventListener("click", async (e)=>{
 //   before Add book fires the one commit that uses it.
 let addPicked = null;   // the chosen /search candidate, or null (manual)
 let addAnswers = {};    // draft: question id -> true|false|null
+let addSheetNote = "";  // last "Fill from sheet" result, shown until the form re-renders
 let addTouched = new Set(); // ids the admin actually clicked, for the
                             // "reviewed" badge — addAnswers holds a value
                             // for EVERY suggested id from the start (see
@@ -969,13 +970,19 @@ document.getElementById("addManual").addEventListener("click", () => {
 // Authors tab's auDraft would be more machinery than the lifetime justifies.
 function renderAddForm(){
   const host = document.getElementById("addForm");
-  addAnswers = {}; addTouched = new Set();
+  addAnswers = {}; addTouched = new Set(); addSheetNote = "";
   const p = addPicked;
   host.innerHTML = '<div class="card">'
     + (p ? '<p class="effect">From ' + esc(p.source || "search") + ': <strong>'
         + esc(p.title) + "</strong> \\u2014 " + esc(p.author || "unknown author")
         + "</p>" : "")
-    + '<div class="field"><label>Title</label><input type="text" id="addTitle" value="'
+    + '<div class="field"><label>Paste an answer sheet (JSON from Gemini/studio)</label>'
+    + '<textarea id="addSheetInput" style="min-height:80px" '
+    + 'placeholder=\\'{"title":"...","author":"...","answers":{"form:fiction":"yes",...}}\\'>'
+    + '</textarea></div>'
+    + '<button class="act ghost" id="addFillSheet" type="button">Fill from sheet</button>'
+    + '<p class="effect" id="addSheetNoteEl">' + (addSheetNote || "") + '</p>'
+    + '<div class="field" style="margin-top:16px"><label>Title</label><input type="text" id="addTitle" value="'
       + esc(p ? p.title : "") + '"></div>'
     + '<div class="field"><label>Author \\u2014 pick one we already hold. A name typed one '
       + "letter differently from the one we have creates a SECOND author, with the facts "
@@ -1048,6 +1055,41 @@ function renderAddReview(questions){
 // (id/text/suggested/source) so a Yes/No/Unknown click can redraw the
 // table from the SAME data with just addAnswers changed — no second
 // network call for what is purely a draft edit.
+//
+// Shared by "Suggest answers" and "Fill from sheet" — both need the exact
+// same live preview (subjects + description model) before a draft can be
+// shown; a sheet does not skip it, since the summary/year it fetches are
+// not something a pasted answer sheet carries at all.
+async function addFetchSuggestions(){
+  const title = document.getElementById("addTitle").value.trim();
+  const author = document.getElementById("addAuthorField").value.trim();
+  const summary = document.getElementById("addSummary").value.trim();
+  const themes = document.getElementById("addThemes").value.split(",")
+    .map((s) => s.trim()).filter(Boolean);
+  const who = authorByName(author);
+  const r = await post("/api/book/preview", {
+    title, author, summary, subjects: themes,
+    author_ol_key: who && !who.id.startsWith("name:") ? who.id : null,
+    google_id: addPicked ? addPicked.google_id : null,
+    openlibrary_id: addPicked ? addPicked.openlibrary_id : null,
+  });
+  if (r.fetched_summary && !summary)
+    document.getElementById("addSummary").value = r.fetched_summary;
+  if (r.fetched_year && !document.getElementById("addYear").value.trim())
+    document.getElementById("addYear").value = r.fetched_year;
+  window.__addLastQuestions = r.questions;
+  // THE DRAFT STARTS EQUAL TO THE SUGGESTIONS, not empty. The table
+  // shows the suggested button already highlighted as "your answer" —
+  // found in testing that leaving addAnswers empty until a manual
+  // click made that highlight a LIE: Add book would have sent {},
+  // applying none of what the screen showed as selected, silently.
+  // A fresh preview always REPLACES the draft (never merges into
+  // whatever the admin had reviewed on a previous, different search).
+  addAnswers = {}; addTouched = new Set();
+  r.questions.forEach((q) => { addAnswers[q.id] = q.suggested; });
+  return r;
+}
+
 document.getElementById("addForm").addEventListener("click", async (e) => {
   if (e.target.classList.contains("addSet")){
     const q = e.target.dataset.q, v = e.target.dataset.v;
@@ -1059,35 +1101,11 @@ document.getElementById("addForm").addEventListener("click", async (e) => {
 
   if (e.target.id === "addSuggest"){
     const title = document.getElementById("addTitle").value.trim();
-    const author = document.getElementById("addAuthorField").value.trim();
-    const summary = document.getElementById("addSummary").value.trim();
-    const themes = document.getElementById("addThemes").value.split(",")
-      .map((s) => s.trim()).filter(Boolean);
     if (!title){ setStatus("addSuggestStatus", "a title is required first", false); return; }
-    const who = authorByName(author);
     e.target.disabled = true;
     setStatus("addSuggestStatus", "Checking the subjects and the description\\u2026");
     try {
-      const r = await post("/api/book/preview", {
-        title, author, summary, subjects: themes,
-        author_ol_key: who && !who.id.startsWith("name:") ? who.id : null,
-        google_id: addPicked ? addPicked.google_id : null,
-        openlibrary_id: addPicked ? addPicked.openlibrary_id : null,
-      });
-      if (r.fetched_summary && !summary)
-        document.getElementById("addSummary").value = r.fetched_summary;
-      if (r.fetched_year && !document.getElementById("addYear").value.trim())
-        document.getElementById("addYear").value = r.fetched_year;
-      window.__addLastQuestions = r.questions;
-      // THE DRAFT STARTS EQUAL TO THE SUGGESTIONS, not empty. The table
-      // shows the suggested button already highlighted as "your answer" —
-      // found in testing that leaving addAnswers empty until a manual
-      // click made that highlight a LIE: Add book would have sent {},
-      // applying none of what the screen showed as selected, silently.
-      // A fresh preview always REPLACES the draft (never merges into
-      // whatever the admin had reviewed on a previous, different search).
-      addAnswers = {}; addTouched = new Set();
-      r.questions.forEach((q) => { addAnswers[q.id] = q.suggested; });
+      const r = await addFetchSuggestions();
       renderAddReview(r.questions);
       setStatus("addSuggestStatus", r.trait_error
         ? "Suggested, but the description model failed: " + r.trait_error
@@ -1095,6 +1113,85 @@ document.getElementById("addForm").addEventListener("click", async (e) => {
     } catch (err) {
       setStatus("addSuggestStatus", String(err.message || err), false);
     } finally { e.target.disabled = false; }
+    return;
+  }
+
+  if (e.target.id === "addFillSheet"){
+    const noteEl = document.getElementById("addSheetNoteEl");
+    let sheet;
+    try { sheet = parseAnswerSheet(document.getElementById("addSheetInput").value); }
+    catch (err) {
+      addSheetNote = '<span class="sg-over">' + esc(err.message) + "</span>";
+      noteEl.innerHTML = addSheetNote;
+      return;
+    }
+    const titleField = document.getElementById("addTitle");
+    const authorField = document.getElementById("addAuthorField");
+    if (!titleField.value.trim() && sheet.title) titleField.value = sheet.title;
+    if (!authorField.value.trim() && sheet.author) authorField.value = sheet.author;
+
+    // A FRESH PREVIEW EVERY TIME, same rule addSuggest already follows —
+    // simpler and safer than trying to reuse a stale window.__addLastQuestions
+    // that may not even be for this title yet.
+    if (!titleField.value.trim()){
+      addSheetNote = '<span class="sg-over">the sheet carried no title, and none is typed</span>';
+      noteEl.innerHTML = addSheetNote;
+      return;
+    }
+    e.target.disabled = true;
+    setStatus("addSuggestStatus", "Checking the subjects and the description\\u2026");
+    let r;
+    try {
+      r = await addFetchSuggestions();
+    } catch (err) {
+      setStatus("addSuggestStatus", String(err.message || err), false);
+      addSheetNote = '<span class="sg-over">' + esc(String(err.message || err)) + "</span>";
+      noteEl.innerHTML = addSheetNote;
+      e.target.disabled = false;
+      return;
+    }
+    e.target.disabled = false;
+
+    // The sheet OVERRIDES the mechanical suggestion where the two disagree —
+    // it is a human-reviewed read of the actual book, stronger evidence than
+    // an automatic subjects/description pass.
+    const nBook = Object.keys(sheet.bookAnswers).length;
+    Object.entries(sheet.bookAnswers).forEach(([q, v]) => { addAnswers[q] = v; addTouched.add(q); });
+    renderAddReview(r.questions);
+    setStatus("addSuggestStatus", r.questions.length + " question(s) reviewed", true);
+
+    let msg = nBook + " book answer" + (nBook === 1 ? "" : "s")
+      + " applied over the suggestions above \\u2014 review, then Add book.";
+    if (sheet.unknownIds.length) msg += " " + sheet.unknownIds.length
+      + " id(s) the game does not ask were skipped: "
+      + esc(sheet.unknownIds.slice(0, 6).join(", ")) + (sheet.unknownIds.length > 6 ? "\\u2026" : "") + ".";
+    if (sheet.badValues.length) msg += " " + sheet.badValues.length
+      + " unusable value(s) skipped: " + esc(sheet.badValues.join(", ")) + ".";
+
+    const nAuthor = Object.keys(sheet.authorAnswers).length;
+    if (nAuthor) {
+      addAuthorCheck();
+      const hit = authorByName(authorField.value);
+      const conflicts = authorSheetConflicts(sheet.authorAnswers, hit);
+      const authorNote = document.getElementById("addAuthorNote");
+      if (!hit) {
+        msg += ' <span class="sg-over">' + nAuthor + " author fact(s) in the sheet were NOT "
+          + "applied</span> \\u2014 no profile found for \\u201c" + esc(sheet.author || authorField.value)
+          + "\\u201d. Create one on the Authors tab first.";
+      } else if (conflicts.length) {
+        const warn = '<span class="sg-over">' + conflicts.length + " author fact(s) from a "
+          + "pasted sheet disagree with this profile: " + conflicts.map((c) => esc(c.qid)
+            + " (sheet " + (c.sheet ? "yes" : "no") + ", profile " + (c.profile ? "yes" : "no") + ")")
+            .join("; ") + " \\u2014 not applied.</span>";
+        if (authorNote) authorNote.innerHTML += " " + warn;
+        msg += " Author facts disagree with the existing profile \\u2014 see the note above the author field.";
+      } else {
+        msg += " Author facts agree with " + esc(hit.name) + "\\u2019s existing profile ("
+          + nAuthor + " checked, none written here).";
+      }
+    }
+    addSheetNote = msg;
+    noteEl.innerHTML = msg;
     return;
   }
 
@@ -1445,7 +1542,68 @@ function cellState(bookIndex, qIndex){
 // up to 30 matches — the exact inline-embedding the Authors tab already
 // moved to and the same reason: no way to tell which row a separate panel
 // was about.
-let edOpenKey = null, edDraft = null;
+let edOpenKey = null, edDraft = null, edSheetNote = "";
+
+// ── paste an answer sheet ────────────────────────────────────────────────
+// Studio's own Gemini prompt (games/studio/server.js) asks for exactly this
+// shape: {"title":..., "author":..., "answers": {"qid": "yes"|"no"|"unknown"}}.
+// Shared by the Edit and Add tabs rather than copied, since the split below
+// is the same decision either way.
+//
+// AUTHOR-SCOPED IDS ARE NEVER FILLED IN AS BOOK ANSWERS. A fact like
+// author:british is an opinion about the AUTHOR, and this sheet is one
+// admin's read of ONE book. Writing it straight into this book's draft would
+// let it drift from whatever the OTHER books by the same person already
+// carry on the Authors tab -- the exact split-identity problem that tab
+// exists to prevent, just introduced from a different door. So author:* ids
+// are pulled out here and only ever handed to the EXISTING author-matching
+// flow (authorByName / Attach, or the Authors tab to update a profile) --
+// never written as a one-off override on this book alone.
+const AUTHOR_QIDS = new Set(["author:alive", "author:american", "author:british",
+  "author:european", "author:female", "author:nonwestern", "author:prolific"]);
+
+function parseAnswerSheet(text){
+  const raw = (text || "").trim();
+  if (!raw) throw new Error("paste the sheet first");
+  const m = raw.match(/\\{[\\s\\S]*\\}/);
+  let obj;
+  try { obj = JSON.parse(m ? m[0] : raw); }
+  catch (e) { throw new Error("not valid JSON: " + e.message); }
+  const src = obj.answers && typeof obj.answers === "object" ? obj.answers : obj;
+  const bookAnswers = {}, authorAnswers = {};
+  const liveIds = new Set(questions.map((q) => q.id));
+  const unknownIds = [], badValues = [];
+  for (const [id, v0] of Object.entries(src)) {
+    if (id === "title" || id === "author") continue;
+    if (!liveIds.has(id)) { unknownIds.push(id); continue; }
+    const v = String(v0).toLowerCase().trim();
+    if (v === "unknown") continue;               // never guess -- leave it be
+    if (v !== "yes" && v !== "no") { badValues.push(id + "=" + v0); continue; }
+    (AUTHOR_QIDS.has(id) ? authorAnswers : bookAnswers)[id] = v === "yes";
+  }
+  return {
+    title: typeof obj.title === "string" ? obj.title.trim() : "",
+    author: typeof obj.author === "string" ? obj.author.trim() : "",
+    bookAnswers, authorAnswers, unknownIds, badValues,
+  };
+}
+
+// The sheet's author:* verdicts against an EXISTING profile's own facts, if
+// the typed name matched one. A question the profile has never recorded is
+// not a conflict -- it is new information "Attach" will carry over as-is.
+// A question where the two actively disagree is the one case worth
+// stopping the admin for, rather than silently picking a side.
+function authorSheetConflicts(authorAnswers, hit){
+  if (!hit || !Object.keys(authorAnswers).length) return [];
+  const facts = (auOverlay(hit.id) || {}).facts || {};
+  const out = [];
+  for (const [qid, sheetVal] of Object.entries(authorAnswers)) {
+    if (!Object.prototype.hasOwnProperty.call(facts, qid)) continue;
+    const have = facts[qid];
+    if (have !== null && have !== sheetVal) out.push({qid, sheet: sheetVal, profile: have});
+  }
+  return out;
+}
 
 // {question id: true|false}, ONLY for cells with a genuine hand-verdict
 // clamp (0.90/0.15) — a mid-range value is the drain's own guess from play
@@ -1474,8 +1632,8 @@ function edDirtyCount(){
   return n;
 }
 
-function edOpen(key){ edOpenKey = key; edDraft = edCommitted(key); }
-function edClose(){ edOpenKey = null; edDraft = null; }
+function edOpen(key){ edOpenKey = key; edDraft = edCommitted(key); edSheetNote = ""; }
+function edClose(){ edOpenKey = null; edDraft = null; edSheetNote = ""; }
 
 function editPanelHtml(i){
   const b = books[i], key = b.k;
@@ -1513,7 +1671,13 @@ function editPanelHtml(i){
 
   const dirty = edDirtyCount();
   return '<div class="card" style="max-width:none;margin:4px 0" data-key="' + esc(key) + '">'
-    + '<div class="field"><label>Title shown to the player</label>'
+    + '<div class="field"><label>Paste an answer sheet (JSON from Gemini/studio)</label>'
+    + '<textarea class="edSheetInput" style="min-height:80px" '
+    + 'placeholder=\\'{"title":"...","author":"...","answers":{"form:fiction":"yes",...}}\\'>'
+    + '</textarea></div>'
+    + '<button class="act ghost edFillSheet">Fill from sheet</button>'
+    + '<p class="effect edSheetNote">' + (edSheetNote || "") + '</p>'
+    + '<div class="field" style="margin-top:16px"><label>Title shown to the player</label>'
       + '<input type="text" class="edTitle" value="' + esc(b.t) + '"></div>'
     + '<button class="act ghost edSaveName">Save the title</button>'
     + '<p class="effect">Changes only what the reveal prints. No question and no '
@@ -1654,6 +1818,49 @@ document.getElementById("edRows").addEventListener("click", async (e) => {
     const q = e.target.dataset.q, v = e.target.dataset.v;
     if (v === "clear") delete edDraft[q];
     else edDraft[q] = v === "yes";
+    edRedraw();
+    return;
+  }
+
+  if (e.target.classList.contains("edFillSheet")) {
+    const ta = card.querySelector(".edSheetInput");
+    let sheet;
+    try { sheet = parseAnswerSheet(ta.value); }
+    catch (err) { edSheetNote = '<span class="sg-over">' + esc(err.message) + "</span>"; edRedraw(); return; }
+
+    Object.assign(edDraft, sheet.bookAnswers);
+    const nBook = Object.keys(sheet.bookAnswers).length;
+    let msg = nBook + " book answer" + (nBook === 1 ? "" : "s")
+      + " filled into the draft below — review, then Save.";
+    if (sheet.unknownIds.length) msg += " " + sheet.unknownIds.length
+      + " id(s) the game does not ask were skipped: "
+      + esc(sheet.unknownIds.slice(0, 6).join(", ")) + (sheet.unknownIds.length > 6 ? "…" : "") + ".";
+    if (sheet.badValues.length) msg += " " + sheet.badValues.length
+      + " unusable value(s) skipped: " + esc(sheet.badValues.join(", ")) + ".";
+
+    const nAuthor = Object.keys(sheet.authorAnswers).length;
+    if (nAuthor) {
+      const authorField = card.querySelector(".edAuthor");
+      if (!authorField.value.trim() && sheet.author) authorField.value = sheet.author;
+      authorField.dispatchEvent(new Event("input"));
+      const hit = authorByName(authorField.value);
+      const conflicts = authorSheetConflicts(sheet.authorAnswers, hit);
+      if (!hit) {
+        msg += ' <span class="sg-over">' + nAuthor + " author fact(s) in the sheet were NOT "
+          + "applied</span> — no profile found for “" + esc(sheet.author || authorField.value)
+          + "”. Create one on the Authors tab first, or Attach will refuse.";
+      } else if (conflicts.length) {
+        msg += ' <span class="sg-over">' + conflicts.length + " author fact(s) disagree with "
+          + esc(hit.name) + "’s existing profile: " + conflicts.map((c) => esc(c.qid)
+            + " (sheet " + (c.sheet ? "yes" : "no") + ", profile " + (c.profile ? "yes" : "no") + ")")
+            .join("; ") + "</span>. Not applied — fix the profile on the Authors tab first if the "
+          + "sheet is right, or Attach below to keep what the profile already says.";
+      } else {
+        msg += " Author facts agree with " + esc(hit.name) + "’s existing profile ("
+          + nAuthor + " checked, none written here) — Attach below to link the book.";
+      }
+    }
+    edSheetNote = msg;
     edRedraw();
     return;
   }
