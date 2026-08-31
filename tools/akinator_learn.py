@@ -64,6 +64,30 @@ ANSWERS = ("yes", "probably_yes", "unknown", "probably_no", "no")
 COUNTS_PREFIX = "akin:c:"
 TOUCHED_SET = "akin:touched"
 
+# The same answers again, tallied per QUESTION instead of per (book,
+# question) — one hash for the whole game, fields "{question_id}:{answer}".
+#
+# WHY A SECOND COUNTER RATHER THAN A SUM OF THE FIRST. The per-book hashes
+# are cumulative and the drain never deletes them; it only removes members
+# from `akin:touched`. So a book drained on three nights has been read three
+# times, and adding up what any one drain saw would count the same answers
+# again on every run. There is also no set of "every book with counts" left
+# to walk once the queue is emptied. A counter incremented at the source is
+# exact, needs no scan, and cannot double-count.
+#
+# WHAT IT IS FOR, and the distinction is the whole point: `unknown` is
+# excluded from the per-cell posterior because it says nothing about the
+# ANSWER — but it says a great deal about the QUESTION. Four questions were
+# already cut by hand for being unanswerable ("how many editions is it in",
+# "is it well rated") after a person noticed. This is that same judgement,
+# measured, and it is the only way to notice the next one without waiting
+# for someone to meet it in a real game.
+#
+# ~50 extra pipeline commands per submission, in the pipeline that already
+# runs. At this game's traffic that is nowhere near the free tier's daily
+# budget, and it buys a number no scan could reconstruct afterwards.
+QSTATS_KEY = "akin:q"
+
 # Counts outlive any single day but must not outlive a rebuild cycle by so
 # much that they describe a question list nobody ships any more. 45 days
 # gives the monthly rebuild a wide margin and still expires abandoned data.
@@ -244,6 +268,12 @@ def submit(body: Submission, request: Request):
 
     commands = [["HINCRBY", COUNTS_PREFIX + body.book, f"{q}:{a}", 1]
                 for q, a in pairs]
+    # The same answers again, per question rather than per cell. Refreshed
+    # on every write, so the TTL only ever expires it if the game goes 45
+    # days with nobody playing — self-cleaning without a retired question's
+    # tally lingering for a year.
+    commands += [["HINCRBY", QSTATS_KEY, f"{q}:{a}", 1] for q, a in pairs]
+    commands.append(["EXPIRE", QSTATS_KEY, COUNTS_TTL])
     commands.append(["EXPIRE", COUNTS_PREFIX + body.book, COUNTS_TTL])
     commands.append(["SADD", TOUCHED_SET, body.book])
     commands.append(["EXPIRE", TOUCHED_SET, COUNTS_TTL])

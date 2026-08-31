@@ -60,7 +60,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import cache  # noqa: E402
 from fastapi import APIRouter, Header, HTTPException, Query  # noqa: E402
 from tools.akinator_learn import (ARTIFACTS, COUNTS_PREFIX,  # noqa: E402
-                                  TOUCHED_SET, _artifacts, _book_states)
+                                  QSTATS_KEY, TOUCHED_SET, _artifacts,
+                                  _book_states)
 import httpx  # noqa: E402
 from tools.akinator_sync import (GITHUB_API, GITHUB_BRANCH,  # noqa: E402
                                  GITHUB_PAT, GITHUB_REPO, _commit_files,
@@ -107,6 +108,22 @@ CLAMP_LOW = 0.15             # == the strongest absence_confidence rung
 # same thing to the learner as it does to the player's belief update.
 ANSWER_WEIGHT = {"yes": 1.0, "probably_yes": 0.65,
                  "probably_no": 0.35, "no": 0.0}
+
+# When a question's "don't know" rate is worth a human's attention. Both are
+# REPORTING thresholds and neither retires anything — see question_health().
+#
+# 200 is the smaller judgement call of the two: below it a rate swings on a
+# handful of games, and this counter is fed by an opt-in button rather than
+# by every play, so it fills slowly.
+#
+# 0.40 is anchored on what the engine already does. `DK_BEFORE_DIMENSION_
+# DROPPED = 2` says two "don't know"s about one dimension is enough to stop
+# asking about it AT ALL for that player; a question that gets there with
+# two players in five is doing the same damage to everyone. It is not a
+# measured optimum — nothing has been measured here yet, which is the point
+# of shipping the report first.
+DK_MIN_SAMPLE = 200
+DK_FLAG_RATE = 0.40
 
 
 def _live_question_ids(art: dict | None = None) -> set[str]:
@@ -569,6 +586,80 @@ def list_taught():
     rows, books, retired = _taught_rows()
     return {"ok": True, "cells": rows, "books": books,
             "min_plays": MIN_PLAYS, "retired": retired}
+
+
+@admin_router.post("/questions")
+def question_health():
+    """How answerable each question is, measured instead of guessed.
+
+    REPORTS AND NEVER RETIRES, and that is a deliberate stopping point
+    rather than a first draft. Retiring a question is close to a one-way
+    door — its taught cells orphan the moment it stops being live, and
+    `_live_question_ids` would then file every count against it as
+    `retired` — so the decision belongs to a person looking at the wording,
+    exactly as it did for the four questions cut by hand. This computes the
+    number that person never had.
+
+    THE SAMPLE IS BIASED AND SAYING SO IS PART OF THE ANSWER. A submission
+    only happens when a player presses "Teach it this book", so these are
+    games somebody cared enough about to correct. That skew applies to
+    every question roughly equally, which is why the useful reading is the
+    RANKING — question A is harder to answer than question B — and not the
+    absolute rate.
+    """
+    raw = cache.hgetall(QSTATS_KEY)
+    if raw is None:
+        raise HTTPException(status_code=503,
+                            detail="counters unreadable; nothing to report")
+
+    art = _artifacts()
+    live = _live_question_ids(art)
+    cold = set(art.get("cold_ids") or ())
+
+    per: dict[str, dict[str, int]] = {}
+    for field, value in raw.items():
+        qid, _, answer = field.rpartition(":")
+        if not qid or answer not in ANSWER_WEIGHT and answer != "unknown":
+            continue
+        try:
+            per.setdefault(qid, {})[answer] = int(value)
+        except (TypeError, ValueError):
+            continue
+
+    rows = []
+    for qid, tally in per.items():
+        unknown = tally.get("unknown", 0)
+        judged = sum(n for a, n in tally.items() if a != "unknown")
+        total = judged + unknown
+        if not total:
+            continue
+        rows.append({
+            "question_id": qid,
+            "asked": total,
+            "unknown": unknown,
+            "judged": judged,
+            "dk_rate": round(unknown / total, 4),
+            "answers": tally,
+            # A question nobody ships any more still has a tally, and it is
+            # worth seeing rather than hiding — it is the record of why it
+            # was retired. Flagged, not filtered.
+            "live": (not live) or qid in live,
+            "cold": qid in cold,
+        })
+    rows.sort(key=lambda r: (-r["dk_rate"], -r["asked"]))
+
+    flagged = [r for r in rows
+               if r["live"] and r["asked"] >= DK_MIN_SAMPLE
+               and r["dk_rate"] >= DK_FLAG_RATE]
+    return {"ok": True, "questions": rows, "flagged": flagged,
+            "min_sample": DK_MIN_SAMPLE, "flag_rate": DK_FLAG_RATE,
+            "note": "\"Don't know\" is evidence about the QUESTION, not the "
+                    "answer — the drain excludes it from every cell's "
+                    "posterior for that reason, and this is the other half "
+                    "of that split. Report only: nothing here retires a "
+                    "question. The sample is opt-in (players who pressed "
+                    "\"Teach it this book\"), so read the ranking, not the "
+                    "absolute rate."}
 
 
 @admin_router.post("/audit")
