@@ -312,7 +312,7 @@ def answer_as_player(book: dict, question: str, rng: random.Random,
 
 def play(matrix: Matrix, target_idx: int, rng: random.Random,
          max_questions: int, max_guesses: int, noise: float,
-         miss_rate: float) -> tuple[bool, int]:
+         miss_rate: float, recheck: bool = True) -> tuple[bool, int]:
     """Returns (guessed correctly, questions used).
 
     MIRRORS THE PAGE'S TURN LOOP, and did not used to. This function
@@ -374,6 +374,27 @@ def play(matrix: Matrix, target_idx: int, rng: random.Random,
             if done is not None:
                 return done, asked
 
+        # THE LAST TURN, when the leader is too weak to guess on and there
+        # is still a guess to make: spend it re-checking an answer rather
+        # than asking a thirtieth question. See RECHECK_MIN_CLASH.
+        #
+        # The player is asked again through the SAME function, so the noise
+        # and miss-rate draws are fresh — a re-check can correct a hedge and
+        # can also introduce one, which is the honest model of a person
+        # thinking again. It slightly flatters the miss-rate case, where a
+        # reader who knows something the catalogue lacks would not change
+        # their mind on being asked twice; that arm is the minority of
+        # re-checks and modelling it as sticky would need a per-book memory
+        # this player does not have.
+        if (recheck and asked == max_questions - 1 and guesses < max_guesses
+                and engine.wants_recheck()):
+            stale = engine.contradicted_question()
+            if stale is not None:
+                engine.revise(stale, answer_as_player(
+                    target, stale, rng, noise, miss_rate, target_tokens))
+                asked += 1
+                continue
+
         question = engine.next_question()
         if question is None:
             break
@@ -423,6 +444,10 @@ def main() -> None:
                          "test for a question only a database can answer: "
                          "--drop frees the turn for a better question, this "
                          "spends it exactly as a real player would.")
+    ap.add_argument("--no-recheck", action="store_true",
+                    help="do not spend the last turn re-checking the answer "
+                         "the leader most contradicts. On by default, "
+                         "because the page does it.")
     ap.add_argument("--cold", action="store_true",
                     help="ask the shipped cold questions too (two turns of "
                          "thirty, spent collecting data rather than using it)")
@@ -561,7 +586,8 @@ def main() -> None:
             # is what a paired test needs.
             rng = random.Random(f"{args.seed}:{books[idx]['key']}:{trial}")
             ok, used = play(matrix, idx, rng, args.max_questions,
-                            args.max_guesses, args.noise, args.miss_rate)
+                            args.max_guesses, args.noise, args.miss_rate,
+                            recheck=not args.no_recheck)
             results.append((ok, used))
             per_tier[tier].append(ok)
             if args.trials == 1:

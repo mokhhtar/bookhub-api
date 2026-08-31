@@ -201,6 +201,60 @@ CHAR_STREAK_CAP = 2
 COLD_UNKNOWN_CONFIDENCE = 0.5
 COLD_TURNS = (14, 22)
 
+# RE-ASKING ONE ANSWER, and why it can only help.
+#
+# Player error is the largest loss we have measured — `--miss-rate 0.25` is
+# worth about twenty points of success rate — and nothing in the game reacts
+# to it. `DK_BEFORE_DIMENSION_DROPPED` reacts to a player who CANNOT answer;
+# there has never been anything for one who answered WRONGLY. Akinator
+# confirms a contradictory answer; `_pool()` filters `q not in self.asked`
+# and that has always been final.
+#
+# THE ARITHMETIC IS MIN_GUESS_CONFIDENCE'S, RUN FORWARD. A floor on guessing
+# measured 0 wins in every arm because it could only block the guess made
+# when the questions run out, and there is nothing after that guess — so it
+# could only turn a win into a loss. Spend a turn the same way and the sign
+# flips: used on the LAST question, in a game whose leader is too weak to
+# guess on, a re-check can only turn a loss into a win. The turn was going
+# to be spent on a question the chooser barely wanted anyway.
+#
+# WHICH ANSWER. The one the leading candidate most contradicts — exactly the
+# rule `explainMiss` on the page already uses to tell a player, AFTER the
+# game, which answers disagreed with the book they meant. Showing that one
+# turn earlier, while it can still change something, is the whole change.
+#
+# WHAT IS NOT ELIGIBLE, and this is what keeps the change small: a ladder
+# rung (revising it would invalidate `bounds` and `dk_count`, which the
+# ladder built up over several turns) and any member of an exclusive group
+# (a firm yes marked its siblings asked). Neither restriction costs
+# anything real — ~35 of 48 questions remain, and nothing is asked after
+# this turn anyway — and together they mean a revision touches belief and
+# nothing else.
+RECHECK_LEADER_BELIEF = 0.35
+RECHECK_MIN_CLASH = 0.50
+
+
+def _likelihood(p: float, weight: float) -> float:
+    """P(this answer | this book), interpolated by how firm the answer was.
+
+    Pulled out of `update()` so `revise()` cannot drift from it. The two had
+    to agree exactly — one divides out what the other multiplied in — and a
+    second copy of four lines of arithmetic is how every drift in this
+    codebase has started.
+
+    An `unknown` answer returns 1.0 rather than 0.5. `update()` returns early
+    on weight 0 and never applies a factor at all, so 1.0 is what it has
+    always effectively contributed; saying it out loud is what lets `revise`
+    handle "don't know" with no special case.
+    """
+    if weight == 0.0:
+        return 1.0
+    if weight > 0:
+        likelihood = (1 - weight) * 0.5 + weight * p
+    else:
+        likelihood = (1 + weight) * 0.5 + (-weight) * (1 - p)
+    return max(likelihood, MIN_LIKELIHOOD)
+
 
 def _binary_entropy(p: float) -> float:
     """H_b(p), in nats. 0 at the ends, where an answer is certain."""
@@ -400,12 +454,19 @@ class Engine:
         # cold schedule counts turns, so it needs the number the player sees
         # — the same quantity `askedCount` is on the page.
         self.turns = 0
+        # (question, answer) in the order the player gave them. NOT derivable
+        # from `self.asked`, which is a set and also holds questions nobody
+        # was asked — the siblings a firm yes suppressed and the ladder rungs
+        # an interval settled. `revise` and `contradicted_question` need what
+        # was actually said.
+        self.answers: list[tuple[str, str]] = []
 
     # -- inference ---------------------------------------------------------
 
     def update(self, question: str, answer: str) -> None:
         """Fold one answer into the belief state."""
         self.asked.add(question)
+        self.answers.append((question, answer))
         self.turns += 1
         self.char_streak = self.char_streak + 1 if question.startswith("char:") else 0
         weight = ANSWER_WEIGHTS[answer]
@@ -482,18 +543,107 @@ class Engine:
         # "not what the player is thinking of".
         total = 0.0
         for i, row in enumerate(self.m.rows):
-            p = row[question]
-            # Interpolate between "they said yes" and "they said no"
-            # according to how firm the answer was.
-            if weight > 0:
-                likelihood = (1 - weight) * 0.5 + weight * p
-            else:
-                likelihood = (1 + weight) * 0.5 + (-weight) * (1 - p)
-            self.belief[i] *= max(likelihood, MIN_LIKELIHOOD)
+            self.belief[i] *= _likelihood(row[question], weight)
             total += self.belief[i]
 
         if total > 0:
             self.belief = [b / total for b in self.belief]
+
+    def revise(self, question: str, new_answer: str) -> bool:
+        """Replace one earlier answer, without replaying the whole game.
+
+        DIVIDES THE OLD FACTOR OUT AND MULTIPLIES THE NEW ONE IN. Belief is
+        a product of per-question likelihoods, so this is exact rather than
+        an approximation of a replay — and it is chosen over a replay for a
+        reason beyond speed: a replay's result depends on the ORDER the
+        multiplications happen in, at the twelfth decimal, and the browser
+        would have to reproduce that order exactly or parity-check.js reports
+        a drift that is really just float arithmetic. One division and one
+        multiplication have no order to disagree about.
+
+        Safe to divide because every factor is `max(l, MIN_LIKELIHOOD)` and
+        so is never below 0.02 — and an `unknown` answer contributes a
+        factor of exactly 1.0, which is why revising to or from "don't know"
+        needs no special case here.
+
+        Deliberately does NOT touch `asked`, `bounds`, `dk_count` or
+        `char_streak`. `contradicted_question` only ever offers a question
+        that is neither a ladder rung nor an exclusive-group member, so
+        there is no ladder interval to unwind and no sibling to un-suppress;
+        see RECHECK_MIN_CLASH for why that restriction is free.
+        """
+        old = None
+        for n, (q, a) in enumerate(self.answers):
+            if q == question:
+                old = (n, a)
+        if old is None:
+            return False
+        n, old_answer = old
+        if old_answer == new_answer:
+            return False
+
+        old_w = ANSWER_WEIGHTS[old_answer]
+        new_w = ANSWER_WEIGHTS[new_answer]
+        total = 0.0
+        for i, row in enumerate(self.m.rows):
+            p = row[question]
+            self.belief[i] *= _likelihood(p, new_w) / _likelihood(p, old_w)
+            total += self.belief[i]
+        if total > 0:
+            self.belief = [b / total for b in self.belief]
+
+        # The record follows the correction rather than gaining a second
+        # entry, so `explainMiss` stops blaming an answer the player took
+        # back and `teach()` files one answer per question instead of both.
+        # The page rewrites its `history` entry in place for the same reason.
+        self.answers[n] = (question, new_answer)
+        return True
+
+    def contradicted_question(self) -> str | None:
+        """The answer the leading candidate most disagrees with, or None.
+
+        Same rule as `explainMiss` on the page, applied one turn earlier: a
+        cell at exactly 0.5 asserts nothing and cannot contradict anything,
+        an `unknown` answer contradicts nothing either, and the strength of
+        a clash is how firmly the notes claim the opposite scaled by how
+        firmly the player said it.
+
+        Returns None below RECHECK_MIN_CLASH rather than the best of a bad
+        field — a turn spent quibbling over a 0.55 cell is a turn wasted, and
+        the caller has a real question it could ask instead.
+        """
+        if not self.belief:
+            return None
+        top = self.belief.index(max(self.belief))
+        row = self.m.rows[top]
+        best, best_score = None, 0.0
+        for q, a in self.answers:
+            if q.startswith("char:"):
+                continue
+            if q in LADDER_OF or q in EXCLUDES:
+                continue
+            w = ANSWER_WEIGHTS[a]
+            if w == 0.0:
+                continue
+            p = row.get(q)
+            if p is None or p == UNKNOWN_CONFIDENCE:
+                continue
+            notes_yes = p > 0.5
+            if notes_yes == (w > 0):
+                continue
+            score = abs(w) * (p if notes_yes else 1.0 - p)
+            if score > best_score:
+                best, best_score = q, score
+        return best if best_score >= RECHECK_MIN_CLASH else None
+
+    def wants_recheck(self, threshold: float = RECHECK_LEADER_BELIEF) -> bool:
+        """Is the leader weak enough that a re-check beats another question?
+
+        The turn-number half of the trigger lives in the caller, next to the
+        question cap and the guess counter it depends on — the same division
+        that keeps `guess_target` in here and the turn loop out there.
+        """
+        return bool(self.belief) and max(self.belief) < threshold
 
     def reject(self, index: int) -> None:
         """The player said our guess was wrong. Weaken, never erase."""

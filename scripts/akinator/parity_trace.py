@@ -49,11 +49,21 @@ DEFAULT_ARTIFACTS = os.path.join(REPO_ROOT, "..", "bookhub", "games", "data", "a
 # A fixed answer script. Deliberately mixed: firm and hedged answers in both
 # directions, and "unknown" — which must skip the update entirely, so it is
 # also a check that both engines agree on doing nothing.
+#
+# EXTENDED FROM 20 TO 29 when the re-check went in, and the length is now
+# load-bearing rather than arbitrary. At 20 turns the leader is still so
+# flat that `contradicted_question` finds nothing above RECHECK_MIN_CLASH,
+# so the fixture recorded "no contradiction" and tested the feature's null
+# path only. Nine more answers concentrate belief enough for a real clash to
+# appear — and they also carry the trace past turn 23, which is the SECOND
+# cold question. The first 20 are unchanged so the diff stays readable.
 ANSWER_SCRIPT = [
     "yes", "no", "probably_yes", "unknown", "no",
     "yes", "probably_no", "yes", "unknown", "no",
     "probably_yes", "yes", "no", "no", "probably_no",
     "yes", "unknown", "no", "yes", "probably_yes",
+    "no", "yes", "probably_no", "unknown", "yes",
+    "no", "probably_yes", "no", "yes",
 ]
 
 
@@ -243,7 +253,28 @@ def main() -> None:
     overrides_digest = hashlib.sha256(
         overrides_fingerprint(overrides).encode("utf-8")).hexdigest()[:16]
 
+    # THE RE-CHECK, scripted onto the end of the same game. Both halves are
+    # recorded even when there is nothing to re-check: "both engines agree
+    # there is no contradiction worth a turn" is a real check, and a fixture
+    # that only exercised the feature when it happened to fire would go
+    # quietly untested the first time the corpus shifted.
+    #
+    # The answer is fixed rather than derived, for the same reason
+    # ANSWER_SCRIPT is: this measures agreement, not quality.
+    stale = engine.contradicted_question()
+    recheck = {"question": stale, "answer": "yes" if stale else None,
+               "wants": engine.wants_recheck()}
+    if stale is not None:
+        engine.revise(stale, "yes")
+        top = engine.ranking(3)
+        recheck["top"] = [{"key": books[i]["key"], "p": round(p, 12)}
+                          for i, p in top]
+        recheck["belief_sum"] = round(sum(engine.belief), 12)
+        recheck["belief_checksum"] = round(
+            sum(b * math.log1p(i + 1) for i, b in enumerate(engine.belief)), 12)
+
     trace = {
+        "recheck": recheck,
         "generated_from": {
             "question_hash": meta.get("question_hash"),
             "books": meta["books"],
@@ -261,6 +292,8 @@ def main() -> None:
             fh.write(text)
         print(f"{len(turns)} turns -> {args.out}")
         print(f"question_hash {meta.get('question_hash')}")
+        print(f"recheck: {recheck['question'] or 'nothing contradicted'}"
+              f" (leader weak: {recheck['wants']})")
         for t in turns[:5]:
             print(f"  {t['question']:<24} {t['answer']:<14} top={t['top'][0]['key']}")
     else:
