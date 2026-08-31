@@ -182,7 +182,28 @@ def main() -> None:
         print(f"overrides.json: {cells} learned cell(s) across "
               f"{len(overrides)} book(s)")
 
-    matrix = Matrix(books, qids, excluded=excluded, overrides=overrides)
+    # The third file the page reads out of this directory, for the third
+    # time the same lesson. `excluded.json` and `overrides.json` were each
+    # read by the browser and not by Python, and each reported a drift on
+    # engines that agreed. Cold questions change WHICH QUESTION a turn asks,
+    # so omitting them here would not report a subtle belief difference — it
+    # would report a flat question mismatch from turn 15 on.
+    cold_path = os.path.join(args.artifacts, "cold_questions.json")
+    cold: list[str] = []
+    if os.path.exists(cold_path):
+        try:
+            with open(cold_path, encoding="utf-8") as fh:
+                data = json.load(fh)
+            if isinstance(data, list):
+                cold = [q["id"] for q in data
+                        if isinstance(q, dict) and isinstance(q.get("id"), str)]
+        except (OSError, json.JSONDecodeError, KeyError):
+            cold = []
+    if cold:
+        print(f"cold_questions.json: {len(cold)} question(s) with no packed column")
+
+    matrix = Matrix(books, qids, excluded=excluded, overrides=overrides,
+                    cold_questions=cold)
     engine = Engine(matrix)
 
     turns = []

@@ -158,6 +158,49 @@ NAMED_CHARS_GATE = 0.75
 # still empties out the ordinary way if it is not.
 CHAR_STREAK_CAP = 2
 
+# COLD QUESTIONS — the third pool, asked to GET data rather than to use it.
+#
+# THE PROBLEM. Every question that ships today had to clear
+# `features.keeps_question`, whose floor is a FREQUENCY: a key no book
+# carries has freq 0, and even `FORCE_KEEP` refuses it (`and freq > 0`).
+# So a dimension the catalogue simply does not record — "is it set in the
+# Victorian era?" — can never enter the game, no matter how cleanly a reader
+# would answer it. That is a rule about our metadata masquerading as a rule
+# about questions.
+#
+# Akinator has no such problem because its table is not a catalogue: a new
+# question starts `unknown` for every entity and is filled in by play. We
+# already have that machinery — `akinator_learn.py` counts answers per
+# (book, question) and `akinator_drain.py` folds them into overrides.json —
+# and it has never been pointed at a column that starts empty.
+#
+# WHY IT CANNOT BOOTSTRAP ITSELF, which is the whole reason this constant
+# exists rather than a one-line addition to the question list. An all-unknown
+# column sits at p = 0.5 for every book, so `H_b(P_yes) - Σ b·H_b(p_i)` is
+# exactly zero — the chooser is CORRECT to never pick it, and that correctness
+# is the fix that took success from 36.0% to 55.5%. The column is never asked,
+# so it never gets data, so it is never worth asking. Nothing inside the
+# ranking can break that loop; the question has to be handed a turn from
+# outside it.
+#
+# THE COST IS ONE TURN, AND NOT ONE POINT MORE. The update is left completely
+# alone: an untaught cell is 0.5 for every book, and a factor shared by every
+# candidate cancels in the normalisation. So a cold question with no data is
+# arithmetically inert — it cannot move belief in any direction, right or
+# wrong — and the moment the drain writes real values for some books, the
+# SAME update starts discriminating with them for free. That is the property
+# that makes this safe to ship before a single play has been recorded.
+#
+# FIXED TURNS, not "whenever the best gain is low". The adaptive version is
+# better on paper and would have to agree between two engines to the last
+# float; a turn number is an integer both languages compare identically, and
+# parity_trace.py's fixture stays exact. 14 and 22 are chosen against the
+# measured shape of a game: the median win lands at 23-27 questions, the
+# early turns carry nearly all the discrimination, and 30 is the cap. Two
+# turns of thirty, both after the field has already collapsed.
+COLD_UNKNOWN_CONFIDENCE = 0.5
+COLD_TURNS = (14, 22)
+
 
 def _binary_entropy(p: float) -> float:
     """H_b(p), in nats. 0 at the ends, where an answer is certain."""
@@ -178,7 +221,8 @@ class Matrix:
                  series_of: list[str | None] | None = None,
                  series_names: dict[str, str] | None = None,
                  excluded: set[str] | None = None,
-                 overrides: dict[str, dict[str, float]] | None = None):
+                 overrides: dict[str, dict[str, float]] | None = None,
+                 cold_questions: list[str] | None = None):
         self.books = books
         # Series membership per book index, for guess-time pooling. Absent
         # is fine — the engine simply never guesses a series.
@@ -192,6 +236,22 @@ class Matrix:
         self.question_set = set(questions)
         self.char_questions = char_questions or []
         self.char_question_set = set(self.char_questions)
+        # Cold questions live OUTSIDE `questions`, and that placement is the
+        # design: `self.questions` is what the chooser ranks and what the
+        # packed matrix has columns for, and a cold question is neither. It
+        # has a row entry (so the update can read it) and nothing else.
+        #
+        # An id that has since become a real question or a character token is
+        # dropped rather than duplicated. That is not defensive tidiness — it
+        # is the graduation path: once a cold column has enough taught cells
+        # to clear `keeps_question`, it is promoted into features.py and the
+        # packed matrix, and for one build the same id will be in both files.
+        # Dropping it here means the promoted column wins and the cold entry
+        # becomes a no-op, instead of the two fighting over one row key.
+        self.cold_questions = [q for q in (cold_questions or [])
+                               if q not in self.question_set
+                               and q not in self.char_question_set]
+        self.cold_question_set = set(self.cold_questions)
 
         # token -> indices of books whose cast contains it. Lets the endgame
         # consider only names some live candidate actually has, instead of
@@ -232,6 +292,13 @@ class Matrix:
                     # characters OL simply never catalogued. See the constant
                     # for why this is a base rate and not 0.5.
                     row[q] = CHAR_UNKNOWN_CONFIDENCE
+            for q in self.cold_questions:
+                # Nothing is known about any book here — that is what makes
+                # it cold. Every cell starts at the same value, so answering
+                # one multiplies the whole belief vector by a constant and
+                # normalisation erases it. The overrides pass below is the
+                # only thing that ever makes one of these cells informative.
+                row[q] = COLD_UNKNOWN_CONFIDENCE
             self.rows.append(row)
             # H_b(p) for every cell, precomputed once. This is the whole cost
             # of exact information gain: the chooser needs Σ b·H_b(p) per
@@ -266,7 +333,13 @@ class Matrix:
                 if i is None:
                     continue
                 for q, p in cells.items():
-                    if q not in self.question_set:
+                    # Cold questions are accepted here and ONLY here. This is
+                    # the entire payoff of asking them: a cold cell has no
+                    # other source, so overrides.json is not a correction to
+                    # it, it is the data. The page's `applyOverrides` builds
+                    # its index from the same combined list for this reason.
+                    if (q not in self.question_set
+                            and q not in self.cold_question_set):
                         continue
                     if isinstance(p, bool) or not isinstance(p, (int, float)):
                         continue
@@ -321,12 +394,19 @@ class Engine:
         # How many character questions have just been asked IN A ROW, reset
         # by any non-character question. See CHAR_STREAK_CAP.
         self.char_streak = 0
+        # Questions actually PUT TO THE PLAYER, which is not len(self.asked):
+        # a firm yes marks its excluded siblings asked, and a settled ladder
+        # marks its determined rungs asked, without either being a turn. The
+        # cold schedule counts turns, so it needs the number the player sees
+        # — the same quantity `askedCount` is on the page.
+        self.turns = 0
 
     # -- inference ---------------------------------------------------------
 
     def update(self, question: str, answer: str) -> None:
         """Fold one answer into the belief state."""
         self.asked.add(question)
+        self.turns += 1
         self.char_streak = self.char_streak + 1 if question.startswith("char:") else 0
         weight = ANSWER_WEIGHTS[answer]
         if answer == "yes":
@@ -499,6 +579,25 @@ class Engine:
                  if f"char:{t}" in self.m.char_question_set]
         return pool
 
+    def _due_cold_question(self) -> str | None:
+        """The cold question this turn owes, if this is one of its turns.
+
+        Ahead of the ranking rather than inside it, because a cold column's
+        information gain is zero by construction and no ranking will ever
+        return it. See COLD_TURNS for why the schedule is turn numbers and
+        not a gain threshold.
+
+        Falls through silently when the list is empty or already exhausted:
+        the schedule reserves a turn for a cold question, it does not spend
+        one on nothing.
+        """
+        if self.turns not in COLD_TURNS:
+            return None
+        for q in self.m.cold_questions:
+            if q not in self.asked:
+                return q
+        return None
+
     def next_question(self, exact: bool = False) -> str | None:
         """The most informative unasked question, by exact information gain.
 
@@ -540,6 +639,10 @@ class Engine:
         against computing both posteriors explicitly; it does not apply to
         this form.
         """
+        cold = self._due_cold_question()
+        if cold is not None:
+            return cold
+
         pool = [q for q in self._pool() if q not in self.asked]
         if not pool:
             return None

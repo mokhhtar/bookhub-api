@@ -65,7 +65,7 @@ from exclusions import drop_excluded                               # noqa: E402
 from site_books import supplement as site_supplement              # noqa: E402
 from fandom_books import supplement as fandom_supplement           # noqa: E402
 from traits import TRAIT_QUESTIONS, apply_labels, load_traits     # noqa: E402
-from engine import Engine, Matrix                                # noqa: E402
+from engine import COLD_TURNS, Engine, Matrix                    # noqa: E402
 from work_traits import (WORK_QUESTIONS, load_protagonists,        # noqa: E402
                          load_works, merge_into)
 from features import (FORCE_KEEP, QUESTION_TEXT,                    # noqa: E402
@@ -260,8 +260,15 @@ def select_character_questions(books: list[dict], verbose: bool = True) -> list[
 
 
 # Questions the simulated player will answer "unknown" to, whatever the
-# ground truth says. Set from --cannot-answer.
+# ground truth says. Set from --cannot-answer, and from --cold.
 CANNOT_ANSWER: set[str] = set()
+
+# Where the shipped artifacts live, for the one input this file cannot get
+# from the corpus: cold_questions.json, whose whole point is that the corpus
+# has nothing to say about it. Same default as parity_trace.py.
+ARTIFACT_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "..", "bookhub", "games", "data", "akinator")
 
 
 def answer_as_player(book: dict, question: str, rng: random.Random,
@@ -416,6 +423,9 @@ def main() -> None:
                          "test for a question only a database can answer: "
                          "--drop frees the turn for a better question, this "
                          "spends it exactly as a real player would.")
+    ap.add_argument("--cold", action="store_true",
+                    help="ask the shipped cold questions too (two turns of "
+                         "thirty, spent collecting data rather than using it)")
     ap.add_argument("--drop", default="",
                     help="comma-separated question ids to remove entirely. "
                          "Phase 3 established that this simulator "
@@ -473,7 +483,32 @@ def main() -> None:
         print("!! Too few usable features to play at all.")
         sys.exit(1)
 
-    matrix = Matrix(books, questions, char_questions)
+    # COLD QUESTIONS, read from the shipped artifact rather than the corpus,
+    # because the corpus is exactly what does not contain them — that is
+    # what "cold" means. Off by default so existing numbers stay comparable;
+    # `--cold` is how you price the two turns they cost.
+    #
+    # The simulated player answers them `unknown`, and that is not a
+    # pessimistic stand-in — it is exact. An untaught cold column is 0.5 for
+    # every book, so a firm answer multiplies the whole belief vector by a
+    # constant and normalisation erases it. Measured directly: max belief
+    # change 1.2e-16 for yes, no, or probably_yes. So the cost of a cold
+    # question is one turn and provably nothing else, and `unknown` is the
+    # answer that spends a turn and moves nothing.
+    cold: list[str] = []
+    if args.cold:
+        cold_path = os.path.join(ARTIFACT_DIR, "cold_questions.json")
+        try:
+            with open(cold_path, encoding="utf-8") as fh:
+                cold = [q["id"] for q in json.load(fh)
+                        if isinstance(q, dict) and isinstance(q.get("id"), str)]
+        except (OSError, json.JSONDecodeError, KeyError, TypeError):
+            cold = []
+        CANNOT_ANSWER.update(cold)
+        print(f"Cold questions: {len(cold)} — {sorted(cold)}, "
+              f"asked on turns {list(COLD_TURNS)}\n")
+
+    matrix = Matrix(books, questions, char_questions, cold_questions=cold)
     if args.target_rank:
         # The honest control for a supplement measured with
         # --target-prefix: how do books ALREADY in the corpus score at the
