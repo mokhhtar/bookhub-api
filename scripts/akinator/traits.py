@@ -34,8 +34,63 @@ CHOSEN FOR TWO AXES, both of which phase 3 established have to hold:
 GROUNDING. An extracted trait is a CLAIM about the book, and a wrong claim
 eliminates the right book with confidence. So the prompt demands the text
 support it, offers `unknown` as a first-class answer, and the parser drops
-anything not in the vocabulary. Absence is `unknown`, never "no". Same
-discipline as `_build_character_extraction_prompt` in fandom.py.
+anything not in the vocabulary. Same discipline as
+`_build_character_extraction_prompt` in fandom.py.
+
+"NO" IS NOW A THIRD ANSWER, and this paragraph is the argument for a rule
+this file used to state absolutely ("absence is `unknown`, never no").
+
+The old rule collapsed two different situations into one. A description
+that does not mention war might be two lines long — or it might be a full
+paragraph about a cookery memoir. The first is genuinely "we cannot say";
+the second is a book we KNOW has no war in it, recorded as though we had
+never looked.
+
+What that cost, measured on the shipped matrix: the eleven `t:` columns are
+87-100% `unknown`, and an unknown cell is 0.5 for every book, so it cancels
+in the normalisation and moves nothing. Together with `fact:namedchars`
+those twelve questions carry **0.448 nats** of expected information —
+against **0.236 for `fact:pre2000` alone**. Twelve questions are worth less
+than two. Scoring the same corpus with those unknowns as absent instead
+gives **1.421 nats, 3.2x**, and lifts each one from ~0.03 to ~0.11, which is
+where `genre:fantasy` (0.0975) already sits.
+
+The grounding rule is not weakened, it is made conditional on evidence:
+`NEGATIVE_MIN_WORDS` gates the negative on there being enough description
+to support one, the prompt tells the model plainly when it may not answer
+"no", and `extract_traits` strips negatives from any book that did not
+qualify rather than trusting the model to have obeyed. Everything below the
+gate behaves exactly as it did before.
+
+**THE PROMPT IS NOT CALIBRATED YET AND THE HARVEST MUST NOT RUN UNTIL IT
+IS.** Three drafts were tried against real books and real calls, and the
+first two failed in opposite directions:
+
+  draft 1  "no" only when the text SHOWS the label is false
+           -> at most ONE negative per book; nothing at all for Sapiens,
+              The Hobbit or Rich Dad Poor Dad. Prose never denies things
+              it is not about, so the rule was unsatisfiable.
+  draft 2  the "would have been mentioned" test, no brake
+           -> SIXTEEN of seventeen labels denied for Rich Dad Poor Dad and
+              for Sapiens. "No to everything I did not say yes to" is the
+              second answer wearing a hat, and it ships as `absent`.
+  draft 3  same test plus rules 4-6 (the brake)
+           -> 6.8 negatives a book. The Hobbit and The Hound of the
+              Baskervilles come back exactly right on both lists. Rich Dad
+              Poor Dad STILL denies `t:child`, which is wrong — much of it
+              is the author's boyhood — and non-fiction lost the positives
+              draft 2 found.
+
+Four books is not a measurement, which is the whole reason
+`extract_traits.py --calibrate` exists and now scores negatives separately:
+a theme our pages assert that the model MISSED ships as `unknown` and moves
+nothing, while one it DENIED ships as `absent` and argues against the
+correct book. Only the second can lose a game, and it is the number to tune
+these rules against — not another four books read by eye.
+
+Until that run happens this change is INERT: verified on 400 books of the
+current `akinator_traits.json`, which holds zero negatives, `apply_labels`
+returns byte-identical sets to the logic it replaced.
 """
 from __future__ import annotations
 
@@ -150,6 +205,40 @@ TRAITS: dict[str, tuple[str, str]] = {
 
 TRAIT_QUESTIONS = {k: v[0] for k, v in TRAITS.items()}
 
+# How much description it takes before "the text does not mention war" is
+# allowed to become "there is no war in this book".
+#
+# MEASURED ON THE HARVEST, not chosen for roundness. 4,157 descriptions:
+# p10 is 28 words, p25 is 54, the median is 104. At 60 words, 72% of books
+# (3,009) may assert a negative and the shortest quarter may not — which is
+# the quarter where a missing mention proves nothing at all. Raising it to
+# 80 costs 400 books for very little extra safety; dropping it to 25 admits
+# one-line blurbs, which is the whole failure this gate exists to stop.
+#
+# The negative is worth ~11 cells per qualifying book, so this gate is the
+# difference between ~33,000 cells moving from `unknown` to `absent` and
+# ~45,000 — and the 12,000 it declines are exactly the untrustworthy ones.
+NEGATIVE_MIN_WORDS = 60
+
+# How a negative is written down. A flat list keeps `load_traits`,
+# `akinator_traits.json` and every existing consumer working unchanged: a
+# file written before this feature simply has no "-" entries and behaves
+# exactly as it always did. The alternative — a dict per book — would have
+# been tidier and would have made every older file unreadable.
+NEGATIVE_PREFIX = "-"
+
+
+def allows_negatives(text: str) -> bool:
+    """Is this description long enough for "no" to mean anything?
+
+    Used in two places on purpose: `build_*_prompt` tells the model when it
+    may not answer "no", and `extract_traits.extract_batch` strips negatives
+    from books that did not qualify. The prompt is the request; the strip is
+    the guarantee. A model quietly ignoring rule 4 must not be able to
+    assert a fact about a book nobody could judge.
+    """
+    return len((text or "").split()) >= NEGATIVE_MIN_WORDS
+
 
 def build_prompt(title: str, author: str, text: str,
                  vocab: dict[str, tuple[str, str]] | None = None) -> str:
@@ -164,27 +253,83 @@ def build_prompt(title: str, author: str, text: str,
     """
     vocab = TRAITS if vocab is None else vocab
     lines = [f'- "{k}": {defn}' for k, (_q, defn) in vocab.items()]
+    neg_ok = allows_negatives(text)
     return (
         "You are labelling a book for a guessing game, using ONLY the "
         "description supplied below.\n\n"
         f"BOOK: {title}\n"
         f"AUTHOR: {author}\n"
         f"DESCRIPTION:\n{text}\n\n"
-        "For each label, decide whether the description supports it.\n\n"
+        "For each label, decide whether it is TRUE of this book, FALSE of "
+        "it, or impossible to tell from the description.\n\n"
         "LABELS:\n" + "\n".join(lines) + "\n\n"
-        "Rules, in order of importance:\n"
-        "1. Answer ONLY from the description above. Do not use anything you "
-        "know about this book from elsewhere.\n"
-        "2. If the description does not make a label clear, LEAVE IT OUT. "
-        "Omitting a label is always better than guessing it. A wrong label "
-        "removes the correct book from the game.\n"
-        "3. Include a label only when the description gives you real reason "
-        "to, not because it sounds like the kind of book that might have it.\n"
-        "4. If the description is too short or vague to judge anything, "
-        "return an empty list.\n\n"
+        + _RULES(neg_ok) +
         'Reply with JSON only, in this exact shape:\n'
-        '{"labels": ["t:sea", "t:survival"]}\n'
+        '{"yes": ["t:sea"], "no": ["t:war", "t:funny"]}\n'
     )
+
+
+# The three-way rules, shared by the single and batch prompts so the two
+# cannot drift into asking for different judgements. `plural` switches the
+# wording for a prompt carrying several books.
+def _RULES(neg_ok: bool, plural: bool = False) -> str:
+    it = "each description" if plural else "the description"
+    rules = [
+        f"1. Answer ONLY from {it}. Do not use anything you know about "
+        f"{'these books' if plural else 'this book'} from elsewhere.",
+        '2. "yes" means the description gives you real reason to say the '
+        "label is true — not that it sounds like the kind of book that "
+        "might have it. A wrong yes removes the correct book from the game.",
+    ]
+    if neg_ok:
+        rules += [
+            # THE "WOULD HAVE BEEN MENTIONED" TEST, and the first draft of
+            # this rule is why it is worded this way. That draft asked for
+            # "no" only when the description SHOWS the label does not apply
+            # — which prose essentially never does, because a summary of a
+            # history of humankind does not go on to deny it contains a
+            # detective. Measured on six real books: the model returned at
+            # most one negative each and none at all for Sapiens, The Hobbit
+            # or Rich Dad Poor Dad, every one of which a reader would rule
+            # out instantly. The licence has to be about what a description
+            # of this length WOULD have said, not about what it did say.
+            '3. "no" is for labels you can rule out. Use it when the '
+            "description makes the book's subject and kind clear, AND the "
+            "label — if it were true — would have been a central, "
+            "unmissable part of such a book, so a description this long "
+            "would have said so. A summary of a history of humankind would "
+            'have mentioned a detective if there were one: answer "no". '
+            "This is the most useful answer you can give.",
+            # THE BRAKE, and it exists because the rule above without it
+            # swung the model straight to the opposite failure: asked about
+            # six real books it answered "no" to SIXTEEN of seventeen labels
+            # for Rich Dad Poor Dad and Sapiens — including t:child for a
+            # book largely about the author's boyhood. "No to everything I
+            # did not say yes to" is not the third answer, it is the second
+            # one wearing a hat, and it ships as `absent` where it argues
+            # against the correct book.
+            '4. But do NOT rule out something the book could quietly '
+            "contain: a minor journey, one funny chapter, a background war, "
+            "a childhood the summary skips. Those go in neither list.",
+            '5. If you find yourself answering "no" to nearly every label, '
+            "stop — you are judging the book's genre, not the book. Rule "
+            "out the few a reader would call obviously impossible for THIS "
+            "book and leave the rest undecided. Most books should get a "
+            "handful of \"no\"s, not a dozen.",
+            "6. If the description is a bare blurb — a tagline, a sales "
+            "line, a list of praise — rule nothing out at all, however "
+            "obvious it seems.",
+            "7. Anything left over goes in NEITHER list. That is not a "
+            "failure, it is the third answer.",
+        ]
+    else:
+        rules += [
+            '3. This description is too short to rule anything out. Return '
+            'an EMPTY "no" list, whatever you may suspect.',
+            "4. Anything you cannot confirm, leave out of both lists.",
+        ]
+    rules.append(f"{len(rules) + 1}. A label must never appear in both lists.")
+    return "Rules, in order of importance:\n" + "\n".join(rules) + "\n\n"
 
 
 def parse_response(raw: str,
@@ -214,10 +359,43 @@ def parse_response(raw: str,
         data = json.loads(text[start:end + 1])
     except json.JSONDecodeError:
         return []
-    result = data.get("labels")
-    if not isinstance(result, list):
-        return []
-    return sorted({l for l in result if isinstance(l, str) and l in vocab})
+    return _merge(data, vocab)
+
+
+def _merge(row: dict, vocab: dict) -> list[str] | None:
+    """{"yes": [...], "no": [...]} -> ["t:sea", "-t:war"], validated.
+
+    Accepts the OLD single-list shape (`{"labels": [...]}`) as positives, so
+    a model that reverts to the previous format still produces usable
+    output instead of nothing. Cheap, and it means a half-rolled-out prompt
+    change loses no data.
+
+    A label in BOTH lists is dropped from both. The model has contradicted
+    itself about that label and neither answer can be trusted — which is
+    what `unknown` is for. Returns None when the shape is unusable at all,
+    so the batch parser can reject a whole reply.
+    """
+    yes = row.get("yes")
+    if yes is None:
+        yes = row.get("labels")          # legacy single-list reply
+    no = row.get("no") or []
+    if not isinstance(yes, list) or not isinstance(no, list):
+        return None
+    y = {l for l in yes if isinstance(l, str) and l in vocab}
+    n = {l for l in no if isinstance(l, str) and l in vocab}
+    both = y & n
+    y -= both
+    n -= both
+    return sorted(y) + sorted(NEGATIVE_PREFIX + l for l in n)
+
+
+def split_labels(labels: list[str]) -> tuple[set[str], set[str]]:
+    """A stored flat list -> (asserted, denied). The inverse of `_merge`."""
+    yes, no = set(), set()
+    for l in labels or ():
+        (no if l.startswith(NEGATIVE_PREFIX) else yes).add(
+            l[len(NEGATIVE_PREFIX):] if l.startswith(NEGATIVE_PREFIX) else l)
+    return yes, no
 
 
 def load_traits(path: str = OUT_PATH) -> dict[str, list[str]]:
@@ -259,8 +437,15 @@ def apply_labels(book: dict, work_key: str,
     if labels is None:
         book["unknown"] = sorted(set(book["unknown"]) | set(TRAITS))
         return
-    book["present"] = sorted(set(book["present"]) | set(labels))
-    book["unknown"] = sorted(set(book["unknown"]) | (set(TRAITS) - set(labels)))
+    yes, no = split_labels(labels)
+    book["present"] = sorted(set(book["present"]) | yes)
+    # DENIED TRAITS GO INTO NEITHER SET, which is how both callers spell
+    # "absent" — the state this function's docstring has always warned about
+    # falling into by accident. Reaching it ON PURPOSE, from a model that
+    # said "no" about a description long enough to support one, is the whole
+    # point of NEGATIVE_MIN_WORDS: it turns 0.5 (moves nothing) into
+    # absence_confidence(richness), 0.15-0.45, which does.
+    book["unknown"] = sorted(set(book["unknown"]) | (set(TRAITS) - yes - no))
 
 
 # ---------------------------------------------------------------------------
@@ -287,28 +472,35 @@ def build_batch_prompt(books: list[tuple[str, str, str]],
     vocab = TRAITS if vocab is None else vocab
     lines = [f'- "{k}": {defn}' for k, (_q, defn) in vocab.items()]
     blocks = []
+    any_neg = False
     for i, (title, author, text) in enumerate(books, 1):
-        blocks.append(f"### BOOK {i}\nTITLE: {title}\nAUTHOR: {author}\n"
-                      f"DESCRIPTION: {text}")
+        # PER BOOK, because a batch mixes a 300-word synopsis with a
+        # one-line blurb and the gate is a property of the description, not
+        # of the call. Saying it beside the text it applies to is what keeps
+        # the model from carrying one book's licence over to the next.
+        neg = allows_negatives(text)
+        any_neg = any_neg or neg
+        note = ("may use \"no\"" if neg else
+                "TOO SHORT — leave this book's \"no\" list empty")
+        blocks.append(f"### BOOK {i}  [{note}]\nTITLE: {title}\n"
+                      f"AUTHOR: {author}\nDESCRIPTION: {text}")
     return (
         "You are labelling books for a guessing game, using ONLY each book's "
         "own description below.\n\n"
+        "For each label, decide whether it is TRUE of that book, FALSE of "
+        "it, or impossible to tell from its description.\n\n"
         "LABELS:\n" + "\n".join(lines) + "\n\n"
         + "\n\n".join(blocks) + "\n\n"
-        "Rules, in order of importance:\n"
-        "1. Judge each book ONLY from its own description. Never let one "
+        + _RULES(any_neg, plural=True).rstrip("\n")
+        + "\n6. Judge each book ONLY from its own description. Never let one "
         "book's description influence another's labels.\n"
-        "2. Answer only from the descriptions. Do not use anything you know "
-        "about these books from elsewhere.\n"
-        "3. If a description does not make a label clear, LEAVE IT OUT. "
-        "Omitting is always better than guessing — a wrong label removes the "
-        "correct book from the game.\n"
-        "4. A book whose description is too short or vague gets an empty "
-        "list. That is a valid answer.\n"
-        f"5. Return exactly {len(books)} entries, numbered 1 to {len(books)}, "
+        "7. A book marked TOO SHORT above gets an empty \"no\" list, however "
+        "obvious an answer may seem.\n"
+        f"8. Return exactly {len(books)} entries, numbered 1 to {len(books)}, "
         "in the same order as the books above.\n\n"
         'Reply with JSON only, in this exact shape:\n'
-        '{"books": [{"n": 1, "labels": ["t:sea"]}, {"n": 2, "labels": []}]}\n'
+        '{"books": [{"n": 1, "yes": ["t:sea"], "no": ["t:war"]}, '
+        '{"n": 2, "yes": [], "no": []}]}\n'
     )
 
 
@@ -352,11 +544,10 @@ def parse_batch_response(raw: str, expected: int,
             return None
         if out[n - 1] is not None:
             return None          # duplicate index: alignment is not provable
-        labels = row.get("labels")
-        if not isinstance(labels, list):
+        merged = _merge(row, vocab)
+        if merged is None:
             return None
-        out[n - 1] = sorted({l for l in labels
-                             if isinstance(l, str) and l in vocab})
+        out[n - 1] = merged
     if any(v is None for v in out):
         return None
     return out  # type: ignore[return-value]

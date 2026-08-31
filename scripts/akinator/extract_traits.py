@@ -43,9 +43,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(
 
 from features import _compile, normalize            # noqa: E402
 from site_books import load_site_books              # noqa: E402
-from traits import (BATCH_SIZE, OUT_PATH, TRAITS,      # noqa: E402
-                    build_batch_prompt, build_prompt,
-                    parse_batch_response, parse_response)
+from traits import (BATCH_SIZE, NEGATIVE_PREFIX, OUT_PATH,  # noqa: E402
+                    TRAITS, allows_negatives, build_batch_prompt,
+                    build_prompt, parse_batch_response, parse_response,
+                    split_labels)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CORPUS_PATH = os.path.join(REPO_ROOT, "data", "akinator_corpus.jsonl")
@@ -400,24 +401,88 @@ def extract_batch(rows: list[tuple[str, str, str]], provider: str,
 
     parsed = parse_batch_response(raw, len(rows), vocab)
     if parsed is not None:
-        return parsed
+        return _strip_ungrounded_negatives(parsed, rows)
     print(f"    . batch of {len(rows)} did not align; retrying singly",
           file=sys.stderr)
     return [extract_one(t, a, x, provider, vocab) for t, a, x in rows]
 
 
+def _strip_ungrounded_negatives(parsed: list[list[str] | None],
+                                rows: list[tuple[str, str, str]]
+                                ) -> list[list[str] | None]:
+    """Drop "no" answers for books too short to support one.
+
+    THE PROMPT ASKS AND THIS ENFORCES, and the split is the point. The batch
+    prompt marks each short book TOO SHORT and rule 7 tells the model to
+    return an empty "no" list for it — but a rule in a prompt is a request.
+    A negative is an assertion that goes into the shipped matrix as
+    `absent`, where it moves belief against the book; letting one through
+    for a description nobody could judge would be exactly the confident
+    wrong answer `NEGATIVE_MIN_WORDS` exists to prevent.
+
+    Positives are untouched: they were always allowed at any length, and
+    this changes nothing about how a short blurb is labelled today.
+    """
+    out = []
+    for labels, (_t, _a, text) in zip(parsed, rows):
+        if labels is None or allows_negatives(text):
+            out.append(labels)
+            continue
+        kept = [l for l in labels if not l.startswith(NEGATIVE_PREFIX)]
+        if len(kept) != len(labels):
+            print(f"    . dropped {len(labels) - len(kept)} negative(s) for a "
+                  f"{len(text.split())}-word description", file=sys.stderr)
+        out.append(kept)
+    return out
+
+
 def _score(rows: list[dict]) -> None:
-    """Print the comparison. `rows` is [{title, themes, labels}, ...]."""
-    hit = miss = extra = 0
+    """Print the comparison. `rows` is [{title, themes, labels}, ...].
+
+    NEGATIVES ARE SCORED SEPARATELY AND THEY ARE THE POINT OF THIS RUN NOW.
+    A theme our pages assert that the model merely FAILED TO FIND is
+    recorded `unknown` — a gap, the same gap this file has always measured.
+    A theme our pages assert that the model actively DENIED is recorded
+    `absent`, which the engine scores at 0.15-0.45 and which therefore
+    pushes the correct book DOWN when the player answers yes.
+    One is a hole; the other is a wrong claim, and only the second can lose
+    a game. They must never be added together.
+    """
+    hit = miss = extra = denied = 0
     misses: list[tuple[str, str]] = []
+    denials: list[tuple[str, str]] = []
     for r in rows:
-        got = set(r["labels"])
+        yes, no = split_labels(r["labels"])
         expected = expected_traits(r["themes"])
-        hit += len(expected & got)
-        miss += len(expected - got)
-        extra += len(got - expected)
-        for key in sorted(expected - got):
+        hit += len(expected & yes)
+        # A theme the model denied is NOT counted as a miss as well — it is
+        # its own, worse category, and double-counting it would hide the
+        # improvement in one number behind a regression in the other.
+        denied += len(expected & no)
+        miss += len(expected - yes - no)
+        extra += len(yes - expected)
+        for key in sorted(expected - yes - no):
             misses.append((key, r["title"]))
+        for key in sorted(expected & no):
+            denials.append((key, r["title"]))
+
+    neg_total = sum(len(split_labels(r["labels"])[1]) for r in rows)
+    print()
+    print("NEGATIVES")
+    print(f"  'no' answers given                          : {neg_total}")
+    print(f"  ...that CONTRADICT a theme our pages assert : {denied} "
+          f"({denied * 100 // max(1, neg_total)}%)")
+    if denials:
+        print("  worst offenders:")
+        for key, title in denials[:10]:
+            print(f"    {key:<16} denied for {title[:44]}")
+    print()
+    print("  This is the number that gates the harvest. A denial ships as")
+    print("  `absent` and scores 0.15-0.45, so it argues AGAINST the correct")
+    print("  book when the player answers yes. A miss only ships as")
+    print("  `unknown`, which moves nothing. Tune NEGATIVE_MIN_WORDS or the")
+    print("  rules in traits._RULES against this figure, not against a")
+    print("  handful of books read by eye.")
 
     total = hit + miss
     print()
