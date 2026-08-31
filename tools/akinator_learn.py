@@ -295,12 +295,25 @@ def _artifacts() -> dict:
         questions = httpx.get(ARTIFACTS + "questions.json", timeout=8.0).json()
         books = httpx.get(ARTIFACTS + "books.json", timeout=15.0).json()
         matrix = httpx.get(ARTIFACTS + "matrix.bin", timeout=15.0).content
+        # The cold questions — asked during play, but with no column in
+        # matrix.bin and no entry in questions.json, because they carry no
+        # build-time data at all. Kept in a SEPARATE key rather than appended
+        # to `qids`: that list is indexed BY COLUMN in _book_states, so
+        # anything added to it is a positional claim about the packed matrix.
+        # A missing file is the normal case; failing soft to [] costs only
+        # the drain's ability to write cold cells that run.
+        try:
+            cold = httpx.get(ARTIFACTS + "cold_questions.json", timeout=8.0).json()
+        except Exception:  # noqa: BLE001
+            cold = []
         if len(matrix) != meta["books"] * meta["bytes_per_row"]:
             log.warning("artifact size mismatch; consistency check disabled")
             return _ART          # stale if we have it, empty if we never did
         fresh = {
             "meta": meta,
             "qids": [q["id"] for q in questions],
+            "cold_ids": [q["id"] for q in cold
+                         if isinstance(q, dict) and isinstance(q.get("id"), str)],
             "index": {b.get("k"): i for i, b in enumerate(books) if b.get("k")},
             # Richness drives absence_confidence, which the drain needs to
             # anchor an absent cell's prior at the right strength: 0.45 for

@@ -109,6 +109,24 @@ ANSWER_WEIGHT = {"yes": 1.0, "probably_yes": 0.65,
                  "probably_no": 0.35, "no": 0.0}
 
 
+def _live_question_ids(art: dict | None = None) -> set[str]:
+    """Every question id the game currently asks — packed AND cold.
+
+    ONE function because the "is this question still live?" test is made in
+    five places here, and a cold question fails the packed-only version of
+    it. That failure is silent and total: the drain would file every cold
+    answer under `retired` and write nothing, so the column that exists
+    precisely to be filled by play would stay empty forever while the counts
+    piled up in Redis and expired.
+
+    Empty means "cannot tell" at every call site, which skips the filter
+    rather than dropping everything — the same fail-open the artifact
+    loader itself uses.
+    """
+    a = _artifacts() if art is None else art
+    return set(a.get("qids") or ()) | set(a.get("cold_ids") or ())
+
+
 def _matrix_prior(work_key: str, qid: str, states: dict) -> float:
     """What the shipped matrix says for this cell, as a probability.
 
@@ -194,7 +212,7 @@ def drain(dry_run: bool = False) -> dict:
             except (TypeError, ValueError):
                 continue
 
-        live_ids = set(_artifacts().get("qids") or ())
+        live_ids = _live_question_ids()
         for qid, tally in per_question.items():
             # A RETIRED question is not a cell. Counts filed against one
             # outlive the question by design — they are keyed by question id
@@ -345,7 +363,7 @@ def _taught_rows(limit: int = MAX_TAUGHT_BOOKS) -> tuple[list, int]:
     locked = _load_locked()
     art = _artifacts()
     art_ok = bool(art)
-    live_ids = set(art.get("qids") or ())
+    live_ids = _live_question_ids(art)
     rows = []
     retired_rows = 0
     for work_key, reply in zip(touched, replies):
@@ -471,7 +489,7 @@ def _audit_rows() -> tuple[list, dict]:
         overrides = {}
     locked = _load_locked(head or None)
 
-    live_ids = set(art.get("qids") or ())
+    live_ids = _live_question_ids(art)
     index = art.get("index") or {}
     rows: list[dict] = []
     for work_key in sorted(locked):
@@ -590,7 +608,7 @@ def apply_taught(body: TaughtApply) -> dict:
     # endpoint: that queue could only ever offer ids read out of the live
     # question list, and the editor lets a person type one.
     art = _artifacts()
-    live_ids = set(art.get("qids") or ())
+    live_ids = _live_question_ids(art)
     if live_ids and body.question_id not in live_ids:
         raise HTTPException(
             status_code=404,
@@ -683,7 +701,7 @@ def apply_taught_batch(body: TaughtApplyBatch) -> dict:
                                 detail=f"verdict for {qid} must be yes, no or clear")
 
     art = _artifacts()
-    live_ids = set(art.get("qids") or ())
+    live_ids = _live_question_ids(art)
     bad_ids = sorted(set(body.answers) - live_ids) if live_ids else []
     if bad_ids:
         raise HTTPException(
