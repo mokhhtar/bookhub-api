@@ -562,6 +562,25 @@ def append_book_row(doc: dict, prose: str = "", commit_message: str = "",
     return {"ok": wrote, "key": doc["key"], "title": doc["title"]}
 
 
+def _load_display_overrides() -> dict:
+    """{work_key: {"t": title, "a": author}}, or {} if unreadable.
+
+    Read through the same `_get_file` every other artifact here uses, so it
+    sees the repo rather than a CDN copy that may lag. Failing soft to {} is
+    right: the duplicate check simply falls back to catalogue titles only,
+    which is the behaviour that shipped before this file was consulted — a
+    missing overlay must not stop a real sync.
+    """
+    try:
+        raw, _ = _get_file(f"{ARTIFACT_DIR}/display_overrides.json")
+        data = json.loads(raw.decode("utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception as exc:  # noqa: BLE001
+        log.warning("display overrides unreadable (%s); duplicate check uses "
+                    "catalogue titles only", str(exc)[:80])
+        return {}
+
+
 def sync(dry_run: bool = False) -> dict:
     """Append newly published books to the shipped game artifacts."""
     from features import normalize                               # noqa: E402
@@ -583,8 +602,36 @@ def sync(dry_run: bool = False) -> dict:
         main = re.split(r"[:;]| - ", title, 1)[0]
         return normalize(main), surname_token(canonical_author(author))
 
-    have = {ident(b.get("t") or "", b.get("a") or "") for b in books}
-    have_titles = {normalize(b.get("t") or "") for b in books}
+    # THE DISPLAY TITLE COUNTS AS A TITLE, and leaving it out is how this
+    # check has been quietly adding duplicates.
+    #
+    # books.json ships the CATALOGUE title, which for a translated work is
+    # often the original: /works/OL166925W is `Идиот`. A published page for
+    # the same book is `The Idiot`. Both normalize fine and neither matches
+    # the other, so `ident` compared 'идиот' against 'the idiot', found no
+    # clash, and appended a second row for a book already in the game —
+    # observed live on 2026-09-01 as /site/the-idiot beside /works/OL166925W.
+    #
+    # A DUPLICATE ROW IS WORSE THAN A MISSING ONE. Two rows for one book
+    # split the belief between them, so neither reaches GUESS_THRESHOLD and
+    # the book becomes unguessable however good the questions are — the same
+    # arithmetic that made 24 web novels unwinnable (a group of eight caps
+    # at 12.5% against a 0.65 threshold).
+    #
+    # display_overrides.json already holds the English title for 124 rows,
+    # written by the admin page for the reveal. It is the answer to exactly
+    # this question and was simply never consulted here.
+    display = _load_display_overrides()
+
+    def titles_of(b: dict) -> list[str]:
+        out = [b.get("t") or ""]
+        alt = (display.get(b.get("k") or "") or {}).get("t")
+        if alt:
+            out.append(alt)
+        return [t for t in out if t]
+
+    have = {ident(t, b.get("a") or "") for b in books for t in titles_of(b)}
+    have_titles = {normalize(t) for b in books for t in titles_of(b)}
 
     added, skipped = [], 0
 
