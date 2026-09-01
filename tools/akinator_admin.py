@@ -361,6 +361,97 @@ def question(body: QuestionRequest):
     return {"ok": True, "effect": "instant, and survives the next rebuild"}
 
 
+# ── POST /akinator/admin/exclusive ──────────────────────────────────────
+#
+# "If the player says yes to one of these, never ask the other."
+#
+# WHY THIS IS A FILE AND NOT A CODE EDIT. The four groups that ship today
+# live in `features.EXCLUSIVE_GROUPS`, are baked into meta.json by
+# build_matrix.py, and therefore cost a Python edit plus a full rebuild to
+# change — for a statement about two question ids that touches no book's
+# data at all. `exclusive_overrides.json` is read by the page and by
+# engine.py's Matrix, merged on top of meta's groups, so a declaration is
+# live on the next deploy with no rebuild.
+#
+# WHY A PERSON DECIDES AND NOT THE DETECTOR. `propose_questions.py` can now
+# find pairs that never co-occur, and it recovers the author group at lift
+# 0.00 — but it deliberately stays silent on `place:usa`/`place:britain`,
+# which are BOTH TRUE of 66 books, and on children/YA, true of 351. Those
+# groups are not facts about the corpus; they are a promise to the player,
+# bought by discarding a real "yes" on the overlap. Only a person can decide
+# that trade, which is what this endpoint is for.
+#
+# ONE PAIR AT A TIME, and a pair rather than a group: the admin page offers
+# two pickers, and a three-way group is declared as its three pairs. Members
+# are validated against the LIVE question list, so a typo or a retired id is
+# refused here rather than shipping a group that silently matches nothing.
+
+class ExclusiveRequest(BaseModel):
+    a: str = Field(..., max_length=42)
+    b: str = Field(..., max_length=42)
+    # "remove" deletes the pair; anything else declares it.
+    action: str = Field(default="add", max_length=8)
+
+
+EXCLUSIVE_PATH = f"{ARTIFACT_DIR}/exclusive_overrides.json"
+
+
+@router.post("/exclusive")
+def exclusive(body: ExclusiveRequest):
+    for qid in (body.a, body.b):
+        if not _QUESTION_ID.match(qid):
+            raise HTTPException(status_code=400,
+                                detail=f"malformed question id: {qid[:40]}")
+    if body.a == body.b:
+        raise HTTPException(status_code=400,
+                            detail="a question cannot exclude itself")
+
+    # BOTH IDS MUST BE ASKED TODAY. Without this a typo ships a group that
+    # matches nothing — invisible, and indistinguishable from a declaration
+    # that simply did not work. Same guard, same reason, as /question
+    # refusing an id that is not in the live list, and as the drain's
+    # live_ids check. Cold questions count: they are asked, they just have
+    # no packed column.
+    live, _ = _get_json(QUESTIONS_PATH, None)
+    if not live:
+        raise HTTPException(status_code=502, detail="live questions.json unreadable")
+    ids = {q.get("id") for q in live}
+    cold, _ = _get_json(f"{ARTIFACT_DIR}/cold_questions.json", [])
+    if isinstance(cold, list):
+        ids |= {q.get("id") for q in cold if isinstance(q, dict)}
+    for qid in (body.a, body.b):
+        if qid not in ids:
+            raise HTTPException(status_code=404,
+                                detail=f"'{qid}' is not a question the game asks")
+
+    groups, _ = _get_json(EXCLUSIVE_PATH, [])
+    if not isinstance(groups, list):
+        groups = []
+    # Sorted, so the same pair declared in either order is the same entry
+    # and cannot be added twice.
+    pair = sorted([body.a, body.b])
+    kept = [g for g in groups
+            if not (isinstance(g, list) and sorted(g) == pair)]
+
+    if body.action == "remove":
+        if len(kept) == len(groups):
+            raise HTTPException(status_code=404, detail="no such pair declared")
+        groups, verb = kept, "undeclare"
+    else:
+        if len(kept) != len(groups):
+            return {"ok": True, "effect": "already declared; nothing to do"}
+        groups, verb = kept + [pair], "declare"
+
+    wrote = _commit_files(
+        {EXCLUSIVE_PATH: _dump(groups)},
+        f"mind reader admin: {verb} {pair[0]} + {pair[1]} mutually exclusive")
+    if not wrote:
+        raise HTTPException(status_code=502, detail="commit failed")
+    return {"ok": True, "pairs": len(groups),
+            "effect": "live on the next deploy, no rebuild; a firm yes to "
+                      "either now suppresses the other"}
+
+
 # ── POST /akinator/admin/display ────────────────────────────────────────
 
 class DisplayRequest(BaseModel):

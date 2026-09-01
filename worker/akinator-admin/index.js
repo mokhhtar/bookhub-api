@@ -103,6 +103,11 @@ const ROUTES = {
   "/api/exclude": relay("/akinator/admin/exclude"),
   "/api/correction": relay("/akinator/admin/correction"),
   "/api/question": relay("/akinator/admin/question"),
+  // "if the player says yes to one of these, never ask the other." A
+  // declaration about two question ids, not about any book — which is why
+  // it is a shipped overlay rather than an edit to features.EXCLUSIVE_GROUPS
+  // plus a matrix rebuild. See the endpoint in akinator_admin.py.
+  "/api/exclusive": relay("/akinator/admin/exclusive"),
   "/api/book": relay("/akinator/admin/book"),
   // Was missing, and the Rename button had been posting into a 404 since the
   // display override shipped: the endpoint existed on the Python side and the
@@ -379,6 +384,34 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
     <tbody id="qRows"><tr><td colspan="3">Loading…</td></tr></tbody>
   </table></div>
   <p class="status" id="qStatus"></p>
+
+  <!-- Mutually exclusive pairs. Two PICKERS, never free text: a typo here
+       would ship a group matching no question at all, invisible and
+       indistinguishable from a declaration that did not work. The backend
+       refuses an unknown id too, but the UI should not be able to send one. -->
+  <div class="card" style="margin-top:22px">
+    <h3 style="margin:0 0 6px">Mutually exclusive questions</h3>
+    <p class="sub" style="margin:0 0 12px">A firm <em>yes</em> to either one stops the
+    other being asked at all. Use it when being asked both would look silly to a
+    player — “is it set in China?” after “yes, France”. It is a promise to the player,
+    not a fact: <code>place:usa</code> and <code>place:britain</code> are both true of
+    66 books, and the exclusion throws that away on purpose. Live on the next deploy,
+    no rebuild.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <select id="exA"></select>
+      <span class="sub">and</span>
+      <select id="exB"></select>
+      <button class="act" id="exAdd">Declare exclusive</button>
+    </div>
+    <p class="status" id="exStatus"></p>
+    <div class="scroll" style="margin-top:10px"><table>
+      <thead><tr><th>Declared pair</th><th></th></tr></thead>
+      <tbody id="exRows"><tr><td colspan="2" class="sub">Loading…</td></tr></tbody>
+    </table></div>
+    <p class="sub" style="margin-top:10px">The four built-in groups (author nationality,
+    setting, fiction/non-fiction, children/YA) live in <code>features.py</code> and are
+    not listed here — this file is merged on top of them and cannot remove one.</p>
+  </div>
 </section>
 
 <datalist id="authorNames"></datalist>
@@ -747,6 +780,77 @@ document.getElementById("qRows").addEventListener("click", async (e)=>{
     const r = await post("/api/question", {question_id:id, text});
     setStatus("qStatus", "Reworded "+id+" — effect: "+r.effect, true);
   } catch (err) { setStatus("qStatus", String(err.message||err), false); }
+  finally { e.target.disabled = false; }
+});
+
+// ── mutually exclusive pairs ─────────────────────────────────────────────
+// The pickers are filled from the LIVE question list plus the cold
+// questions, which are asked but have no packed column and so are absent
+// from questions.json. Leaving them out would make the one family of
+// questions most likely to need an exclusion — a new dimension nobody has
+// declared anything about yet — the only one undeclarable.
+let exclusivePairs = [];
+
+function renderExclusive(){
+  const rows = document.getElementById("exRows");
+  if (!rows) return;
+  if (!exclusivePairs.length) {
+    rows.innerHTML = '<tr><td colspan="2" class="sub">Nothing declared yet.</td></tr>';
+    return;
+  }
+  rows.innerHTML = exclusivePairs.map(p => \`<tr>
+    <td><code>\${esc(p[0])}</code> + <code>\${esc(p[1])}</code></td>
+    <td><button class="act ghost exDel" data-a="\${esc(p[0])}" data-b="\${esc(p[1])}">Remove</button></td>
+  </tr>\`).join("");
+}
+
+function fillExclusivePickers(){
+  const opts = questions.map(q => \`<option value="\${esc(q.id)}">\${esc(q.id)} — \${esc(q.text)}</option>\`).join("");
+  for (const id of ["exA","exB"]) {
+    const sel = document.getElementById(id);
+    if (sel) sel.innerHTML = opts;
+  }
+}
+
+async function loadExclusive(){
+  try {
+    const [pairs, cold] = await Promise.all([
+      fetch(DATA+"/exclusive_overrides.json").then(r=>r.ok?r.json():[]).catch(()=>[]),
+      fetch(DATA+"/cold_questions.json").then(r=>r.ok?r.json():[]).catch(()=>[]),
+    ]);
+    exclusivePairs = Array.isArray(pairs) ? pairs.filter(p=>Array.isArray(p)&&p.length===2) : [];
+    if (Array.isArray(cold)) {
+      const have = new Set(questions.map(q=>q.id));
+      for (const c of cold) {
+        if (c && typeof c.id === "string" && !have.has(c.id)) { questions.push(c); }
+      }
+    }
+    fillExclusivePickers();
+    renderExclusive();
+  } catch (e) { setStatus("exStatus", String(e.message||e), false); }
+}
+
+document.getElementById("exAdd").addEventListener("click", async (e)=>{
+  const a = document.getElementById("exA").value, b = document.getElementById("exB").value;
+  if (a === b) { setStatus("exStatus", "pick two different questions", false); return; }
+  e.target.disabled = true;
+  try {
+    const r = await post("/api/exclusive", {a, b, action:"add"});
+    setStatus("exStatus", a+" + "+b+" — "+r.effect, true);
+    await loadExclusive();
+  } catch (err) { setStatus("exStatus", String(err.message||err), false); }
+  finally { e.target.disabled = false; }
+});
+
+document.getElementById("exRows").addEventListener("click", async (e)=>{
+  if (!e.target.classList.contains("exDel")) return;
+  const {a, b} = e.target.dataset;
+  e.target.disabled = true;
+  try {
+    await post("/api/exclusive", {a, b, action:"remove"});
+    setStatus("exStatus", "Removed "+a+" + "+b, true);
+    await loadExclusive();
+  } catch (err) { setStatus("exStatus", String(err.message||err), false); }
   finally { e.target.disabled = false; }
 });
 
@@ -3584,6 +3688,17 @@ async function loadDrainAlert(){
     computeDupFlags();
     renderBooks(""); renderQuestions();
     buildAuthorRows(); renderAuthors("");
+    // After renderQuestions, because loadExclusive appends the cold
+    // questions to the questions array for the pickers, and the wording
+    // table must not gain rows for questions it cannot reword: cold
+    // questions live in their own file and /api/question would refuse them.
+    //
+    // NO BACKTICKS IN THIS COMMENT, and that is not a style note. Every
+    // line here is inside page()'s template literal, so one backtick ends
+    // the string and takes the whole client with it. Written with them the
+    // first time and caught by node --check; check.mjs exists for the
+    // subtler version that --check cannot see.
+    loadExclusive();
   } catch (e) {
     setStatus("bookStatus", "failed to load live artifacts: "+e.message, false);
   }
