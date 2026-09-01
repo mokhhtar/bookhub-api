@@ -352,6 +352,7 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
   <input type="search" id="bookSearch" placeholder="Search by title or author…">
   <div class="toolbar">
     <label><input type="checkbox" id="dupOnly"> Only duplicate candidates (<span id="dupCount">0</span>)</label>
+    <span class="sub" id="dupBreakdown" style="margin-left:6px"></span>
     <select id="bookOrigin" title="How the row was added — only tracked for rows added after this filter shipped; older rows show as Unknown.">
       <option value="">Added via: all</option>
       <option value="resolved">Summarizer (auto-detected)</option>
@@ -630,8 +631,21 @@ function computeDupFlags(){
     return (byAuthor[a]||[]).some(j => j !== i && (books[j].r||0) > 0);
   });
   computeCrossDups();
-  document.getElementById("dupCount").textContent =
-    dupFlag.filter(Boolean).length + crossDup.filter(Boolean).length;
+  // TWO NUMBERS, NOT ONE. They are different findings with different
+  // actions -- a thin row is something to investigate, a "same book twice"
+  // row is something to exclude -- and a single total invited exactly the
+  // question it got: "it says 93 duplicates and that is completely wrong".
+  // 93 was right; it was 79 thin rows plus 14 genuine pairs, and the label
+  // gave no way to see that.
+  var nThin = dupFlag.filter(Boolean).length;
+  var nCross = crossDup.filter(Boolean).length;
+  document.getElementById("dupCount").textContent = nThin + nCross;
+  var bd = document.getElementById("dupBreakdown");
+  if (bd) {
+    bd.textContent = nCross
+      ? nThin + " thin row(s) to check · " + nCross + " row(s) that are the SAME BOOK TWICE — exclude one of each pair"
+      : nThin + " thin row(s) to check";
+  }
 }
 
 // ── the SECOND kind of duplicate: one book, two rows, two sources ────────
