@@ -403,7 +403,81 @@ def check_collisions(question: str, answers: dict[str, bool],
         if total >= MIN_CORRELATION_N and agree / total > NEAR_DUPLICATE_THRESHOLD:
             near.append({"id": qid, "agreement": round(agree / total, 2), "n": total})
     near.sort(key=lambda x: -x["agreement"])
-    return {"exact_wording_collision": exact, "near_duplicate": near[:3]}
+    return {"exact_wording_collision": exact, "near_duplicate": near[:3],
+            "exclusive_with": _exclusive_with(answers, shipped_by_key,
+                                              shipped_books, shipped_qids)}
+
+
+# How rarely two questions may BOTH be true before they are worth declaring
+# mutually exclusive. Expressed as a lift — observed co-occurrence over what
+# independence predicts — so it does not need a per-pair threshold: 0.10
+# means "they land together at a tenth of the rate chance alone would give".
+EXCLUSIVE_MAX_LIFT = 0.10
+
+# And both must actually happen often enough for "they never co-occur" to be
+# a fact rather than an absence of data. Two questions at 1% each are
+# expected to overlap on half a book in 5,000; observing zero says nothing.
+EXCLUSIVE_MIN_SUPPORT = 0.03
+
+
+def _exclusive_with(answers: dict[str, bool], shipped_by_key: dict[str, int],
+                    shipped_books: list[dict], shipped_qids: list[str]) -> list[dict]:
+    """Shipped questions this candidate can almost never be true alongside.
+
+    A DIFFERENT CHECK FROM `near_duplicate`, AND THE ONE THAT WAS MISSING.
+    Duplication and exclusion are opposite signatures of the same statistic:
+
+        duplicate   P(A | B) ~ 1   ->  drop one, they ask the same thing
+        exclusive   P(A | B) ~ 0   ->  KEEP both, but never ask the second
+                                       after a firm yes to the first
+
+    The correlation check above only ever fired on the first, so a candidate
+    like "is it about China?" could ship beside "is it about France?" with
+    nothing noticing, and a player who answered yes to one would be asked the
+    other — the exact experience `EXCLUSIVE_GROUPS` exists to prevent, and
+    the one the owner asked about.
+
+    Run over the shipped matrix it finds three real pairs nobody has
+    declared — genre:adventure + genre:psychology, t:otherworld +
+    t:realevents, genre:fantasy + t:realevents — and recovers the author
+    group (nonwestern at lift 0.00, british at 0.065).
+
+    IT DOES NOT RECOVER EVERY DECLARED GROUP, and that is the honest
+    headline rather than a shortfall to tune away. `place:usa` and
+    `place:britain` are both true of 66 books; `audience:children` and
+    `audience:ya` of 351. Those groups are not exclusive IN THE DATA at all
+    — they are a promise to the player, paid for by throwing away a real
+    "yes" on the overlap, and the promise is worth it only because it
+    measured 65.0% against 58.3% with no exclusions.
+
+    So this proposes the pairs where the corpus is unambiguous and stays
+    silent on the ones that are a judgement about the game. Declaring those
+    is a person's call, which is why the admin page has a form for it and
+    this function has no verdict. Same line the rest of this file draws:
+    compute every number that can be computed, stop before the call.
+    """
+    n_books = len(shipped_books)
+    cand_yes = {k for k, v in answers.items() if v}
+    if len(cand_yes) < n_books * EXCLUSIVE_MIN_SUPPORT:
+        return []
+
+    out = []
+    for qid in shipped_qids:
+        other = {i for i, b in enumerate(shipped_books)
+                 if _shipped_state(b, qid) is True}
+        if len(other) < n_books * EXCLUSIVE_MIN_SUPPORT:
+            continue
+        cand_idx = {shipped_by_key[k] for k in cand_yes if k in shipped_by_key}
+        if not cand_idx:
+            continue
+        both = len(cand_idx & other)
+        expected = len(cand_idx) * len(other) / n_books
+        lift = both / expected if expected else 0.0
+        if lift <= EXCLUSIVE_MAX_LIFT:
+            out.append({"id": qid, "both": both,
+                        "expected": round(expected, 1), "lift": round(lift, 3)})
+    out.sort(key=lambda x: x["lift"])
+    return out[:3]
 
 
 def estimate_byte_cost(current_question_count: int, shipped_books: int) -> str:

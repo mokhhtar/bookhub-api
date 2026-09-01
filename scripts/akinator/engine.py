@@ -276,7 +276,8 @@ class Matrix:
                  series_names: dict[str, str] | None = None,
                  excluded: set[str] | None = None,
                  overrides: dict[str, dict[str, float]] | None = None,
-                 cold_questions: list[str] | None = None):
+                 cold_questions: list[str] | None = None,
+                 exclusive_extra: list[list[str]] | None = None):
         self.books = books
         # Series membership per book index, for guess-time pooling. Absent
         # is fine — the engine simply never guesses a series.
@@ -306,6 +307,25 @@ class Matrix:
                                if q not in self.question_set
                                and q not in self.char_question_set]
         self.cold_question_set = set(self.cold_questions)
+
+        # WHICH QUESTIONS A FIRM YES RULES OUT, per Matrix rather than the
+        # module-level `EXCLUDES` this used to read straight out of
+        # features.py. That constant is baked at build time, so declaring
+        # "about China" and "about France" mutually exclusive meant editing
+        # Python and rebuilding a 60 KB matrix to change a fact about two
+        # question ids. `exclusive_overrides.json` is an artifact the admin
+        # page writes and both engines read, so a declaration ships in one
+        # commit and no rebuild.
+        #
+        # MERGED, never replacing: the hand-authored groups in features.py
+        # are the ones the corpus cannot justify on its own (place:usa and
+        # place:britain are both true of 66 books) and an override file is
+        # not the place to lose them.
+        self.excludes: dict[str, set[str]] = {q: set(v) for q, v in EXCLUDES.items()}
+        for group in (exclusive_extra or []):
+            members = [q for q in group if isinstance(q, str)]
+            for q in members:
+                self.excludes.setdefault(q, set()).update(x for x in members if x != q)
 
         # token -> indices of books whose cast contains it. Lets the endgame
         # consider only names some live candidate actually has, instead of
@@ -490,7 +510,7 @@ class Engine:
             # and that belief is the entire product. Third time this
             # simulation has been blind to the thing that matters — see
             # phase 3 on unanswerable questions.
-            self.asked.update(EXCLUDES.get(question, ()))
+            self.asked.update(self.m.excludes.get(question, ()))
 
         # LADDERS: several questions that are really one number. A firm
         # answer fixes an interval, and every rung the interval already
@@ -620,7 +640,12 @@ class Engine:
         for q, a in self.answers:
             if q.startswith("char:"):
                 continue
-            if q in LADDER_OF or q in EXCLUDES:
+            # `self.m.excludes`, not the module constant: a pair declared
+            # from the admin page must be ineligible for a re-check too, or
+            # revising it would un-suppress siblings this Matrix knows about
+            # and features.py does not. The page's `excludes[h.q]` is built
+            # from the same merged list.
+            if q in LADDER_OF or q in self.m.excludes:
                 continue
             w = ANSWER_WEIGHTS[a]
             if w == 0.0:

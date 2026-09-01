@@ -212,8 +212,27 @@ def main() -> None:
     if cold:
         print(f"cold_questions.json: {len(cold)} question(s) with no packed column")
 
+    # The FOURTH file the page reads out of this directory, and the fourth
+    # time the same lesson: excluded.json, overrides.json, cold_questions
+    # .json, and now this. It decides which questions a firm yes suppresses,
+    # so leaving it out here would diverge the two engines' question order,
+    # not a belief in the twelfth decimal.
+    excl_path = os.path.join(args.artifacts, "exclusive_overrides.json")
+    exclusive_extra: list[list[str]] = []
+    if os.path.exists(excl_path):
+        try:
+            with open(excl_path, encoding="utf-8") as fh:
+                data = json.load(fh)
+            if isinstance(data, list):
+                exclusive_extra = [[q for q in g if isinstance(q, str)]
+                                   for g in data if isinstance(g, list)]
+        except (OSError, json.JSONDecodeError):
+            exclusive_extra = []
+    if exclusive_extra:
+        print(f"exclusive_overrides.json: {len(exclusive_extra)} declared group(s)")
+
     matrix = Matrix(books, qids, excluded=excluded, overrides=overrides,
-                    cold_questions=cold)
+                    cold_questions=cold, exclusive_extra=exclusive_extra)
     engine = Engine(matrix)
 
     turns = []
