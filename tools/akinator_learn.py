@@ -88,6 +88,40 @@ TOUCHED_SET = "akin:touched"
 # budget, and it buys a number no scan could reconstruct afterwards.
 QSTATS_KEY = "akin:q"
 
+# HOW OFTEN EACH BOOK IS THE ONE SOMEBODY WAS THINKING OF.
+#
+# The engine's prior — which books it considers likely before asking
+# anything — is `log1p(readinglog_count)`: how many people shelved the book
+# on Open Library. Atomic Habits starts at 62,023 and The Idiot at 150.
+#
+# That is a real signal about reading, and the wrong question. **The books
+# people shelve are not the books people pick to play a guessing game
+# with.** A player chooses something they think the game can get, or
+# something they love, or something they want to beat it with. A shop
+# arranging its shelves by what sells in another city.
+#
+# We have known the right answer all along and thrown it away: every
+# submission NAMES the book, validated against the shipped index, and we
+# use the answers and discard the title.
+#
+# WRITE-ONLY FOR NOW, ON PURPOSE. This is the counter, not the prior.
+# Nothing reads it into the game yet, because a prior built on a week of
+# play would be worse than the catalogue's; it needs months. Starting the
+# clock is the whole point of shipping it early and alone.
+#
+# THE LOOP TO FEAR when it eventually IS read: an easy book gets picked
+# more, so its prior rises, so it is guessed more, so it is picked more.
+# Whatever uses this must blend with the popularity prior under a cap, not
+# replace it — the same shape as the drain's PRIOR_STRENGTH pseudo-counts.
+TARGETS_KEY = "akin:targets"
+
+# Six months, not the counts' 45 days. That TTL exists because a question id
+# can retire and its tally must not outlive the question; a BOOK key is
+# stable across rebuilds — that is the whole reason overrides are keyed by
+# work_key — so this wants to accumulate for as long as possible. Refreshed
+# on every write, so it only expires if nobody plays for half a year.
+TARGETS_TTL = 60 * 60 * 24 * 180
+
 # Counts outlive any single day but must not outlive a rebuild cycle by so
 # much that they describe a question list nobody ships any more. 45 days
 # gives the monthly rebuild a wide margin and still expires abandoned data.
@@ -277,6 +311,10 @@ def submit(body: Submission, request: Request):
     commands.append(["EXPIRE", COUNTS_PREFIX + body.book, COUNTS_TTL])
     commands.append(["SADD", TOUCHED_SET, body.book])
     commands.append(["EXPIRE", TOUCHED_SET, COUNTS_TTL])
+    # One line, and it starts a clock nothing else can start later: which
+    # books players actually think of. See TARGETS_KEY.
+    commands.append(["HINCRBY", TARGETS_KEY, body.book, 1])
+    commands.append(["EXPIRE", TARGETS_KEY, TARGETS_TTL])
 
     if cache.pipeline(commands) is None:
         log.warning("submission not stored: Redis unavailable")

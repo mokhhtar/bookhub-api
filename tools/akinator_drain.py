@@ -60,8 +60,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import cache  # noqa: E402
 from fastapi import APIRouter, Header, HTTPException, Query  # noqa: E402
 from tools.akinator_learn import (ARTIFACTS, COUNTS_PREFIX,  # noqa: E402
-                                  QSTATS_KEY, TOUCHED_SET, _artifacts,
-                                  _book_states)
+                                  QSTATS_KEY, TARGETS_KEY, TOUCHED_SET,
+                                  _artifacts, _book_states)
 import httpx  # noqa: E402
 from tools.akinator_sync import (GITHUB_API, GITHUB_BRANCH,  # noqa: E402
                                  GITHUB_PAT, GITHUB_REPO, _commit_files,
@@ -660,6 +660,66 @@ def question_health():
                     "question. The sample is opt-in (players who pressed "
                     "\"Teach it this book\"), so read the ranking, not the "
                     "absolute rate."}
+
+
+@admin_router.post("/targets")
+def play_targets():
+    """Which books players actually think of, against where they rank now.
+
+    READ-ONLY, AND NOTHING IN THE GAME USES IT YET. The counter behind this
+    (`akin:targets`) is the raw material for replacing the engine's prior —
+    which today is `log1p(readinglog_count)`, how many strangers shelved the
+    book on Open Library — with what this game's own players choose. That
+    swap needs months of data; this exists so the months are visible while
+    they pass, rather than a number nobody can see until someone builds on
+    it.
+
+    THE COLUMN THAT MATTERS IS `rank_gap`: shipped popularity rank minus
+    play-frequency rank. A large positive gap is a book players reach for
+    far more often than the catalogue would predict, and every one of those
+    is a book the prior currently starts too low. That list, not the raw
+    counts, is what would justify the change.
+
+    The sample is the same opt-in one the DK report uses — only games where
+    the player pressed "Teach it this book" — so it is biased toward books
+    someone cared enough to correct. Read the ranking, not the rate.
+    """
+    raw = cache.hgetall(TARGETS_KEY)
+    if raw is None:
+        raise HTTPException(status_code=503,
+                            detail="counters unreadable; nothing to report")
+    art = _artifacts()
+    index = art.get("index") or {}
+    counts: dict[str, int] = {}
+    for key, value in raw.items():
+        try:
+            counts[key] = int(value)
+        except (TypeError, ValueError):
+            continue
+
+    total = sum(counts.values())
+    by_play = sorted(counts, key=lambda k: -counts[k])
+    play_rank = {k: i for i, k in enumerate(by_play)}
+    rows = []
+    for k in by_play:
+        pop_rank = index.get(k)          # books.json is in popularity order
+        rows.append({
+            "work_key": k,
+            "plays": counts[k],
+            "share": round(counts[k] / total, 4) if total else 0.0,
+            "popularity_rank": pop_rank,
+            "play_rank": play_rank[k],
+            # None when the book is not in the shipped index at all — a row
+            # a rebuild dropped, which is worth seeing rather than hiding.
+            "rank_gap": (pop_rank - play_rank[k]) if pop_rank is not None else None,
+        })
+    return {"ok": True, "books": len(rows), "submissions": total,
+            "targets": rows[:200],
+            "note": "Read-only. Nothing in the game consumes this yet — it is "
+                    "the counter for replacing the Open Library popularity "
+                    "prior with what players actually pick, and that needs "
+                    "months of data. `rank_gap` positive = played more often "
+                    "than its shelf rank predicts. Opt-in sample."}
 
 
 @admin_router.post("/audit")
