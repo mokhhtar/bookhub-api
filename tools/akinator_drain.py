@@ -512,6 +512,31 @@ def _audit_rows() -> tuple[list, dict]:
     for work_key in sorted(locked):
         states = _book_states(work_key)
         shipped = work_key in index
+        # HOW MANY PLAYERS STAND BEHIND EACH CELL, which nothing has ever
+        # shown once a cell was written.
+        #
+        # The arithmetic already handles evidence strength and handles it
+        # correctly -- PRIOR_STRENGTH enters the catalogue's own value as ten
+        # pseudo-players, so a cold cell reads 0.722 at eight all-yes plays,
+        # 0.900 at fifty, and a 70/30 split converges 0.589 -> 0.698 as plays
+        # accumulate. Carrying the count into the ENGINE would buy nothing it
+        # is allowed to use, because the [0.15, 0.90] clamp exists precisely
+        # to stop play data outranking a verified fact.
+        #
+        # What was missing is not arithmetic, it is sight: a clamp sitting on
+        # a cell backed by three players and one backed by three hundred look
+        # identical on this page, and deciding whether to clear a lock is
+        # exactly when that matters.
+        tally = cache.hgetall(COUNTS_PREFIX + work_key) or {}
+        plays: dict[str, dict[str, int]] = {}
+        for field, value in tally.items():
+            qid_, _, ans = field.rpartition(":")
+            if not qid_:
+                continue
+            try:
+                plays.setdefault(qid_, {})[ans] = int(value)
+            except (TypeError, ValueError):
+                continue
         for qid in locked[work_key]:
             clamp = (overrides.get(work_key) or {}).get(qid)
             prior = _matrix_prior(work_key, qid, states)
@@ -543,6 +568,13 @@ def _audit_rows() -> tuple[list, dict]:
                 "without_clamp": round(prior, 4),
                 "matrix": states.get(qid),          # True / False / None
                 "richness": (art.get("richness") or {}).get(work_key),
+                # Judged excludes "don't know", matching the drain's own
+                # posterior: it is evidence about the QUESTION, not the
+                # answer, so counting it here would overstate how much
+                # anyone actually said about this cell.
+                "plays": sum(n for a, n in (plays.get(qid) or {}).items()
+                             if a != "unknown"),
+                "plays_unknown": (plays.get(qid) or {}).get("unknown", 0),
                 "verdict": verdict,
             })
 
