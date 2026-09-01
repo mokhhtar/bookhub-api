@@ -292,7 +292,24 @@ def main() -> None:
         recheck["belief_checksum"] = round(
             sum(b * math.log1p(i + 1) for i, b in enumerate(engine.belief)), 12)
 
+    # THE SEEDED OPENING, which the scripted game above cannot reach. That
+    # game runs on seed 0 — strict argmax — because a fixture has to be
+    # deterministic, and seed 0 skips the new branch entirely. Recording only
+    # that would ship a randomised chooser whose randomised path no check
+    # ever executes, which is precisely how the cold-question fixture ended
+    # up testing only its null case.
+    #
+    # So: several seeds, each replayed on the browser side through
+    # start(seed). This is the test that the two mulberry32 implementations
+    # agree, and it fails loudly if either drifts by a single bit.
+    openings = {}
+    for s in (1, 2, 3, 7, 42, 12345):
+        openings[str(s)] = Engine(matrix, seed=s).next_question()
+    print("seeded openings: " + ", ".join(
+        f"{s}->{q}" for s, q in openings.items()))
+
     trace = {
+        "openings": openings,
         "recheck": recheck,
         "generated_from": {
             "question_hash": meta.get("question_hash"),

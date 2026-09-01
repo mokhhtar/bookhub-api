@@ -233,6 +233,62 @@ COLD_TURNS = (14, 22)
 RECHECK_LEADER_BELIEF = 0.35
 RECHECK_MIN_CLASH = 0.50
 
+# THE OPENING QUESTION, PICKED FROM THE BEST FEW INSTEAD OF THE BEST.
+#
+# Strict argmax means the first question is IDENTICAL in every game ever
+# played, and so is the second until an answer differs. To a returning
+# player that is the most visible thing about the engine, and it reads as a
+# script rather than as thinking.
+#
+# THE CHEAP FIX DOES NOT EXIST, and measuring killed it. The obvious version
+# is to randomise only among near-ties, which costs nothing by construction.
+# There are no near-ties: at turn 1 the best question leads the second by
+# 9.5% and at turn 3 by 12.2%, so a 2%-tie window selects exactly one
+# question and the feature never fires. Varying the opening REQUIRES
+# sometimes asking a measurably worse question. That is a trade, not a free
+# win, and an earlier note in this session called it free — wrongly.
+#
+# WHAT IT COSTS, arithmetically. The top three at turn 1 are 0.2628, 0.2379
+# and 0.2175 nats; picking uniformly averages 0.2394, so the expected loss
+# is 0.023 nats — ONCE, on turn one of a game whose total information runs
+# to several nats. Confined to the opening on purpose: that is where the
+# repetition is felt, and every later turn keeps the exact argmax.
+#
+# SEED 0 MEANS OFF, and that is what makes this safe to land. Every existing
+# measurement, every simulate.py run and the parity fixture all construct
+# Engine without a seed and get byte-identical behaviour to before.
+OPENING_CHOICES = 3
+
+
+def _mulberry32(seed: int):
+    """A 32-bit PRNG that is bit-identical in Python and JavaScript.
+
+    THE ACTUAL BLOCKER for this feature, and the reason it waited. The two
+    engines must agree on every choice or parity-check.js reports a
+    divergence, and `random.Random` and `Math.random` share nothing — not the
+    algorithm, not the seeding, not the sequence. So the generator has to be
+    ours, written twice, and small enough to verify by eye.
+
+    mulberry32 is four lines and needs only 32-bit integer arithmetic, which
+    both languages can do exactly: Python masks with 0xFFFFFFFF, JavaScript
+    gets it from `|0`, `>>>` and `Math.imul`.
+
+    VERIFIED, not assumed: seeded at 12345 both implementations produce
+        0.979728267760947  0.306752264499664  0.484205421525985 …
+    identical to fifteen decimal places over eight draws.
+    """
+    a = seed & 0xFFFFFFFF
+
+    def rnd() -> float:
+        nonlocal a
+        a = (a + 0x6D2B79F5) & 0xFFFFFFFF
+        t = a
+        t = ((t ^ (t >> 15)) * (1 | a)) & 0xFFFFFFFF
+        t = (t + (((t ^ (t >> 7)) * (61 | t)) & 0xFFFFFFFF)) & 0xFFFFFFFF ^ t
+        return ((t ^ (t >> 14)) & 0xFFFFFFFF) / 4294967296.0
+
+    return rnd
+
 
 def _likelihood(p: float, weight: float) -> float:
     """P(this answer | this book), interpolated by how firm the answer was.
@@ -455,8 +511,20 @@ class Matrix:
 class Engine:
     """Belief state over a candidate set of books."""
 
-    def __init__(self, matrix: Matrix):
+    def __init__(self, matrix: Matrix, seed: int = 0):
         self.m = matrix
+        # Seed 0 = strict argmax, which is what every caller got before this
+        # existed. Only a caller that asks for variety gets it, so no
+        # measurement, fixture or simulation changes underneath anyone.
+        # DRAWN ONCE, HERE, not inside next_question(). Calling the generator
+        # from the chooser makes next_question() mutate state, so asking it
+        # twice for the same turn returns two different questions — and the
+        # page does exactly that: start() ends with nextTurn() -> nextQuestion(),
+        # and any later re-render calls it again. The parity check caught it
+        # on its first run, as a browser one draw ahead of Python.
+        rnd = _mulberry32(seed) if seed else None
+        self._opening = (min(int(rnd() * OPENING_CHOICES), OPENING_CHOICES - 1)
+                         if rnd else None)
         self.belief = list(matrix.prior)
         self.asked: set[str] = set()
         # Per-dimension interval implied by the firm answers so far, and how
@@ -836,13 +904,23 @@ class Engine:
                 totals[q] += b * row[q]
                 cond_h[q] += b * hrow[q]
 
+        scored = []
         best, best_gain = None, -1.0
         for q, p_yes in totals.items():
             if p_yes <= 0.02 or p_yes >= 0.98:
                 continue  # everyone answers the same way; asking wastes a turn
             gain = _binary_entropy(p_yes) - cond_h[q]
+            scored.append((gain, q))
             if gain > best_gain:
                 best, best_gain = q, gain
+
+        if (self._opening is not None and self.turns == 0
+                and len(scored) >= OPENING_CHOICES):
+            # Sorted by (-gain, id): ties on the float must not depend on
+            # dict order, which differs between the two engines the moment
+            # anything upstream changes insertion order.
+            scored.sort(key=lambda t: (-t[0], t[1]))
+            return scored[self._opening][1]
         return best
 
     def _next_question_exact(self, pool: list[str]) -> str | None:
