@@ -629,7 +629,70 @@ function computeDupFlags(){
     if (!a) return false;
     return (byAuthor[a]||[]).some(j => j !== i && (books[j].r||0) > 0);
   });
-  document.getElementById("dupCount").textContent = dupFlag.filter(Boolean).length;
+  computeCrossDups();
+  document.getElementById("dupCount").textContent =
+    dupFlag.filter(Boolean).length + crossDup.filter(Boolean).length;
+}
+
+// ── the SECOND kind of duplicate: one book, two rows, two sources ────────
+//
+// computeDupFlags above looks for a BARE row (r=0) beside a well-described
+// one by the same author. That is a real pattern and it catches none of
+// these: measured against the six known pairs it scored 0/6, because a
+// published page carries richness 5-7, not 0.
+//
+// The pattern it misses is a book that is in the game TWICE. akinator_sync
+// compared catalogue titles, and books.json ships the ORIGINAL title of a
+// translated work -- /works/OL166925W is 'Идиот' and the published page is
+// 'The Idiot', so no clash was found and a second row was appended. Fixed at
+// the source (the sync now reads display_overrides.json too), but the rows
+// it already created are still here and only a person can decide which of
+// each pair survives.
+//
+// WHY CROSS-SOURCE ONLY, and this is the whole design of the rule. Matching
+// on title+surname alone flags 48 groups / 108 rows, nearly all of them
+// legitimate Open Library multiplicity -- 'Dog Man' appears eight times and
+// 'Diary of a Wimpy Kid' five, almost certainly different volumes sharing a
+// title. Reporting those would bury the real ones, and a check that cries
+// wolf gets ignored. Requiring the group to span DIFFERENT sources
+// (/site/ vs /works/ vs /fandom/) gives 7 groups / 14 rows -- reviewable by
+// hand, and exactly the class the sync creates.
+let crossDup = [], crossPartner = {};
+
+function dupNorm(s){
+  // \u0300-\u036f written as escapes, never as literal combining
+  // marks: every line here lives inside page()'s template literal and
+  // a bare combining character is invisible in a diff and easy to
+  // mangle on the next edit.
+  return (s||"").normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+function dupSource(k){ return String(k||"/x/").split("/")[1] || ""; }
+
+function computeCrossDups(){
+  const groups = {};
+  books.forEach((b,i) => {
+    const ov = displayOverrides[b.k] || {};
+    // The display title counts, and it is the point: it is the ENGLISH one,
+    // and matching it to the page's title is what the sync failed to do.
+    const titles = new Set([dupNorm(b.t), dupNorm(ov.t)].filter(Boolean));
+    const author = dupNorm(ov.a || b.a).split(" ").pop() || "";
+    titles.forEach(t => {
+      const key = t + " " + author;
+      (groups[key] = groups[key] || []).push(i);
+    });
+  });
+  crossDup = books.map(() => false);
+  crossPartner = {};
+  Object.values(groups).forEach(idxs => {
+    if (idxs.length < 2) return;
+    const sources = new Set(idxs.map(i => dupSource(books[i].k)));
+    if (sources.size < 2) return;          // same source: OL multiplicity
+    idxs.forEach(i => {
+      crossDup[i] = true;
+      crossPartner[i] = idxs.filter(j => j !== i).map(j => books[j].k).join(", ");
+    });
+  });
 }
 
 function renderBooks(filter){
@@ -641,7 +704,7 @@ function renderBooks(filter){
   const cutoff = periodDays ? (Date.now() / 1000) - periodDays * 86400 : 0;
   const matching = books
     .map((b,i)=>({b,i}))
-    .filter(({b,i}) => (!dupOnly || dupFlag[i])
+    .filter(({b,i}) => (!dupOnly || dupFlag[i] || crossDup[i])
       && (!f || (b.t||"").toLowerCase().includes(f) || (b.a||"").toLowerCase().includes(f))
       // Rows added before this filter shipped carry neither field — treated
       // as "unknown" origin and excluded from every period bucket except
@@ -656,6 +719,9 @@ function renderBooks(filter){
   rows.innerHTML = shown.map(({b,i}) => {
     const isOff = excluded.has(b.k);
     const r = b.r||0;
+    const cross = crossDup[i]
+      ? \`<span class="badge dup" title="SAME BOOK, TWO ROWS -- another row under a different source has this title and author. Two rows split the belief so neither can reach the guess threshold. Decide which one survives and exclude the other. Partner: \${esc(crossPartner[i]||"")}">same book twice</span> \`
+      : "";
     const dup = dupFlag[i]
       ? \`<span class="badge dup dupBtn" data-author="\${esc(b.a||"")}" title="Empty row (r=0) by an author who has a better-described one. Often a translation or reprint of a book already in the game — click to see everything by this author and judge.">check duplicate</span>\`
       : "";
@@ -663,7 +729,7 @@ function renderBooks(filter){
       <td class="title">\${esc(b.t)}</td><td>\${esc(b.a||"—")}</td>
       <td>\${b.y ?? "—"}</td><td>\${i+1}</td>
       <td class="rich \${r===0?"thin":""}" title="\${r===0?"answers almost nothing":r+" content subjects"}">\${r}</td>
-      <td>\${isOff ? '<span class="badge off">excluded</span> ' : ""}\${dup}</td>
+      <td>\${isOff ? '<span class="badge off">excluded</span> ' : ""}\${cross}\${dup}</td>
       <td class="row">
         <button class="act ghost excludeBtn" data-key="\${esc(b.k)}" data-off="\${isOff}">\${isOff?"Restore":"Exclude"}</button>
         <input type="text" class="yearFix" placeholder="fix year" style="width:80px">
@@ -874,6 +940,7 @@ document.getElementById("exRows").addEventListener("click", async (e)=>{
 //   lookup neither of those reach. The result is a DRAFT — same shape as
 //   the Authors tab's, no network per click — reviewed and corrected
 //   before Add book fires the one commit that uses it.
+let displayOverrides = {};
 let addPicked = null;   // the chosen /search candidate, or null (manual)
 let addAnswers = {};    // draft: question id -> true|false|null
 let addSheetNote = "";  // last "Fill from sheet" result, shown until the form re-renders
@@ -3681,9 +3748,16 @@ async function loadDrainAlert(){
       fetch(DATA + "/meta.json").then(r => r.json()),
       fetch(DATA + "/overrides.json").then(r => r.ok ? r.json() : {}).catch(() => ({})),
       fetch(DATA + "/admin_corrections.json").then(r => r.ok ? r.json() : {}).catch(() => ({})),
-    ]).then(([mb, mt, ov, co]) => {
+      // The English titles. Needed by computeCrossDups to notice that
+      // 'Idiot' and 'The Idiot' are one book -- see the note there.
+      fetch(DATA + "/display_overrides.json").then(r => r.ok ? r.json() : {}).catch(() => ({})),
+    ]).then(([mb, mt, ov, co, dov]) => {
       if (mb) matrix = new Uint8Array(mb);
       meta = mt; overrides = ov || {}; corrections = co || {};
+      displayOverrides = dov || {};
+      // Recomputed, because the first pass ran before this landed and
+      // the cross-source rule is worthless without the English titles.
+      computeDupFlags(); renderBooks(document.getElementById("bookSearch").value || "");
     }).catch(() => {});
     computeDupFlags();
     renderBooks(""); renderQuestions();
