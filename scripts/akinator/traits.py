@@ -62,9 +62,36 @@ to support one, the prompt tells the model plainly when it may not answer
 qualify rather than trusting the model to have obeyed. Everything below the
 gate behaves exactly as it did before.
 
-**THE PROMPT IS NOT CALIBRATED YET AND THE HARVEST MUST NOT RUN UNTIL IT
-IS.** Three drafts were tried against real books and real calls, and the
-first two failed in opposite directions:
+**CALIBRATED 2026-09-01, AND IT PASSED.** 194 published pages, one call
+each, zero failures:
+
+    "no" answers given                          1,617
+    ...that contradict a theme our pages assert     4   (0.2%)
+
+All four are defensible and at least two are the model being RIGHT where
+our editorial theme is loose: it denied `t:magic` for The Hound of the
+Baskervilles, where the whole plot is that the hound is not supernatural,
+and for The Turn of the Screw, whose entire critical literature is the
+argument about whether the ghosts are real. The other two are
+`t:realevents` for a time-travel comedy (our "historical" theme phrase
+trips the hint) and `t:romance` for The Little Prince.
+
+Shape, which matters as much as the rate: mean 8.3 negatives a book, median
+8, p90 of 13, max 16 of 17 — and **no book denied all seventeen, nor zero**.
+That is the failure mode draft 2 had, and it is gone.
+
+READ THE 0.2% FOR WHAT IT IS. It measures denials that contradict a human
+judgement WE HOLD. Our page themes list about four per book and are sparse
+by design, so a denial of something true that we never wrote down cannot be
+counted. It is a lower bound on the error, measured where ground truth
+exists — the strongest evidence available here, not a proof.
+
+Projected effect: ~8.3 cells a book across 4,157 harvested descriptions is
+about 34,600 cells moving from `unknown` (0.5, moves nothing) to `absent`
+(0.15-0.45, moves belief).
+
+How it got here — three drafts against real books and real calls, the first
+two failing in opposite directions:
 
   draft 1  "no" only when the text SHOWS the label is false
            -> at most ONE negative per book; nothing at all for Sapiens,
@@ -85,12 +112,16 @@ Four books is not a measurement, which is the whole reason
 `extract_traits.py --calibrate` exists and now scores negatives separately:
 a theme our pages assert that the model MISSED ships as `unknown` and moves
 nothing, while one it DENIED ships as `absent` and argues against the
-correct book. Only the second can lose a game, and it is the number to tune
-these rules against — not another four books read by eye.
+correct book. Only the second can lose a game. Draft 3 was shipped on that
+run's 0.2%, not on the four books above.
 
-Until that run happens this change is INERT: verified on 400 books of the
-current `akinator_traits.json`, which holds zero negatives, `apply_labels`
-returns byte-identical sets to the logic it replaced.
+STILL INERT UNTIL A HARVEST RUNS. `akinator_traits.json` holds zero
+negatives today, and on 400 of its books `apply_labels` returns
+byte-identical sets to the logic it replaced. Nothing in the shipped game
+moves until `extract_traits.py --limit 5000` has been re-run AND
+`build_matrix.py` has repacked — at which point twelve questions change
+what they are worth, so that rebuild wants `simulate.py` paired against the
+current artifact before it ships.
 """
 from __future__ import annotations
 
