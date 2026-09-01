@@ -869,6 +869,7 @@ def main() -> None:
 
     locked = load_locked() if not args.ignore_locked else {}
     skipped_locked = 0
+    conflicts = 0          # cells the two runs disagreed about
     if locked:
         print(f"{len(locked)} book(s) have hand-set trait cells; "
               f"{sum(len(v) for v in locked.values())} cell(s) will be left "
@@ -929,16 +930,39 @@ def main() -> None:
             # sends back labels for ONLY the requested subset, and
             # overwriting `out[key]` wholesale would erase every label it
             # had from an earlier, differently-scoped run.
-            prev = {l for l in out.get(key, []) if _trait_of(l) not in judged}
-            # REPLACE within `judged` rather than union, which a plain union
-            # could not do once negatives existed: a book previously labelled
-            # `t:war` and now answered `-t:war` would end up carrying BOTH,
-            # and split_labels would hand apply_labels a key that is
-            # simultaneously asserted and denied. Union was correct while
-            # every label was a positive; it stopped being correct the moment
-            # a label could contradict one.
-            new = {l for l in labels if _trait_of(l) in judged}
-            out[key] = sorted(prev | new)
+            keep = [l for l in out.get(key, []) if _trait_of(l) not in judged]
+
+            # AN ASSERTION SURVIVES UNLESS THE OTHER RUN CONTRADICTS IT, and
+            # a contradiction drops to `unknown` rather than picking a
+            # winner. Neither half of this is obvious, and the first draft
+            # got it wrong in a way only a measurement caught.
+            #
+            # That draft REPLACED every answer within `judged`, on the
+            # reasoning that the model had just re-judged them. Measured over
+            # the full corpus, it dropped 2,625 positives and gained 901 —
+            # a NET LOSS OF 1,724, a third of every positive the file had.
+            # The negative rules made the model stingier about "yes" too, and
+            # replacing meant inheriting that silence as fact. `t:funny` lost
+            # 52% of its positives, `t:school` 46%, and `t:family` came out
+            # LESS informative than before the harvest (0.0402 -> 0.0377).
+            #
+            # Keeping both runs' assertions and dropping only the genuine
+            # clashes: 0.3579 -> 0.7304 nats against replace's 0.6034 — 2.0x
+            # rather than 1.7x, no question regressing, and positives rising
+            # 7,363 -> 8,203 instead of falling. The two runs disagreed about
+            # just 61 cells in 70,669, and for those 61 a disagreement
+            # between two model runs is not evidence of anything, which is
+            # precisely what `unknown` means here.
+            prev_y, prev_n = split_labels(out.get(key, []))
+            run_y, run_n = split_labels(labels)
+            yes = (prev_y | run_y) & judged
+            no = (prev_n | run_n) & judged
+            clash = yes & no
+            conflicts += len(clash)
+            yes -= clash
+            no -= clash
+            out[key] = sorted(keep + sorted(yes)
+                              + sorted(NEGATIVE_PREFIX + t for t in no))
             # Only once tracking is switched on for THIS file (see
             # `tracking_enabled` above) — writing a partial `tested` entry
             # for an unmigrated file is exactly the half-migrated state that
@@ -1011,6 +1035,12 @@ def main() -> None:
     if skipped_locked:
         print(f"  {skipped_locked} cell(s) left untouched because the owner "
               f"set them by hand")
+    if conflicts:
+        # Not an error. Two runs disagreeing about one cell is
+        # exactly the case `unknown` exists for, and the count is
+        # worth watching: a big jump means the prompt changed its
+        # mind, not that the books did.
+        print(f"  {conflicts} cell(s) the two runs disagreed about, dropped to unknown")
 
     # Say what is still missing, in the same breath as what was done. The
     # count above is the number that looks like success; the one below is
