@@ -263,6 +263,23 @@ def select_character_questions(books: list[dict], verbose: bool = True) -> list[
 # ground truth says. Set from --cannot-answer, and from --cold.
 CANNOT_ANSWER: set[str] = set()
 
+# work_key -> the traits the model explicitly DENIED for that book, as
+# opposed to cells that are absent because nobody catalogued them. Filled in
+# main() from the traits file; empty for every run over a corpus labelled
+# before the extractor could say "no", which is exactly the old behaviour.
+DENIED: dict[str, set[str]] = {}
+
+# How often a reader contradicts a MODEL-ASSERTED negative, against
+# `--miss-rate` for the ordinary "nobody wrote it down" kind.
+#
+# Not the measured 0.2% and deliberately so. That figure counts denials
+# contradicting a theme our own pages assert, and our themes are sparse by
+# design — it is a lower bound on the error, not the error. 0.05 sits 25x
+# above what was measured and 5x below the catalogue figure, which is the
+# conservative side of a number nobody can pin down exactly. Swept with
+# --denial-miss-rate rather than argued about.
+DENIAL_MISS_RATE = 0.05
+
 # Where the shipped artifacts live, for the one input this file cannot get
 # from the corpus: cold_questions.json, whose whole point is that the corpus
 # has nothing to say about it. Same default as parity_trace.py.
@@ -299,9 +316,34 @@ def answer_as_player(book: dict, question: str, rng: random.Random,
         return "unknown"
 
     truth = question in book["present"]
-    if not truth and rng.random() < miss_rate:
-        # The metadata is missing something the reader knows is true.
-        truth = True
+    if not truth:
+        # TWO KINDS OF ABSENT, and treating them as one biases every
+        # measurement of the trait harvest against it.
+        #
+        # `miss_rate` was calibrated for the ordinary kind: Open Library has
+        # no subject tag, so "absent" means "nobody wrote it down" and a
+        # reader knowing better 25% of the time is realistic.
+        #
+        # A cell the trait model DENIED is a different claim. It read the
+        # description and said no, and `--calibrate` measured that denial
+        # contradicting a human-reviewed theme on 4 of 1,617 answers — 0.2%,
+        # a lower bound but two orders of magnitude below 25%.
+        #
+        # WHAT THE CONFLATION COST, measured 2026-09-01. Before the harvest
+        # these cells were `unknown` and returned above, never reaching this
+        # line at all; afterwards 17,015 of them became absent and inherited
+        # a 25% error injection they had never been subject to. The paired
+        # 500-game run came back -1.4 points, and the harm was concentrated
+        # exactly where the mechanism predicts: books that GAINED negatives
+        # went 54.0% -> 50.0% (won 6, lost 15) while books that gained none
+        # were flat (won 2, lost 3). The simulator was penalising the new
+        # labels at ~125x their measured error rate.
+        rate = (DENIAL_MISS_RATE
+                if question in DENIED.get(book.get("key") or "", ())
+                else miss_rate)
+        if rng.random() < rate:
+            # The metadata is missing something the reader knows is true.
+            truth = True
 
     if rng.random() < noise:
         return rng.choice(["probably_yes", "unknown", "probably_no"])
@@ -411,6 +453,9 @@ def play(matrix: Matrix, target_idx: int, rng: random.Random,
 
 
 def main() -> None:
+    # Declared up here because argparse reads DENIAL_MISS_RATE for its
+    # default below, and Python forbids a `global` after the name is used.
+    global DENIED, DENIAL_MISS_RATE
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--trials", type=int, default=2, help="plays per book")
     # 30, matching MAX_QUESTIONS in book-mind-reader.html. This sat at 25
@@ -444,6 +489,12 @@ def main() -> None:
                          "test for a question only a database can answer: "
                          "--drop frees the turn for a better question, this "
                          "spends it exactly as a real player would.")
+    ap.add_argument("--denial-miss-rate", type=float, default=DENIAL_MISS_RATE,
+                    help="how often the player contradicts a cell the trait "
+                         "model DENIED, as opposed to one absent because "
+                         "nobody catalogued it (--miss-rate). Calibration "
+                         "measured 0.2%%; the default 0.05 is the "
+                         "conservative side of that.")
     ap.add_argument("--no-recheck", action="store_true",
                     help="do not spend the last turn re-checking the answer "
                          "the leader most contradicts. On by default, "
@@ -492,6 +543,14 @@ def main() -> None:
     char_questions = [] if args.no_characters else select_character_questions(books, verbose)
     if verbose:
         print()
+    DENIAL_MISS_RATE = args.denial_miss_rate
+    if not args.no_traits:
+        from traits import split_labels as _split
+        DENIED = {k: _split(v)[1] for k, v in load_traits().items()}
+        _n = sum(len(v) for v in DENIED.values())
+        if _n:
+            print(f"{_n:,} model-denied cell(s); the player contradicts those "
+                  f"at {DENIAL_MISS_RATE:.0%}, not {args.miss_rate:.0%}\n")
     if args.cannot_answer:
         global CANNOT_ANSWER
         CANNOT_ANSWER = {d.strip() for d in args.cannot_answer.split(",")
