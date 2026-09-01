@@ -351,8 +351,14 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
 <section id="books" class="on">
   <input type="search" id="bookSearch" placeholder="Search by title or author…">
   <div class="toolbar">
-    <label><input type="checkbox" id="dupOnly"> Only duplicate candidates (<span id="dupCount">0</span>)</label>
+    <select id="dupOnly" title="Two different findings with two different actions. A thin row is something to investigate; a same-book-twice row is one of a pair to exclude.">
+      <option value="">Duplicates: show all rows</option>
+      <option value="cross">Same book twice</option>
+      <option value="thin">Thin rows to check</option>
+      <option value="any">Either kind</option>
+    </select>
     <span class="sub" id="dupBreakdown" style="margin-left:6px"></span>
+    <span id="dupCount" hidden></span>
     <select id="bookOrigin" title="How the row was added — only tracked for rows added after this filter shipped; older rows show as Unknown.">
       <option value="">Added via: all</option>
       <option value="resolved">Summarizer (auto-detected)</option>
@@ -640,6 +646,12 @@ function computeDupFlags(){
   var nThin = dupFlag.filter(Boolean).length;
   var nCross = crossDup.filter(Boolean).length;
   document.getElementById("dupCount").textContent = nThin + nCross;
+  var sel = document.getElementById("dupOnly");
+  if (sel && sel.options && sel.options.length >= 4) {
+    sel.options[1].textContent = "Same book twice (" + nCross + ") -- exclude one of each pair";
+    sel.options[2].textContent = "Thin rows to check (" + nThin + ")";
+    sel.options[3].textContent = "Either kind (" + (nThin + nCross) + ")";
+  }
   var bd = document.getElementById("dupBreakdown");
   if (bd) {
     bd.textContent = nCross
@@ -722,13 +734,18 @@ function computeCrossDups(){
 function renderBooks(filter){
   const rows = document.getElementById("bookRows");
   const f = (filter||"").toLowerCase();
-  const dupOnly = document.getElementById("dupOnly").checked;
+  // "", "cross", "thin" or "any" -- see the option labels for why the two
+  // kinds are separated rather than summed.
+  const dupMode = document.getElementById("dupOnly").value;
   const originFilter = document.getElementById("bookOrigin").value;
   const periodDays = parseInt(document.getElementById("bookPeriod").value, 10);
   const cutoff = periodDays ? (Date.now() / 1000) - periodDays * 86400 : 0;
   const matching = books
     .map((b,i)=>({b,i}))
-    .filter(({b,i}) => (!dupOnly || dupFlag[i] || crossDup[i])
+    .filter(({b,i}) => (dupMode === "" ||
+                        (dupMode === "cross" && crossDup[i]) ||
+                        (dupMode === "thin" && dupFlag[i]) ||
+                        (dupMode === "any" && (dupFlag[i] || crossDup[i])))
       && (!f || (b.t||"").toLowerCase().includes(f) || (b.a||"").toLowerCase().includes(f))
       // Rows added before this filter shipped carry neither field — treated
       // as "unknown" origin and excluded from every period bucket except
@@ -789,7 +806,7 @@ document.getElementById("bookRows").addEventListener("click", async (e)=>{
   // Clicking the flag searches the author, so the owner compares the whole
   // shelf rather than trusting a guess about which row is the twin.
   if (e.target.classList.contains("dupBtn")){
-    document.getElementById("dupOnly").checked = false;
+    document.getElementById("dupOnly").value = "";
     const box = document.getElementById("bookSearch");
     box.value = e.target.dataset.author;
     renderBooks(box.value);
