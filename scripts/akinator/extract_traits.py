@@ -367,11 +367,19 @@ def extract_one(title: str, author: str, text: str,
     a partial one) and what every caller got before `--keys` existed.
     """
     try:
-        return parse_response(
+        labels = parse_response(
             _generate(build_prompt(title, author, text, vocab), provider), vocab)
     except Exception as exc:  # noqa: BLE001
         print(f"    ! {title[:40]}: {str(exc)[:70]}", file=sys.stderr)
         return None
+    # HERE TOO, not only in extract_batch. The strip started life on the
+    # batch path alone, which left the guarantee with a hole in exactly the
+    # two places a short book is most likely to arrive by: --calibrate, which
+    # never batches, and extract_batch's own retry-singly fallback, which is
+    # what runs when a reply failed to align. A negative ships as `absent`
+    # and argues against the correct book; the gate has to hold on every
+    # path that can produce one.
+    return _strip_ungrounded_negatives([labels], [(title, "", text)])[0]
 
 
 def extract_batch(rows: list[tuple[str, str, str]], provider: str,
