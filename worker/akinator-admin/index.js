@@ -660,12 +660,22 @@ function computeDupFlags(){
 let crossDup = [], crossPartner = {};
 
 function dupNorm(s){
+  // EVERY BACKSLASH HERE IS DOUBLED, and the first version's were not.
+  // These lines live inside page()'s template literal, where a lone
+  // backslash-w is not a valid escape and collapses to a bare w. The
+  // emitted client therefore received /[^ws]/ and /s+/, so both
+  // "It Ends With Us" and "Twilight" normalised to "w" and 1,002 rows
+  // were flagged as duplicates of one another.
+  //
+  // It passed review because I verified the functions extracted from
+  // THIS FILE instead of from page()'s output -- the exact mistake
+  // check.mjs exists to catch, made while adding a checker.
   // \u0300-\u036f written as escapes, never as literal combining
   // marks: every line here lives inside page()'s template literal and
   // a bare combining character is invisible in a diff and easy to
   // mangle on the next edit.
-  return (s||"").normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase().replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
+  return (s||"").normalize("NFKD").replace(/[\\u0300-\\u036f]/g, "")
+    .toLowerCase().replace(/[^\\w\\s]/g, " ").replace(/\\s+/g, " ").trim();
 }
 function dupSource(k){ return String(k||"/x/").split("/")[1] || ""; }
 
