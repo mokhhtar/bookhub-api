@@ -63,6 +63,56 @@ CALIBRATION_PATH = os.path.join(REPO_ROOT, "data", "akinator_calibration.json")
 FANDOM_TEXT_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_text.json")
 FANDOM_OUT_PATH = os.path.join(REPO_ROOT, "data", "akinator_fandom_traits.json")
 
+# Cells the owner decided BY HAND, which no harvest may overwrite.
+#
+# Same file the drain refuses to vote on, read the same way build_matrix.py
+# reads question_overrides.json — out of the sibling checkout, because it is
+# a shipped artifact and this is a build-time script.
+#
+# WHAT THIS DOES AND DOES NOT PROTECT, stated because the honest version is
+# narrower than it sounds. A locked cell also lives in `overrides.json`,
+# which BOTH engines apply on top of the packed matrix at play time, so its
+# value already wins no matter what the harvest writes. This guard is about
+# the layer underneath: the base cell the audit compares a clamp against
+# ("a clamp is redundant only when it equals what the engine would answer
+# WITHOUT it"), and the value that would be left standing if the owner ever
+# cleared the lock. A hand judgement should not quietly become a model guess
+# the moment it is unlocked.
+LOCKED_PATH = os.path.abspath(os.path.join(
+    REPO_ROOT, "..", "bookhub", "games", "data", "akinator",
+    "overrides_locked.json"))
+
+
+def load_locked() -> dict[str, set[str]]:
+    """work_key -> the trait keys the owner has decided by hand.
+
+    Only TRAITS keys are kept: the file also locks author and genre cells,
+    which no harvest touches, and carrying them would make the "skipped"
+    count in the run summary describe protections that were never at risk.
+    A missing or malformed file protects nothing, which is the pre-existing
+    behaviour and loses a lock rather than an entire run.
+    """
+    try:
+        with open(LOCKED_PATH, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, set[str]] = {}
+    for key, ids in data.items():
+        if not isinstance(key, str) or not isinstance(ids, list):
+            continue
+        keep = {q for q in ids if isinstance(q, str) and q in TRAITS}
+        if keep:
+            out[key] = keep
+    return out
+
+
+def _trait_of(label: str) -> str:
+    """The trait a stored label is about, positive or negative."""
+    return label[len(NEGATIVE_PREFIX):] if label.startswith(NEGATIVE_PREFIX) else label
+
 # Which of our editorial theme phrases assert which trait. Used ONLY by
 # --calibrate, to check the model against a human judgment — never to
 # produce labels, because it would inherit the sparsity that makes our
@@ -665,6 +715,16 @@ def main() -> None:
                          "file to already carry per-key 'tested' data — run "
                          "--migrate-tested once first if it doesn't; the "
                          "tool refuses rather than guessing.")
+    ap.add_argument("--relabel", action="store_true",
+                    help="re-judge books that already have labels, replacing "
+                         "their answers for the requested keys. Needed to add "
+                         "negatives to a corpus labelled before the extractor "
+                         "could say 'no' — without it every book counts as "
+                         "done and the run harvests nothing.")
+    ap.add_argument("--ignore-locked", action="store_true",
+                    help="also overwrite trait cells the owner set by hand "
+                         "(overrides_locked.json). Off by default: a hand "
+                         "judgement should not become a model guess.")
     ap.add_argument("--migrate-tested", action="store_true",
                     help="ONE-TIME: stamp every already-labelled book in "
                          "--out as tested against the full CURRENT TRAITS "
@@ -807,7 +867,25 @@ def main() -> None:
             sys.exit(1)
         print(f"Resuming with {len(out)} books already labelled.")
 
-    if tracking_enabled:
+    locked = load_locked() if not args.ignore_locked else {}
+    skipped_locked = 0
+    if locked:
+        print(f"{len(locked)} book(s) have hand-set trait cells; "
+              f"{sum(len(v) for v in locked.values())} cell(s) will be left "
+              f"exactly as they are.")
+
+    if args.relabel:
+        # EVERY book with a description, whatever the file already says.
+        # The ordinary predicates below both mean "has this book been
+        # judged against these keys", and after --migrate-tested the answer
+        # is yes for all 4,157 — so a run meant to ADD negatives to books
+        # already labelled would find nothing to do and report a clean
+        # finish. That is not a resume bug; the run is asking a different
+        # question of the same books, and only this flag can say so.
+        todo = [d for d in docs if d.get("key") in descriptions]
+        print("--relabel: re-judging books that already have labels. "
+              "Answers about the requested keys are REPLACED, not merged.")
+    elif tracking_enabled:
         todo = [d for d in docs
                 if d.get("key") in descriptions
                 and not (requested_keys <= set(tested.get(d["key"], [])))]
@@ -840,12 +918,27 @@ def main() -> None:
         for doc, labels in zip(chunk, results):
             if labels is None:
                 continue      # failed: leave it for the next run
-            # UNION, not overwrite. A book re-visited for a newly-added key
-            # sends back labels for ONLY the requested subset — overwriting
-            # `out[key]` with just that would erase every label the book
-            # already had from an earlier, differently-scoped run.
             key = doc["key"]
-            out[key] = sorted(set(out.get(key, [])) | set(labels))
+            # WHAT THIS RUN IS ALLOWED TO CHANGE: the requested vocabulary,
+            # minus anything the owner has decided by hand for this book.
+            judged = requested_keys - locked.get(key, set())
+            if locked.get(key):
+                skipped_locked += len(requested_keys & locked[key])
+            # Everything the file already knew about a key OUTSIDE that set
+            # survives untouched. A book re-visited for a newly-added key
+            # sends back labels for ONLY the requested subset, and
+            # overwriting `out[key]` wholesale would erase every label it
+            # had from an earlier, differently-scoped run.
+            prev = {l for l in out.get(key, []) if _trait_of(l) not in judged}
+            # REPLACE within `judged` rather than union, which a plain union
+            # could not do once negatives existed: a book previously labelled
+            # `t:war` and now answered `-t:war` would end up carrying BOTH,
+            # and split_labels would hand apply_labels a key that is
+            # simultaneously asserted and denied. Union was correct while
+            # every label was a positive; it stopped being correct the moment
+            # a label could contradict one.
+            new = {l for l in labels if _trait_of(l) in judged}
+            out[key] = sorted(prev | new)
             # Only once tracking is switched on for THIS file (see
             # `tracking_enabled` above) — writing a partial `tested` entry
             # for an unmigrated file is exactly the half-migrated state that
@@ -900,10 +993,24 @@ def main() -> None:
         json.dump(_payload(out, tested, tracking_enabled), fh, ensure_ascii=False)
 
     counts: dict[str, int] = {}
+    neg_counts: dict[str, int] = {}
     for labels in out.values():
         for l in labels:
-            counts[l] = counts.get(l, 0) + 1
+            if l.startswith(NEGATIVE_PREFIX):
+                neg_counts[_trait_of(l)] = neg_counts.get(_trait_of(l), 0) + 1
+            else:
+                counts[l] = counts.get(l, 0) + 1
     print(f"\n{len(out)} books labelled -> {args.out}")
+    total_neg = sum(neg_counts.values())
+    if total_neg:
+        # The number this whole change exists for: every one of these is a
+        # cell moving from `unknown` (0.5, cancels in the normalisation and
+        # moves nothing) to `absent` (0.15-0.45, which moves belief).
+        print(f"  {total_neg:,} negative(s) recorded — cells that will pack "
+              f"as ABSENT instead of unknown")
+    if skipped_locked:
+        print(f"  {skipped_locked} cell(s) left untouched because the owner "
+              f"set them by hand")
 
     # Say what is still missing, in the same breath as what was done. The
     # count above is the number that looks like success; the one below is
