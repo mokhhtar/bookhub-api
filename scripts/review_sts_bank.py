@@ -93,11 +93,293 @@ def summarise(days: list[dict]) -> dict:
     }
 
 
+# ── the review sheet ───────────────────────────────────────────────────────
+# Set as a proof sheet, because that is the job: two passages side by side in
+# the same face, at the same size, with the label small. The reviewer is NOT
+# being asked which one is real — they are told — so shouting the answer would
+# emphasise the wrong thing. What has to be easy is reading both as prose.
+_HTML_HEAD = """<title>Spot the Slop — review sheet</title>
+<style>
+  :root {
+    --paper: #FBFBF9; --ink: #191C1F; --muted: #5C6570; --faint: #8A939C;
+    --rule: #E2E4E0; --panel: #FFFFFF; --slate: #3B4A5A;
+    --real: #2F5D50; --real-bg: #F1F6F3;
+    --fake: #8A3A2E; --fake-bg: #FBF2F0;
+    --warn: #7A5A1E; --warn-bg: #FBF6EA;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --sans: ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #14161A; --ink: #E7E9EC; --muted: #9AA3AD; --faint: #6F7883;
+      --rule: #262A30; --panel: #1A1D22; --slate: #9DB2C9;
+      --real: #7FBFA6; --real-bg: #17231F;
+      --fake: #D89184; --fake-bg: #241A18;
+      --warn: #D9B366; --warn-bg: #221D12;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #14161A; --ink: #E7E9EC; --muted: #9AA3AD; --faint: #6F7883;
+    --rule: #262A30; --panel: #1A1D22; --slate: #9DB2C9;
+    --real: #7FBFA6; --real-bg: #17231F;
+    --fake: #D89184; --fake-bg: #241A18;
+    --warn: #D9B366; --warn-bg: #221D12;
+  }
+  :root[data-theme="light"] {
+    --paper: #FBFBF9; --ink: #191C1F; --muted: #5C6570; --faint: #8A939C;
+    --rule: #E2E4E0; --panel: #FFFFFF; --slate: #3B4A5A;
+    --real: #2F5D50; --real-bg: #F1F6F3;
+    --fake: #8A3A2E; --fake-bg: #FBF2F0;
+    --warn: #7A5A1E; --warn-bg: #FBF6EA;
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink);
+         font-family: var(--sans); line-height: 1.5; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 40px 22px 90px; }
+
+  .eyebrow { font-size: 12px; letter-spacing: .12em; text-transform: uppercase;
+             color: var(--faint); font-weight: 600; }
+  h1 { font-family: var(--serif); font-size: clamp(30px, 5vw, 42px); line-height: 1.12;
+       margin: 10px 0 0; font-weight: 600; text-wrap: balance; }
+  .standfirst { font-size: 16.5px; color: var(--muted); max-width: 64ch; margin: 14px 0 0; }
+  .standfirst b { color: var(--ink); }
+
+  .ask { margin: 26px 0 0; padding: 18px 20px; border: 1px solid var(--rule);
+         border-left: 3px solid var(--slate); border-radius: 3px; background: var(--panel); }
+  .ask p { margin: 0; font-size: 15.5px; color: var(--muted); max-width: 70ch; }
+  .ask p + p { margin-top: 9px; }
+  .ask b { color: var(--ink); }
+
+  .checks { display: grid; gap: 1px; background: var(--rule); border: 1px solid var(--rule);
+            border-radius: 3px; margin-top: 26px;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); overflow: hidden; }
+  .check { background: var(--panel); padding: 14px 16px; }
+  .check dt { font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase;
+              color: var(--faint); font-weight: 600; }
+  .check dd { margin: 5px 0 0; font-size: 21px; font-variant-numeric: tabular-nums;
+              font-family: var(--serif); }
+  .check dd small { font-size: 13px; color: var(--muted); font-family: var(--sans); }
+  .check.is-good dd { color: var(--real); }
+  .check.is-watch dd { color: var(--warn); }
+
+  .toolbar { position: sticky; top: 0; z-index: 5; margin-top: 30px; padding: 12px 0;
+             background: var(--paper); border-bottom: 1px solid var(--rule);
+             display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .tally { font-size: 13.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .tally b { color: var(--ink); }
+  button { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 3px;
+           border: 1px solid var(--rule); background: var(--panel); color: var(--muted);
+           cursor: pointer; }
+  button:hover { border-color: var(--faint); color: var(--ink); }
+  button:focus-visible { outline: 2px solid var(--slate); outline-offset: 2px; }
+
+  .day { margin-top: 44px; }
+  .day-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+              padding-bottom: 9px; border-bottom: 1px solid var(--rule); }
+  .day-no { font-family: var(--serif); font-size: 25px; }
+  .day-date { font-size: 13px; color: var(--faint); font-variant-numeric: tabular-nums;
+              letter-spacing: .04em; }
+
+  .pair { margin-top: 26px; padding-top: 22px; border-top: 1px solid var(--rule); }
+  .day .pair:first-of-type { border-top: 0; padding-top: 4px; }
+  .pair-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+               margin-bottom: 14px; }
+  .pair-book { font-family: var(--serif); font-size: 18px; }
+  .pair-author { font-size: 14px; color: var(--muted); }
+  .pair-n { font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums;
+            letter-spacing: .08em; text-transform: uppercase; font-weight: 600; }
+
+  .flag { display: inline-block; font-size: 11.5px; font-weight: 600; letter-spacing: .06em;
+          text-transform: uppercase; color: var(--warn); background: var(--warn-bg);
+          border: 1px solid var(--warn); border-radius: 2px; padding: 2px 7px; }
+  .flag-why { font-size: 13.5px; color: var(--warn); margin: 0 0 14px; max-width: 70ch; }
+
+  .texts { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+  .text { border: 1px solid var(--rule); border-radius: 3px; padding: 18px 20px 14px;
+          background: var(--panel); display: flex; flex-direction: column; gap: 12px; }
+  .text.real { border-left: 3px solid var(--real); background: var(--real-bg); }
+  .text.fake { border-left: 3px solid var(--fake); background: var(--fake-bg); }
+  .text p { font-family: var(--serif); font-size: 17px; line-height: 1.62; margin: 0;
+            color: var(--ink); }
+  .mark { font-size: 11.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+          margin-top: auto; display: flex; gap: 8px; align-items: baseline; }
+  .text.real .mark { color: var(--real); }
+  .text.fake .mark { color: var(--fake); }
+  .mark span { font-weight: 500; letter-spacing: .04em; text-transform: none;
+               color: var(--faint); font-variant-numeric: tabular-nums; }
+
+  .verdict { display: flex; gap: 7px; margin-top: 14px; flex-wrap: wrap; align-items: center; }
+  .verdict-label { font-size: 12px; color: var(--faint); letter-spacing: .06em;
+                   text-transform: uppercase; font-weight: 600; margin-right: 3px; }
+  .verdict button[aria-pressed="true"] { background: var(--slate); border-color: var(--slate);
+                                         color: var(--paper); font-weight: 600; }
+
+  .foot { margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--rule);
+          font-size: 13.5px; color: var(--faint); max-width: 70ch; }
+  @media print { .toolbar, .verdict { display: none; } .day { break-inside: avoid; } }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+"""
+
+
+def render_html(days: list[dict], stats: dict, data_dir: str) -> str:
+    from html import escape as e
+
+    real_pct = round(stats["real_first"] / max(stats["pairs"], 1) * 100)
+    gap_pct = round(stats["widest_length_gap"][0] * 100)
+    checks = [
+        ("Pairs to read", f"{stats['pairs']}", f"across {stats['days']} days", ""),
+        ("Real passage first", f"{real_pct}%",
+         f"{stats['real_first']} of {stats['pairs']}",
+         "is-good" if 40 <= real_pct <= 60 else "is-watch"),
+        ("Mis-decoded text", f"{stats['mojibake']}", "should be zero",
+         "is-good" if not stats["mojibake"] else "is-watch"),
+        ("Widest length gap", f"{gap_pct}%", "limit is 30",
+         "is-good" if gap_pct <= 30 else "is-watch"),
+        ("Flagged fakes", f"{stats['echo_flagged']}", "read these first",
+         "is-watch" if stats["echo_flagged"] else "is-good"),
+        ("Authors", f"{len(stats['authors'])}", "never twice in a day", ""),
+    ]
+    head = "".join(
+        f'<div class="check {cls}"><dt>{e(label)}</dt>'
+        f'<dd>{e(value)} <small>{e(note)}</small></dd></div>'
+        for label, value, note, cls in checks)
+
+    body = []
+    for day in days:
+        body.append(f'<section class="day"><div class="day-head">'
+                    f'<h2 class="day-no">No.&nbsp;{day["n"]}</h2>'
+                    f'<span class="day-date">{e(day["date"])}</span></div>')
+        for p in day["pairs"]:
+            flag = ('<span class="flag">flagged</span>' if p["echo_flagged"] else "")
+            why = ('<p class="flag-why">The fake may be this author\'s own published words '
+                   'from another book. The inverse check only proves it is not in '
+                   '<i>this</i> one — read it before it ships, or a real sentence goes '
+                   'out labelled as machine slop.</p>' if p["echo_flagged"] else "")
+            cards = []
+            for kind in ("real", "fake"):
+                mark = (f'Really {e(p["author"])}' if kind == "real" else "Written by an AI")
+                cards.append(
+                    f'<div class="text {kind}"><p>{e(p[kind])}</p>'
+                    f'<div class="mark">{mark}<span>{p[kind + "_chars"]} chars</span></div></div>')
+            # Shown real-first always, regardless of which side the player sees:
+            # the reviewer is comparing, not guessing, and a consistent column
+            # is faster to read down.
+            key = f'{day["date"]}-{p["i"]}'
+            body.append(
+                f'<article class="pair" data-key="{e(key)}">'
+                f'<div class="pair-head"><span class="pair-n">Pair {p["i"] + 1}</span>'
+                f'<span class="pair-book">{e(p["title"])}</span>'
+                f'<span class="pair-author">{e(p["author"])}</span>{flag}</div>'
+                f'{why}<div class="texts">{"".join(cards)}</div>'
+                f'<div class="verdict"><span class="verdict-label">Verdict</span>'
+                f'<button data-v="ok">Right level</button>'
+                f'<button data-v="obvious">Too obvious</button>'
+                f'<button data-v="better">Fake reads better</button>'
+                f'<button data-v="cut">Cut it</button></div></article>')
+        body.append("</section>")
+
+    return _HTML_HEAD + f"""
+<div class="wrap">
+  <p class="eyebrow">Litheca &middot; not launched</p>
+  <h1>Spot the Slop &mdash; the first bank, before it goes live</h1>
+  <p class="standfirst">
+    {stats['pairs']} pairs over {stats['days']} days. In each one, the passage on
+    the left is really from the book and the one on the right was
+    <b>written by a machine imitating that author</b>. Nothing here is published:
+    the page is on main carrying <code>noindex</code>, off the games hub and off
+    the account dashboard until these have been read.
+  </p>
+
+  <div class="ask">
+    <p><b>One question per pair: is the fake convincing at the right level?</b>
+      Not &ldquo;did it fool me?&rdquo; &mdash; you already know the answer, and that is
+      the wrong test.</p>
+    <p>The target is a 70&ndash;80% success rate. A game people usually lose says
+      AI is indistinguishable from great literature, which is the opposite of
+      what the site argues. A fake that is obvious pastiche is a boring round;
+      a fake that reads <i>better</i> than the original argues the machine won.</p>
+  </div>
+
+  <dl class="checks">{head}</dl>
+
+  <div class="toolbar">
+    <span class="tally" id="tally">No verdicts yet</span>
+    <button id="copy">Copy the rejects</button>
+    <button id="clear">Clear all verdicts</button>
+  </div>
+
+  {''.join(body)}
+
+  <p class="foot">
+    Generated from the shipped puzzle files in <code>{e(data_dir)}</code>, so this
+    is exactly what would be served. Verdicts are kept in this browser only.
+  </p>
+</div>
+<script>
+  var KEY = "sts-review-verdicts";
+  var marks = {{}};
+  try {{ marks = JSON.parse(localStorage.getItem(KEY)) || {{}}; }} catch (e) {{ marks = {{}}; }}
+
+  var pairs = Array.prototype.slice.call(document.querySelectorAll(".pair"));
+
+  function save() {{
+    try {{ localStorage.setItem(KEY, JSON.stringify(marks)); }} catch (e) {{}}
+  }}
+  function paint() {{
+    pairs.forEach(function (el) {{
+      var v = marks[el.dataset.key];
+      el.querySelectorAll(".verdict button").forEach(function (b) {{
+        b.setAttribute("aria-pressed", b.dataset.v === v ? "true" : "false");
+      }});
+    }});
+    var done = Object.keys(marks).length;
+    var bad = Object.keys(marks).filter(function (k) {{ return marks[k] !== "ok"; }}).length;
+    document.getElementById("tally").innerHTML = done
+      ? "<b>" + done + "</b> of " + pairs.length + " judged &middot; <b>" + bad + "</b> to fix"
+      : "No verdicts yet";
+  }}
+  pairs.forEach(function (el) {{
+    el.querySelectorAll(".verdict button").forEach(function (b) {{
+      b.addEventListener("click", function () {{
+        var k = el.dataset.key;
+        if (marks[k] === b.dataset.v) {{ delete marks[k]; }} else {{ marks[k] = b.dataset.v; }}
+        save(); paint();
+      }});
+    }});
+  }});
+  document.getElementById("copy").addEventListener("click", function () {{
+    var lines = pairs.filter(function (el) {{
+      var v = marks[el.dataset.key];
+      return v && v !== "ok";
+    }}).map(function (el) {{
+      var h = el.querySelector(".pair-head");
+      return marks[el.dataset.key].toUpperCase() + "  " + el.dataset.key + "  " +
+             h.querySelector(".pair-book").textContent;
+    }});
+    var text = lines.length ? lines.join("\\n") : "nothing rejected";
+    navigator.clipboard.writeText(text).then(function () {{
+      document.getElementById("copy").textContent = "Copied " + lines.length;
+      setTimeout(function () {{
+        document.getElementById("copy").textContent = "Copy the rejects";
+      }}, 1600);
+    }});
+  }});
+  document.getElementById("clear").addEventListener("click", function () {{
+    marks = {{}}; save(); paint();
+  }});
+  paint();
+</script>
+"""
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--site", default=DEFAULT_SITE)
     ap.add_argument("--data-dir")
     ap.add_argument("--json")
+    ap.add_argument("--html")
     args = ap.parse_args()
 
     data_dir = (os.path.abspath(args.data_dir) if args.data_dir
@@ -111,6 +393,12 @@ def main() -> int:
         print(f"no puzzle files in {data_dir}")
         return 2
     stats = summarise(days)
+
+    if args.html:
+        with open(args.html, "w", encoding="utf-8") as f:
+            f.write(render_html(days, stats, data_dir))
+        print(f"{stats['pairs']} pairs across {stats['days']} days -> {args.html}")
+        return 0
 
     if args.json:
         with open(args.json, "w", encoding="utf-8") as f:
