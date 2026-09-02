@@ -107,7 +107,30 @@ def list_candidates():
         for sub, entry in sorted(candidates.items())
         if sub not in live_subs
     ]
-    return {"ok": True, "candidates": rows, "live_count": len(live)}
+    # EVERY AUTHOR ALREADY APPROVED, so the review card can offer them
+    # instead of asking a reviewer to retype a name from memory.
+    #
+    # WHY THIS FIELD EXISTS AT ALL. The author typed on this card does not
+    # stay a string: `fandom_books.author_key_for` matches it against the
+    # corpus by normalised name and then by SURNAME TOKEN, and when neither
+    # hits, the book ships with `author_name: [whatever was typed]` and no
+    # key — which creates a NEW author identity in the game, named by that
+    # exact spelling. Two spellings of one web novelist therefore become two
+    # authors, which is the duplicate-author problem the Authors tab already
+    # carries a badge for.
+    #
+    # The existing `authorNames` datalist cannot help here: it is built from
+    # authors.json, which is 795 Open Library authors and contains no web
+    # novelists at all — "Cuttlefish That Loves Diving", "Tappei Nagatsuki"
+    # and "Guiltythree" all miss it. The only list that can prevent a variant
+    # spelling in THIS flow is the one built from wikis.json itself.
+    authors = sorted({
+        (entry or {}).get("author", "").strip()
+        for entry in live.values()
+        if isinstance(entry, dict) and (entry.get("author") or "").strip()
+    })
+    return {"ok": True, "candidates": rows, "live_count": len(live),
+            "live_authors": authors}
 
 
 class ApproveRequest(BaseModel):

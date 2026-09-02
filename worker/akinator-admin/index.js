@@ -422,6 +422,15 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
 </section>
 
 <datalist id="authorNames"></datalist>
+<!-- Authors already approved on a Fandom wiki. A SEPARATE list from
+     authorNames because that one is built from authors.json -- 795
+     Open Library authors, none of them web novelists. Only this list
+     can stop a reviewer inventing a second spelling of a name the
+     game already knows, which is how a duplicate author identity is
+     born: fandom_books.author_key_for falls back to matching on the
+     SURNAME TOKEN and, missing that, ships the typed string as a new
+     author. -->
+<datalist id="fandomAuthors"></datalist>
 
 <section id="add">
   <p class="sub" style="margin-bottom:14px">Search first — Fandom, Open Library and Google Books, the same
@@ -3611,6 +3620,7 @@ document.getElementById("cqList").addEventListener("click", async (e)=>{
 // which is rare — polling it on every page load would spend a Render
 // wake-up on an answer that is almost always identical to last time.
 let fdCandidates = [];
+let fdAuthors = [];   // authors already approved on some wiki
 
 function renderFandom(){
   const host = document.getElementById("fdList");
@@ -3635,7 +3645,7 @@ function renderFandom(){
       + '<div class="row">'
       + '<div class="field" style="flex:1"><label>Author (optional \\u2014 leave blank unless you verified it '
       + "on the wiki; a wrong author here poisons every book this resolver enriches for them, not just this "
-      + 'one)</label><input type="text" class="fdAuthor"></div>'
+      + 'one)</label><input type="text" class="fdAuthor" list="fandomAuthors" autocomplete="off"></div>'
       + '<div class="field" style="flex:1"><label>Cover URL (optional)</label>'
       + '<input type="text" class="fdCover"></div>'
       + "</div>"
@@ -3652,6 +3662,17 @@ async function loadFandom(){
   try {
     const r = await post("/api/fandom/candidates", {});
     fdCandidates = r.candidates || [];
+    // The authors already live on a wiki. Offered so a second wiki by
+    // the same novelist reuses the exact spelling already shipped --
+    // a variant creates a whole new author in the game. See
+    // live_authors in fandom_admin.list_candidates for why
+    // authorNames cannot serve here.
+    fdAuthors = r.live_authors || [];
+    var dl = document.getElementById('fandomAuthors');
+    if (dl) {
+      dl.innerHTML = fdAuthors.map(function (n) {
+        return '<option value="' + esc(n) + '"></option>'; }).join('');
+    }
     renderFandom();
     setStatus("fdStatus", fdCandidates.length
       ? fdCandidates.length + " waiting, " + r.live_count + " already live"
@@ -3689,6 +3710,24 @@ document.getElementById("fdList").addEventListener("click", async (e) => {
     const aliases = card.querySelector(".fdAliases").value.split("\\n")
       .map((s) => s.trim()).filter(Boolean);
     const author = card.querySelector(".fdAuthor").value.trim();
+    // A NAME NOBODY HAS APPROVED BEFORE IS A NEW AUTHOR, not a typo to wave
+    // through. fandom_books ships an unmatched name as its own identity, so
+    // a second spelling becomes a second author and splits every question
+    // about them. Case and spacing are ignored; anything else is worth a look.
+    //
+    // Backslashes doubled: this lives inside page()'s template literal, where
+    // a lone one is eaten. The first version emitted /s+/ and an unterminated
+    // string, and check.mjs caught it -- source-level review could not.
+    var fdSame = function (n) {
+      return n.toLowerCase().replace(/\\s+/g, ' ').trim()
+           === author.toLowerCase().replace(/\\s+/g, ' ').trim();
+    };
+    if (author && !fdAuthors.some(fdSame)
+        && !confirm("'" + author + "' is not an author any approved wiki uses."
+              + "\\n\\nIf that is a new novelist, fine. If it is a different "
+              + "spelling of one already in the game, it becomes a SECOND author "
+              + "and splits every question about them."
+              + "\\n\\nApprove with this name?")) return;
     const cover_url = card.querySelector(".fdCover").value.trim();
     if (!aliases.length && !confirm(sub + " has no aliases typed \\u2014 it will only ever match a "
         + "search for the bare subdomain. Approve anyway?")) return;
