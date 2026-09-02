@@ -215,6 +215,33 @@ _HTML_HEAD = """<title>Spot the Slop — review sheet</title>
   .verdict button[aria-pressed="true"] { background: var(--slate); border-color: var(--slate);
                                          color: var(--paper); font-weight: 600; }
 
+  .rated { display: inline-flex; align-items: baseline; gap: 6px; font-size: 11.5px;
+           font-weight: 600; letter-spacing: .04em; padding: 2px 8px; border-radius: 2px;
+           border: 1px solid var(--rule); color: var(--muted); }
+  .rated i { font-style: normal; font-variant-numeric: tabular-nums; color: var(--faint); }
+  .rated.bad { color: var(--fake); border-color: var(--fake); background: var(--fake-bg); }
+  .rated.warn { color: var(--warn); border-color: var(--warn); background: var(--warn-bg); }
+  .rated.good { color: var(--real); border-color: var(--real); background: var(--real-bg); }
+
+  .rating-note { margin: 0 0 14px; padding: 11px 14px; border-radius: 3px;
+                 border: 1px solid var(--rule); background: var(--panel); }
+  .rating-note.bad { border-left: 3px solid var(--fake); }
+  .rating-note.warn { border-left: 3px solid var(--warn); }
+  .rating-note.good { border-left: 3px solid var(--real); }
+  .rating-note p { margin: 0; max-width: 74ch; }
+  .rating-note .ar { font-size: 16px; line-height: 1.75; color: var(--ink); }
+  .rating-note .en { font-size: 13.5px; color: var(--muted); margin-top: 5px; }
+  .rating-note .mean { font-size: 12.5px; color: var(--faint); margin-top: 7px;
+                       font-style: italic; }
+
+  .caveat { margin-top: 18px; padding: 16px 18px; border: 1px solid var(--warn);
+            border-radius: 3px; background: var(--warn-bg); }
+  .caveat p { margin: 0; font-size: 14.5px; color: var(--ink); max-width: 72ch; }
+  .caveat p + p { margin-top: 8px; }
+  .caveat b { color: var(--warn); }
+  body.only-needed .pair[data-needs="0"] { display: none; }
+  body.only-needed .day:not(:has(.pair[data-needs="1"])) { display: none; }
+
   .foot { margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--rule);
           font-size: 13.5px; color: var(--faint); max-width: 70ch; }
   @media print { .toolbar, .verdict { display: none; } .day { break-inside: avoid; } }
@@ -223,8 +250,29 @@ _HTML_HEAD = """<title>Spot the Slop — review sheet</title>
 """
 
 
-def render_html(days: list[dict], stats: dict, data_dir: str) -> str:
+# Verdicts from rate_sts_difficulty.py, with what each means for the reader.
+VERDICTS = {
+    "fake may win": ("المزيف قد يتفوّق", "bad",
+                     "The rater chose the fabricated passage. Read this one — but see "
+                     "the note on dialect: vernacular authors are penalised by a "
+                     "machine reader for the very thing that makes them real."),
+    "too obvious": ("واضح جداً", "warn",
+                    "Picked correctly every time, with high confidence. Probably a "
+                    "boring round."),
+    "hard": ("صعب", "good", "Picked correctly some of the time. This is the level to aim at."),
+    "clear": ("واضح", "", "Picked correctly every time, but not confidently."),
+    "contaminated": ("ملوّث", "warn",
+                     "The rater recognised the real passage from memory, so its score "
+                     "measures recall, not difficulty. Says nothing either way."),
+    "no answer": ("لا جواب", "warn", "The rater returned nothing usable."),
+}
+
+
+def render_html(days: list[dict], stats: dict, data_dir: str,
+                ratings: dict | None = None) -> str:
     from html import escape as e
+
+    ratings = ratings or {}
 
     real_pct = round(stats["real_first"] / max(stats["pairs"], 1) * 100)
     gap_pct = round(stats["widest_length_gap"][0] * 100)
@@ -245,6 +293,32 @@ def render_html(days: list[dict], stats: dict, data_dir: str) -> str:
         f'<div class="check {cls}"><dt>{e(label)}</dt>'
         f'<dd>{e(value)} <small>{e(note)}</small></dd></div>'
         for label, value, note, cls in checks)
+
+    # THE CAVEAT IS NOT BOILERPLATE. It names the one failure this rater is
+    # known to have, measured on the first three pairs it ever saw: it rejected
+    # a real Huckleberry Finn passage as "riddled with grammatical errors" —
+    # which is Twain's vernacular, the very thing that makes it real. A reader
+    # who trusts the badge without this would regenerate good rounds.
+    needed = sum(1 for r in ratings.values()
+                 if VERDICTS.get(r["verdict"], ("", "", ""))[1] in ("bad", "warn"))
+    caveat = filter_btn = ""
+    if ratings:
+        caveat = f"""<div class="caveat">
+    <p><b>The rating is a reading order, not a verdict.</b> A model judged each
+      pair blind and its accuracy is used as a difficulty proxy — nothing here
+      decides whether a pair ships. {needed} of {len(ratings)} pairs are worth
+      your eyes; the rest scored in the range the game is aiming at.</p>
+    <p><b>Its known failure: dialect.</b> It rejected a real Mark Twain passage
+      as &ldquo;riddled with grammatical errors&rdquo; — which is exactly Twain's
+      vernacular voice. Expect &ldquo;fake may win&rdquo; on Twain, and on any author
+      who writes in dialect, to be the machine's mistake rather than a bad pair.</p>
+    <p>Pairs marked <b>contaminated</b> mean the rater recognised the real
+      passage from memory. Every book here is public domain and therefore in its
+      training data, so that score measures recall, not difficulty, and says
+      nothing either way.</p>
+  </div>"""
+        filter_btn = ('<button id="filter" aria-pressed="false">'
+                      f'Show only what needs reading ({needed})</button>')
 
     body = []
     for day in days:
@@ -267,12 +341,35 @@ def render_html(days: list[dict], stats: dict, data_dir: str) -> str:
             # the reviewer is comparing, not guessing, and a consistent column
             # is faster to read down.
             key = f'{day["date"]}-{p["i"]}'
+            # A rating is a READING ORDER, never a verdict. It decides whether a
+            # pair is worth the owner's time, and nothing else — so it renders
+            # as a badge and a sentence, and it never hides a passage.
+            rated = ratings.get(key)
+            badge, rating_note, needs = "", "", "0"
+            if rated:
+                label_ar, tone, meaning = VERDICTS.get(
+                    rated["verdict"], (rated["verdict"], "", ""))
+                score = (f'{rated.get("correct", 0)}/{rated["runs"]}'
+                         if rated.get("runs") else "—")
+                badge = (f'<span class="rated {tone}" dir="auto">{e(label_ar)}'
+                         f'<i>{e(score)}</i></span>')
+                needs = "1" if tone in ("bad", "warn") else "0"
+                ar = rated.get("why_ar") or ""
+                en = rated.get("why") or ""
+                named = ", ".join(rated.get("books_named") or [])
+                rating_note = (
+                    f'<div class="rating-note {tone}">'
+                    f'<p class="ar" dir="rtl" lang="ar">{e(ar)}</p>'
+                    f'<p class="en">{e(en)}</p>'
+                    f'<p class="mean">{e(meaning)}'
+                    + (f' Recognised as: {e(named)}.' if named else "")
+                    + "</p></div>")
             body.append(
-                f'<article class="pair" data-key="{e(key)}">'
+                f'<article class="pair" data-key="{e(key)}" data-needs="{needs}">'
                 f'<div class="pair-head"><span class="pair-n">Pair {p["i"] + 1}</span>'
                 f'<span class="pair-book">{e(p["title"])}</span>'
-                f'<span class="pair-author">{e(p["author"])}</span>{flag}</div>'
-                f'{why}<div class="texts">{"".join(cards)}</div>'
+                f'<span class="pair-author">{e(p["author"])}</span>{flag}{badge}</div>'
+                f'{why}{rating_note}<div class="texts">{"".join(cards)}</div>'
                 f'<div class="verdict"><span class="verdict-label">Verdict</span>'
                 f'<button data-v="ok">Right level</button>'
                 f'<button data-v="obvious">Too obvious</button>'
@@ -280,6 +377,7 @@ def render_html(days: list[dict], stats: dict, data_dir: str) -> str:
                 f'<button data-v="cut">Cut it</button></div></article>')
         body.append("</section>")
 
+    total = stats["pairs"]
     return _HTML_HEAD + f"""
 <div class="wrap">
   <p class="eyebrow">Litheca &middot; not launched</p>
@@ -303,9 +401,11 @@ def render_html(days: list[dict], stats: dict, data_dir: str) -> str:
   </div>
 
   <dl class="checks">{head}</dl>
+  {caveat}
 
   <div class="toolbar">
     <span class="tally" id="tally">No verdicts yet</span>
+    {filter_btn}
     <button id="copy">Copy the rejects</button>
     <button id="clear">Clear all verdicts</button>
   </div>
@@ -369,6 +469,15 @@ def render_html(days: list[dict], stats: dict, data_dir: str) -> str:
   document.getElementById("clear").addEventListener("click", function () {{
     marks = {{}}; save(); paint();
   }});
+
+  var filter = document.getElementById("filter");
+  if (filter) {{
+    filter.addEventListener("click", function () {{
+      var on = document.body.classList.toggle("only-needed");
+      filter.setAttribute("aria-pressed", on ? "true" : "false");
+      filter.textContent = on ? "Show all {total}" : "Show only what needs reading ({needed})";
+    }});
+  }}
   paint();
 </script>
 """
@@ -380,6 +489,10 @@ def main() -> int:
     ap.add_argument("--data-dir")
     ap.add_argument("--json")
     ap.add_argument("--html")
+    # Output of rate_sts_difficulty.py. Optional on purpose: the sheet has to
+    # stand on its own, because a rating is a reading order and never a reason
+    # not to have the sheet.
+    ap.add_argument("--ratings")
     args = ap.parse_args()
 
     data_dir = (os.path.abspath(args.data_dir) if args.data_dir
@@ -394,9 +507,16 @@ def main() -> int:
         return 2
     stats = summarise(days)
 
+    ratings = {}
+    if args.ratings:
+        with open(args.ratings, encoding="utf-8") as f:
+            loaded = json.load(f)
+        ratings = {f'{r["date"]}-{r["i"]}': r for r in loaded.get("pairs", [])}
+        print(f"{len(ratings)} rating(s) from {loaded.get('model', '?')}")
+
     if args.html:
         with open(args.html, "w", encoding="utf-8") as f:
-            f.write(render_html(days, stats, data_dir))
+            f.write(render_html(days, stats, data_dir, ratings))
         print(f"{stats['pairs']} pairs across {stats['days']} days -> {args.html}")
         return 0
 
