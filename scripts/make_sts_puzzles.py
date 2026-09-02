@@ -50,7 +50,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from make_gtb_puzzles import (  # noqa: E402
     DEFAULT_SITE, SCHEMA_VERSION, _has_stray_proper_noun, _looks_like_verse,
     _pace, answer_hash, decode_reveal, encode_reveal, litheca_url,
-    puzzle_number, read_epoch, shuffled_pool,
+    puzzle_number, read_epoch, shuffled_pool, write_manifest,
 )
 
 from google.genai import types as genai_types  # noqa: E402
@@ -69,8 +69,31 @@ OPENING_SKIP = 0.08
 ENDING_SKIP = 0.94
 DATA_SUBPATH = os.path.join("games", "data", "spot-the-slop")
 
+# Text that was decoded with the wrong codec. "â€™" is a UTF-8 curly quote read
+# as a single-byte codepage; U+FFFD is a decode that already gave up. This
+# machine's ANSI codepage is cp1256, and one of the July test days shipped a
+# real Dickens passage reading `â€ کOh! If you please!` because of it.
+#
+# THAT IS NOT A COSMETIC BUG IN THIS GAME. The player is asked which passage a
+# human wrote; the one that renders as broken characters is obviously the
+# damaged one, so a mis-decoded REAL passage hands over the answer for a reason
+# that has nothing to do with prose — and worse, it teaches the player that the
+# machine-written one looks cleaner. Refuse the book instead.
+# Spelled with escapes rather than the characters themselves. Python reads a
+# .py as UTF-8 whatever the console codepage is, so the literal form would in
+# fact work -- but this pattern is unreadable written out (it is three
+# mis-decode lead bytes and a range), and a literal here is the one thing no
+# editor on this machine round-trips reliably.
+_MOJIBAKE = re.compile("[\u00c2\u00c3\u00e2][\u0080-\u2fff]|\ufffd")
+MOJIBAKE_BOOK_LIMIT = 10   # a handful can be genuine; a wrong codec gives hundreds
 
-def pick_real_passage(entry: PoolEntry, chunks: list[str], report: list[str]) -> dict | None:
+
+def mojibake_hits(text: str) -> int:
+    return len(_MOJIBAKE.findall(text))
+
+
+def pick_real_passage(entry: PoolEntry, chunks: list[str], report: list[str],
+                      seen_passages: set[str]) -> dict | None:
     """A passage long enough to have a voice, verified to be in the book.
 
     Longer than a Guess-the-Book clue on purpose: two sentences don't carry
@@ -128,6 +151,19 @@ Return ONLY JSON: [{{"text": "...", "chunk_index": 0}}]"""
             continue
         if _has_stray_proper_noun(text) or _looks_like_verse(text):
             report.append(f"    dropped real (proper noun / verse): {short}…")
+            continue
+        # Belt and braces over the book-level check in build_round: a single
+        # mangled quotation mark inside the passage itself is enough to mark it
+        # as the damaged one on sight.
+        if mojibake_hits(text):
+            report.append(f"    dropped real (MOJIBAKE): {short}…")
+            continue
+        # A book may come round again in a later day; the same passage may not.
+        # Without this, reuse would mean a literally identical pair, since the
+        # chunk sampling is deterministic and the picker runs at low
+        # temperature — it would propose the same lines again.
+        if needle in seen_passages:
+            report.append(f"    dropped real (already used this batch): {short}…")
             continue
         return {"text": text, "chunk": found}
     return None
@@ -219,13 +255,23 @@ Return ONLY JSON: {{"echo": true or false}}"""
     return False
 
 
-def build_round(entry: PoolEntry, site_root: str, report: list[str]) -> dict | None:
+def build_round(entry: PoolEntry, site_root: str, report: list[str],
+                seen_passages: set[str]) -> dict | None:
     raw = fetch_raw(entry.gutenberg_id)
     if not raw:
         report.append("    text unavailable from every mirror")
         return None
-    chunks = _chunk_text(strip_boilerplate(raw))
-    real = pick_real_passage(entry, chunks, report)
+    body = strip_boilerplate(raw)
+    # Checked before a single Gemini call is spent on it: a mis-decoded book
+    # cannot yield a usable pair, and its prose is also the SAMPLE the fake is
+    # written against, so the damage would spread to both halves of the round.
+    hits = mojibake_hits(body)
+    if hits >= MOJIBAKE_BOOK_LIMIT:
+        report.append(f"    text is mis-decoded ({hits} mojibake sequences) — book skipped. "
+                      f"Delete scratch/gtb_text_cache/pg{entry.gutenberg_id}.txt and refetch.")
+        return None
+    chunks = _chunk_text(body)
+    real = pick_real_passage(entry, chunks, report, seen_passages)
     if not real:
         report.append("    no verified real passage — book skipped")
         return None
@@ -246,24 +292,61 @@ def build_round(entry: PoolEntry, site_root: str, report: list[str]) -> dict | N
     }
 
 
+def day_order(pool: list[PoolEntry], last_used: dict[str, int],
+              todays_authors: list[str]) -> list[PoolEntry]:
+    """Preference order for one day: longest-unused first, and never an author
+    already used today.
+
+    WHY REUSE AT ALL — the sibling game retires a book for 180 days, and this
+    one cannot afford that arithmetic. Guess the Book spends ONE book a day, so
+    a 69-book pool is a 69-day cycle. This game spends five, which is a 13-day
+    cycle at best and about six once the verifier has refused its usual two
+    thirds. The first real batch asked for 14 days and ran the pool dry on day
+    five.
+
+    A book returning with a DIFFERENT passage is a different puzzle — that is
+    the sibling generator's own stated reason for a cooldown rather than a ban,
+    and `seen_passages` in build_day is what makes it true here rather than
+    merely hoped for. What is never reused is a passage, and never within one
+    day is an author: two Jack London pairs in the same five is a duller day
+    than the pool has any need to serve.
+    """
+    fresh = [e for e in pool if e.author not in todays_authors]
+    return sorted(fresh, key=lambda e: last_used.get(e.canonical_id, -10_000))
+
+
 def build_day(day: dt.date, puzzle_no: int, pool: list[PoolEntry], site_root: str,
-              report: list[str]) -> dict | None:
+              report: list[str], seen_passages: set[str], last_used: dict[str, int],
+              day_index: int) -> dict | None:
     date = day.isoformat()
-    rounds, used = [], []
-    for entry in list(pool):
-        if len(rounds) >= ROUNDS_PER_DAY:
+    rounds: list[dict] = []
+    todays_authors: list[str] = []
+    tried: set[str] = set()
+
+    while len(rounds) < ROUNDS_PER_DAY:
+        candidates = [e for e in day_order(pool, last_used, todays_authors)
+                      if e.canonical_id not in tried]
+        if not candidates:
             break
+        entry = candidates[0]
+        tried.add(entry.canonical_id)
         report.append(f"  · {entry.title} — {entry.author}")
-        r = build_round(entry, site_root, report)
-        pool.remove(entry)
+        r = build_round(entry, site_root, report, seen_passages)
         if r:
             rounds.append(r)
-            used.append(entry)
+            todays_authors.append(entry.author)
 
     if len(rounds) < ROUNDS_PER_DAY:
         report.append(f"    FAILED: only {len(rounds)}/{ROUNDS_PER_DAY} rounds")
-        pool.extend(used)
         return None
+
+    # Recorded only for a day that is actually written. A day that failed
+    # halfway must not push the books it happened to reach to the back of the
+    # queue — the next day would then start from the least promising end of the
+    # pool for no reason anyone could reconstruct later.
+    for r in rounds:
+        last_used[r["id"]] = day_index
+        seen_passages.add(_normalize_for_match(r["real"]))
 
     # Which side is real is decided per round and never written in the clear.
     served, reveal = [], []
@@ -287,11 +370,53 @@ def build_day(day: dt.date, puzzle_no: int, pool: list[PoolEntry], site_root: st
     }
 
 
+def absorb_existing(path: str, pool: list[PoolEntry], seen_passages: set[str],
+                    last_used: dict[str, int], day_index: int) -> int:
+    """Read a day that is already on disk into the batch's memory.
+
+    A bank is extended, not built once — `--from X --count 30` run a month later
+    walks over every day it already has. Without this, those days are skipped
+    silently and the run starts with an empty `seen_passages`, so day 31 is free
+    to reprint a passage from day 3 and free to lean on the books that have just
+    been used most. The skip is cheap; forgetting is not.
+
+    Failing quietly is right here: a file that cannot be read is a file this run
+    is not writing either, and refusing to build a whole bank because one old
+    day is malformed would be the wrong trade.
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            puzzle = json.load(f)
+        reveal = decode_reveal(puzzle["reveal_enc"], puzzle["date"])
+    except Exception:
+        return 0
+
+    # The reveal payload carries the title but not the canonical id, so the
+    # book is found by title. A miss costs only the rotation hint, never a
+    # duplicate passage — that check is on the passage itself.
+    by_title = {e.title: e.canonical_id for e in pool}
+    remembered = 0
+    for rnd, ans in zip(puzzle.get("rounds", []), reveal):
+        passages = rnd.get("passages") or []
+        idx = ans.get("real_index")
+        if isinstance(idx, int) and 0 <= idx < len(passages):
+            seen_passages.add(_normalize_for_match(passages[idx]))
+            remembered += 1
+        cid = by_title.get(ans.get("title"))
+        if cid:
+            last_used[cid] = day_index
+    return remembered
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--from", dest="start", required=True)
     ap.add_argument("--count", type=int, default=1)
     ap.add_argument("--out", default=DEFAULT_SITE)
+    # Writes somewhere other than the site's own bank. The recording desk uses
+    # it for a showcase day: a real puzzle on a date nobody's calendar will ever
+    # reach, so a video can reveal all five pairs without spoiling a live one.
+    ap.add_argument("--data-dir")
     ap.add_argument("--epoch")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--overwrite", action="store_true")
@@ -301,7 +426,8 @@ def main() -> int:
         print("GEMINI_API_KEY missing — aborting.")
         return 2
     site_root = os.path.abspath(args.out)
-    data_dir = os.path.join(site_root, DATA_SUBPATH)
+    data_dir = (os.path.abspath(args.data_dir) if args.data_dir
+                else os.path.join(site_root, DATA_SUBPATH))
     if not args.dry_run:
         os.makedirs(data_dir, exist_ok=True)
 
@@ -310,19 +436,27 @@ def main() -> int:
              else read_epoch(data_dir) or start)
     pool = shuffled_pool(list(GTB_POOL), start, [])
 
-    print(f"Building {args.count} day(s) x {ROUNDS_PER_DAY} pairs into {data_dir}"
-          f"{' (DRY RUN)' if args.dry_run else ''}\n")
+    # Carried across the whole batch, not per day: a book may return with a new
+    # passage, a passage may not return at all. See day_order() for the pool
+    # arithmetic that forces reuse in the first place.
+    seen_passages: set[str] = set()
+    last_used: dict[str, int] = {}
+
+    print(f"Building {args.count} day(s) x {ROUNDS_PER_DAY} pairs from a pool of "
+          f"{len(pool)} into {data_dir}{' (DRY RUN)' if args.dry_run else ''}\n")
 
     made = failed = 0
     for i in range(args.count):
         day = start + dt.timedelta(days=i)
         path = os.path.join(data_dir, f"{day.isoformat()}.json")
         if os.path.exists(path) and not args.overwrite:
-            print(f"{day}  SKIP — exists")
+            n = absorb_existing(path, pool, seen_passages, last_used, i)
+            print(f"{day}  SKIP — exists ({n} passages remembered)")
             continue
         report: list[str] = []
         print(f"{day}  #{puzzle_number(day, epoch)}")
-        puzzle = build_day(day, puzzle_number(day, epoch), pool, site_root, report)
+        puzzle = build_day(day, puzzle_number(day, epoch), pool, site_root, report,
+                           seen_passages, last_used, i)
         for line in report:
             print(line)
         if not puzzle:
@@ -342,6 +476,17 @@ def main() -> int:
                 warn = "  ⚠ MAY ECHO THE AUTHOR" if (mark == "FAKE" and ans.get("echo_flagged")) else ""
                 print(f"    │    [{mark}] {p[:150]}{warn}")
         print("    └─────────────────────────────────────────────────────\n")
+
+    # PIN THE EPOCH, exactly as the sibling game does. Without a manifest,
+    # `read_epoch() or start` falls back to whichever date this batch happens to
+    # begin on, so every batch restarts the numbering at #1 — two puzzles
+    # numbered #3, and two share cards claiming to be the same one. The sibling
+    # generator learned this and left the comment on puzzle_number(); this
+    # script imported the function and not the discipline.
+    if made:
+        manifest = write_manifest(data_dir, epoch, args.dry_run)
+        print(f"manifest: epoch {manifest['epoch']} — "
+              f"{manifest['count']} day(s), {manifest['first_date']} to {manifest['latest_date']}")
 
     print(f"{made} day(s) written, {failed} refused.")
     print("\nJudge every pair on ONE question: is the fake convincing at the RIGHT")
