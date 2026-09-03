@@ -510,7 +510,7 @@ def _wikidata_series_label(title: str) -> Optional[str]:
     for a BOOK, and nothing in the title has to resemble the wiki. See
     _wiki_names_the_series for what this is used to decide.
     """
-    cache_key = ("wd_series_v1", title.lower())
+    cache_key = ("wd_series_v2", title.lower())
     cached = cache.get(*cache_key)
     if cached is not None:
         return cached.get("series")
@@ -629,8 +629,16 @@ def _wiki_matches_book(subdomain: str, title: str) -> bool:
     a stored "no" would outlive the reason it was recorded. v4 orphans v3's
     in the other direction: requiring every significant title word turns
     some stored "yes" verdicts into no.
+
+    v5 is not a logic change — it clears entries, because two titles went
+    dead in production right after v4 shipped and a stored verdict is one
+    of only two things that could hold a single title down while every
+    other title on the same wiki resolves. If they come back, this was a
+    poisoned cache; if they do not, the main page Render fetches differs
+    from the one this was measured against, and the word test — not the
+    cache — is what needs to change.
     """
-    cache_key = ("fandom_relevance_v4", subdomain, title.lower())
+    cache_key = ("fandom_relevance_v5", subdomain, title.lower())
     cached = cache.get(*cache_key)
     if cached is not None:
         return bool(cached.get("match"))
