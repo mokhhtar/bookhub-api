@@ -239,17 +239,25 @@ def _get_fandom_from_brave(title: str) -> list[str]:
         if m and m.group(1) not in _GENERIC_BOOK_WIKIS and m.group(1) not in subs:
             subs.append(m.group(1))
 
-    # An empty result is barely evidence and is cached for an hour, not for
-    # days. A 200 from a search API can still be a degraded 200 — zero
-    # results for a book that plainly has a wiki — and the 3-day negative
-    # this used to write turned one such response into a book that stayed
-    # missing. It happened immediately, to "The Eye of the World", from a
-    # deploy-polling loop hitting the same title ~22 times: the wiki
-    # resolved fine before and after, and nothing but this entry stood
-    # between them. An hour still spends only one call on a /summary, which
-    # resolves the same title twice seconds apart — that was the entire
-    # reason to cache here. v2 orphans what v1 froze.
-    cache.set(subs, *cache_key, ttl=None if subs else 3600)
+    # An empty result is barely evidence: a 200 from a search API can still
+    # be a degraded 200 — zero results for a book that plainly has a wiki —
+    # and caching one locks that title out for the whole TTL while every
+    # other title on the same wiki keeps working.
+    #
+    # This has now bitten twice, and the second time is what set the number.
+    # It was 3 days, which stranded "The Eye of the World" after a
+    # deploy-polling loop hit it ~22 times; an hour looked cautious enough,
+    # and then "The Way of Kings" and "The Eye of the World" both went dead
+    # live for 12+ minutes while Oathbringer, Rhythm of War, The Dragon
+    # Reborn and The Shadow Rising — never queried, same two wikis —
+    # resolved on the first try. Nothing was wrong except these entries.
+    #
+    # The cache only ever needed to cover ONE request: /summary resolves a
+    # title twice, concurrently, because chapters and characters each run
+    # the cascade. That is seconds, not an hour. Three minutes keeps the
+    # quota saving and cuts the blast radius of a bad response by 20x.
+    # Successful lookups are unaffected and keep the default 30 days.
+    cache.set(subs, *cache_key, ttl=None if subs else 180)
     return subs
 
 
