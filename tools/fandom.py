@@ -128,8 +128,126 @@ def _search_wikidata_qid_by_title(title: str) -> Optional[str]:
         log.warning(f"Wikidata QID search by title failed: {e}")
     return None
 
+# Wikis that aggregate MANY unrelated books instead of covering one work.
+# A search engine ranks these highly for almost any title — they mention
+# every book — and they are the exact shape of the failure already
+# documented in _wiki_matches_book: genuinely book-ish, genuinely not about
+# the requested book. That check would usually reject them anyway, but
+# dropping them here saves a wasted main-page fetch per candidate and closes
+# the case where such a wiki's index page does happen to name the title.
+#
+# THIS LIST IS A PATCH, NOT THE REAL FIX. The real guard is
+# _wiki_matches_book, and "Sapiens: A Brief History of Humankind" gets past
+# it today: _title_mentioned_in_text needs 2 significant title words on the
+# wiki's main page, and great-books.fandom.com's main page supplies "brief"
+# and "history" as generic section headings while the words that actually
+# identify the book — "sapiens", "humankind" — appear zero times. Any title
+# built from common words ("A Brief History of Time", "The History of Love")
+# has the same hole. Fixing it means weighting distinctive words rather than
+# counting any two, which is a change to the shared relevance check and is
+# deliberately not bundled into the commit that adds a search tier.
+_GENERIC_BOOK_WIKIS = {
+    "books", "book", "bookclub", "great-books", "literature", "novels",
+    "fiction", "tropedia", "allthetropes", "speculativefiction",
+    "printmedia", "www", "community", "dev", "c", "support",
+}
+
+BRAVE_ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
+
+
+def _get_fandom_from_brave(title: str) -> list[str]:
+    """Candidate subdomains from Brave Search's `site:fandom.com`, best first.
+
+    THE TIER THAT ACTUALLY GENERALIZES. Measured 2026-09-03, the two tiers
+    that were supposed to fill this role were both dead, and between them
+    they took the whole resolver down with them:
+
+      - Google CSE has no key and never can have one. Google closed Custom
+        Search to new customers in January 2026 (the same wall
+        scripts/akinator/discover_fandom.py hit and documented), so that
+        tier is permanently a no-op, not a misconfiguration to go fix.
+      - DuckDuckGo now answers the HTML endpoint with HTTP 202 and an
+        anomaly/challenge page. The old code only looked for 200, so it
+        returned None with no log line at all — the failure was invisible.
+
+    What survived was Wikidata P6262 (essentially never set on book
+    entities: 0 of 6 real books in the check that found this) and a
+    normalized-title ping that only fires when a wiki is literally named
+    "thenameofthewind". So books with real, healthy, on-topic wikis simply
+    resolved to None — kingkiller, wot, stormlightarchive, thegrishaverse
+    and enderverse all verified present and all previously unreachable.
+    Brave returned the correct wiki as the FIRST result for every one.
+
+    Same key and free tier (2,000 req/month) discover_fandom.py already
+    uses. Absent key returns [] — this source stays optional, exactly as it
+    is there.
+
+    NOT QUOTED AS AN EXACT PHRASE, for the reason discover_fandom.py's
+    try_brave records at length: a wiki may spell the work differently from
+    the catalog ("Forty MILLENNIUMS of Cultivation") and an exact-phrase
+    query then finds nothing at all. Loosening is safe here for the same
+    reason it is safe there — this only PROPOSES candidates, and every one
+    still has to pass _wiki_matches_book before it is trusted.
+
+    Returns a LIST, unlike the single-shot tiers it replaces: Brave's top
+    hit for a title can be a generic aggregator wiki while the real one
+    sits second, so the caller walks the list through the relevance check
+    rather than betting everything on rank 1.
+    """
+    key = os.environ.get("BRAVE_SEARCH_API_KEY")
+    if not key:
+        return []
+
+    # Cached because /summary resolves the same title twice (get_chapters and
+    # get_characters each run the cascade), which would otherwise spend two
+    # calls of a 2,000/month budget on one page view.
+    cache_key = ("fandom_brave_v1", title.lower())
+    cached = cache.get(*cache_key)
+    if cached is not None:
+        return cached
+
+    q = urllib.parse.urlencode({"q": f"{title} site:fandom.com", "count": 6})
+    payload = None
+    for attempt in range(2):
+        try:
+            r = httpx.get(f"{BRAVE_ENDPOINT}?{q}", timeout=6.0, headers={
+                "Accept": "application/json", "X-Subscription-Token": key})
+            if r.status_code == 429:      # free tier is 1 req/s
+                time.sleep(1.2)
+                continue
+            if r.status_code != 200:
+                log.warning(f"Brave search for '{title}' returned HTTP {r.status_code}")
+                return []                 # NOT cached — a bad key or an
+                                          # exhausted quota must not freeze
+                                          # this title as "no wiki exists".
+            payload = r.json()
+            break
+        except Exception as e:                                   # noqa: BLE001
+            log.warning(f"Brave search failed for '{title}': {e}")
+    if payload is None:
+        return []
+
+    subs: list[str] = []
+    for res in ((payload.get("web") or {}).get("results") or []):
+        host = urllib.parse.urlparse(res.get("url", "")).hostname or ""
+        m = re.match(r"^([a-z0-9_-]+)\.fandom\.com$", host.lower())
+        if m and m.group(1) not in _GENERIC_BOOK_WIKIS and m.group(1) not in subs:
+            subs.append(m.group(1))
+
+    # Negative results get a short TTL: a wiki that does not exist today may
+    # be created next month, and the default 30 days would outlive that.
+    cache.set(subs, *cache_key, ttl=None if subs else 86400 * 3)
+    return subs
+
+
 def _get_fandom_from_google_cse(title: str, api_key: str, cx_id: str) -> Optional[str]:
-    """Query Google Custom Search API to resolve fandom subdomain (site:fandom.com)."""
+    """Query Google Custom Search API to resolve fandom subdomain (site:fandom.com).
+
+    DEAD TIER, kept only because it costs nothing when unconfigured: Google
+    closed Custom Search to new customers in January 2026, so the key this
+    guards on can no longer be obtained. See _get_fandom_from_brave, which
+    is the working replacement.
+    """
     url = "https://www.googleapis.com/customsearch/v1"
     query = f'site:fandom.com "{title}"'
     params = {
@@ -152,7 +270,15 @@ def _get_fandom_from_google_cse(title: str, api_key: str, cx_id: str) -> Optiona
     return None
 
 def _get_fandom_from_ddg(title: str) -> Optional[str]:
-    """Fallback search using DuckDuckGo HTML page parsing."""
+    """Fallback search using DuckDuckGo HTML page parsing.
+
+    LAST RESORT, AND CURRENTLY BLOCKED. As of 2026-09-03 this endpoint
+    answers with HTTP 202 and an anomaly/challenge page rather than results.
+    It is kept (it may unblock, and it runs only after Brave has already
+    failed) but the non-200 branch now LOGS. It used to fall straight
+    through to `return None`, which is how a whole tier stayed dead without
+    leaving a single line of evidence anywhere.
+    """
     url = "https://html.duckduckgo.com/html/"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
@@ -162,11 +288,14 @@ def _get_fandom_from_ddg(title: str) -> Optional[str]:
     }
     try:
         r = httpx.post(url, data=data, headers=headers, timeout=5.0)
-        if r.status_code == 200:
-            urls = re.findall(r'href="https://([^.]+)\.fandom\.com/wiki/', r.text)
-            for sub in urls:
-                if sub not in ("www", "community", "dev", "c", "support"):
-                    return sub
+        if r.status_code != 200:
+            log.warning(f"DuckDuckGo search for '{title}' returned HTTP {r.status_code} "
+                        f"(blocked/challenged, not a result page)")
+            return None
+        urls = re.findall(r'href="https://([^.]+)\.fandom\.com/wiki/', r.text)
+        for sub in urls:
+            if sub not in _GENERIC_BOOK_WIKIS:
+                return sub
     except Exception as e:
         log.warning(f"DuckDuckGo search failed: {e}")
     return None
@@ -342,12 +471,16 @@ def _wiki_matches_book(subdomain: str, title: str) -> bool:
 
 def _resolve_fandom_subdomain_single(title: str, wikidata_id: Optional[str] = None) -> Optional[str]:
     """
-    Highly robust 5-tier subdomain resolver cascade for a single title string.
-    ALL five tiers must pass _wiki_matches_book (genre + this-title relevance)
+    Highly robust 6-tier subdomain resolver cascade for a single title string.
+    ALL tiers must pass _wiki_matches_book (genre + this-title relevance)
     before being trusted — Wikidata-derived tiers 1-2 used to be exempted as
     "trusted as-is," but Wikidata's own title search is itself fuzzy and can
     hand back a wrong entity, so a tier failing the check now falls through
     to the next tier instead of returning immediately.
+
+    Tier 3 (Brave) is the one that carries general titles; tiers 4 and 5 are
+    kept but are both known-dead as of 2026-09-03 — see their own docstrings
+    for why neither is a configuration problem to go fix.
     """
     # Tier 1: QID provided
     if wikidata_id:
@@ -362,7 +495,14 @@ def _resolve_fandom_subdomain_single(title: str, wikidata_id: Optional[str] = No
         if sub and _wiki_matches_book(sub, title):
             return sub
 
-    # Tier 3: Google Custom Search
+    # Tier 3: Brave Search — several ranked candidates, each checked in turn
+    # rather than only the top hit (a generic aggregator can outrank the
+    # work's own wiki).
+    for sub in _get_fandom_from_brave(title):
+        if _wiki_matches_book(sub, title):
+            return sub
+
+    # Tier 4: Google Custom Search (no key obtainable since Jan 2026)
     api_key = os.environ.get("GOOGLE_CUSTOM_SEARCH_API_KEY")
     cx_id = os.environ.get("GOOGLE_SEARCH_CX_ID")
     if api_key and cx_id:
@@ -370,12 +510,12 @@ def _resolve_fandom_subdomain_single(title: str, wikidata_id: Optional[str] = No
         if sub and _wiki_matches_book(sub, title):
             return sub
 
-    # Tier 4: DuckDuckGo HTML Search
+    # Tier 5: DuckDuckGo HTML Search (currently challenge-walled)
     sub = _get_fandom_from_ddg(title)
     if sub and _wiki_matches_book(sub, title):
         return sub
 
-    # Tier 5: Title Normalization Ping
+    # Tier 6: Title Normalization Ping
     normalized = "".join(c.lower() for c in title if c.isalnum())
     if normalized and _ping_fandom_subdomain(normalized) and _wiki_matches_book(normalized, title):
         return normalized
