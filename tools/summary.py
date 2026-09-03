@@ -1868,6 +1868,14 @@ def author_works(name: str, exclude: str = "", exclude_key: str = ""):
 #       _wiki_matches_book stopped writing 30-day negatives against wikis
 #       that had merely answered an error status. Six titles verified
 #       reachable that were not before.
+#   3 → 2026-09-03, later the same day. _wiki_matches_book will now accept a
+#       wiki that is NAMED AFTER THE SERIES the book belongs to (Wikidata
+#       P179), not only one whose main page happens to name the book itself.
+#       A series wiki advertises the series and has no reason to list each
+#       volume, which had been rejecting stormlightarchive for "The Way of
+#       Kings" on a perfectly good fetch. Books already marked gen 2 with
+#       empty fields — that one included — need the second re-probe this
+#       bump buys them.
 #
 # WHY A MARKER RATHER THAN A CACHE-VERSION BUMP: summary_v13 → _v14 would
 # orphan every cached summary and re-run Gemini across the whole catalog to
@@ -1879,7 +1887,7 @@ def author_works(name: str, exclude: str = "", exclude_key: str = ""):
 # book. That cost is precisely why the existing heal was gated on the KEY
 # being absent — which in turn is why it could never repair anything except
 # responses predating the field.
-_FANDOM_RESOLVER_GEN = 2
+_FANDOM_RESOLVER_GEN = 3
 
 
 def _resolve_chapters(record: book_data.BookRecord) -> list:

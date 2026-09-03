@@ -413,6 +413,88 @@ def _title_mentioned_in_text(title: str, text: str, min_hits: int = 2) -> bool:
     return hits >= min(min_hits, len(words))
 
 
+def _wikidata_series_label(title: str) -> Optional[str]:
+    """The name of the series this book belongs to (Wikidata P179), or None.
+
+    Exists because a series wiki is named after the SERIES and a reader asks
+    for a BOOK, and nothing in the title has to resemble the wiki. See
+    _wiki_names_the_series for what this is used to decide.
+    """
+    cache_key = ("wd_series_v1", title.lower())
+    cached = cache.get(*cache_key)
+    if cached is not None:
+        return cached.get("series")
+
+    label = None
+    try:
+        qid = _search_wikidata_qid_by_title(title)
+        if qid:
+            headers = {"User-Agent": "BookHub/1.0 (mokhhtar@github.com)"}
+            r = httpx.get(f"https://www.wikidata.org/wiki/Special:EntityData/{qid}.json",
+                          headers=headers, timeout=6.0)
+            if r.status_code == 200:
+                claims = (r.json().get("entities", {}).get(qid, {})
+                          .get("claims", {}).get("P179", []))
+                if claims:
+                    sid = (claims[0].get("mainsnak", {}).get("datavalue", {})
+                           .get("value", {}).get("id"))
+                    if sid:
+                        r2 = httpx.get(
+                            f"https://www.wikidata.org/wiki/Special:EntityData/{sid}.json",
+                            headers=headers, timeout=6.0)
+                        if r2.status_code == 200:
+                            label = ((r2.json().get("entities", {}).get(sid, {})
+                                      .get("labels", {}).get("en", {}) or {}).get("value"))
+    except Exception as e:                                           # noqa: BLE001
+        log.warning(f"Wikidata series lookup failed for '{title}': {e}")
+        return None      # transient: do not cache, and do not claim "no series"
+
+    # A book genuinely outside any series is the common case and is stable,
+    # so the miss is worth caching — just not for the full 30 days, since a
+    # sparse Wikidata entity does get filled in.
+    cache.set({"series": label}, *cache_key, ttl=None if label else 86400 * 7)
+    return label
+
+
+def _wiki_names_the_series(subdomain: str, sitename: str, title: str) -> bool:
+    """Is this wiki named after the series the requested book belongs to?
+
+    THE SECOND WAY A WIKI CAN PROVE IT IS THE RIGHT ONE, and the answer to a
+    false negative that the main-page test cannot fix by tuning. A series
+    wiki's front page advertises the SERIES; it has no reason to name each
+    individual volume. stormlightarchive.fandom.com is unmistakably the
+    right wiki for "The Way of Kings" — 1,726 articles, all Stormlight — and
+    its main page never once says "Way" or "Kings", so requiring the title
+    there rejected it every time on a perfectly good fetch.
+
+    Wikidata P179 gives the book's series ("The Stormlight Archive"), and
+    the wiki's own sitename is "Stormlight Archive Wiki". Measured across 10
+    pairs, this accepted four right wikis the title test missed
+    (stormlightarchive, kingkiller, wot, mistborn) and fired on none of the
+    three aggregators (great-books, books, memory-beta) — it is purely
+    additive, which is the only reason it is safe to OR with the existing
+    test rather than replace it.
+
+    Matched against the SITENAME ONLY, not the main page text. Naming
+    yourself after the series is a claim about what the whole wiki is;
+    mentioning a series somewhere on a page is not, and a general book wiki
+    mentions a great many series.
+    """
+    series = _wikidata_series_label(title)
+    if not series:
+        return False
+    words = [w for w in re.findall(r"[a-zA-Z0-9']+", series.lower())
+             if len(w) >= 3 and w not in _TITLE_STOPWORDS]
+    if not words:
+        return False
+    name_low = sitename.lower()
+    if all(re.search(rf"\b{re.escape(w)}\b", name_low) for w in words):
+        log.info(f"Accepted '{subdomain}' for '{title}' — wiki is named after "
+                 f"its series '{series}'.")
+        return True
+    return False
+
+
 def _wiki_matches_book(subdomain: str, title: str) -> bool:
     """
     Validates that a Fandom wiki is actually about a book/novel/manga —
@@ -452,9 +534,11 @@ def _wiki_matches_book(subdomain: str, title: str) -> bool:
     words — resolved to it fine.
 
     A verdict is now only cached when the main page text actually arrived.
-    v2 orphans the negatives v1 already poisoned.
+    v2 orphans the negatives v1 already poisoned. v3 orphans v2's, because
+    _wiki_names_the_series turns some of those negatives into positives and
+    a stored "no" would outlive the reason it was recorded.
     """
-    cache_key = ("fandom_relevance_v2", subdomain, title.lower())
+    cache_key = ("fandom_relevance_v3", subdomain, title.lower())
     cached = cache.get(*cache_key)
     if cached is not None:
         return bool(cached.get("match"))
@@ -489,11 +573,18 @@ def _wiki_matches_book(subdomain: str, title: str) -> bool:
 
         bookish = bool(_BOOKISH_RE.search(text))
         relevant = bookish and _title_mentioned_in_text(title, text)
+        # Only ask Wikidata when the cheap test has already failed. A wiki
+        # whose main page names the book needs no second opinion, so the
+        # common path costs nothing and the two extra lookups fall only on
+        # the cases that were about to be rejected anyway.
+        if bookish and not relevant:
+            relevant = _wiki_names_the_series(subdomain, sitename, title)
         cache.set({"match": relevant}, *cache_key)
         if not bookish:
             log.info(f"Rejected fuzzy Fandom match '{subdomain}' for '{title}' — main page has no book signals.")
         elif not relevant:
-            log.info(f"Rejected fuzzy Fandom match '{subdomain}' for '{title}' — main page doesn't mention this title.")
+            log.info(f"Rejected fuzzy Fandom match '{subdomain}' for '{title}' — main page doesn't "
+                     f"mention this title and the wiki is not named after its series.")
         return relevant
     except Exception as e:
         log.warning(f"Relevance check failed for '{subdomain}'/'{title}' (fail-open): {e}")
