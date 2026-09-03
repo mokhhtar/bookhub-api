@@ -672,22 +672,7 @@ def _wiki_matches_book(subdomain: str, title: str) -> bool:
         text = f"{sitename} {body}"
 
         bookish = bool(_BOOKISH_RE.search(text))
-        # DELIBERATELY NOT require_all=True. That was tried, verified against
-        # 28 wiki/title pairs locally, and reverted after it took "The Way of
-        # Kings" and "The Eye of the World" off the live site — both had
-        # worked the commit before, and both stayed dead through a relevance
-        # cache bump and a series-label cache bump, which rules out a stored
-        # verdict and leaves the rule itself. Every title that survived was
-        # one _wiki_names_the_series accepts; every title that broke depended
-        # on this test. The main page Render reads is evidently not the one
-        # measured here, and the local measurement cannot see the difference
-        # — the same lesson CLAUDE.md already records about Gutendex.
-        #
-        # So the common-word hole this was meant to close stays open (see
-        # _title_mentioned_in_text's require_all docs for what it catches and
-        # _GENERIC_BOOK_WIKIS for what currently stands in its place), and
-        # reopening it needs evidence from the deployment, not from here.
-        relevant = bookish and _title_mentioned_in_text(title, text)
+        relevant = bookish and _title_mentioned_in_text(title, text, require_all=True)
         # Only ask Wikidata when the cheap test has already failed. A wiki
         # whose main page names the book needs no second opinion, so the
         # common path costs nothing and the two extra lookups fall only on
