@@ -3870,6 +3870,26 @@ async function loadDrainAlert(){
   // something strange last night, the only way to find out without this is to
   // read the bookhub commit log by hand.
   loadDrainAlert();
+
+  // A DRAFT MUST NOT LEAVE WITHOUT ASKING. Close and switch-book already
+  // confirm through edDirtyCount(); leaving the PAGE did not, so a tab close,
+  // a refresh or any outbound link discarded a filled draft in silence.
+  //
+  // That is not hypothetical. An answer sheet was pasted for A Game of
+  // Thrones, "Fill from sheet" reported 40 answers filled, and nothing was
+  // ever written -- overrides.json holds no commit for that book on any day
+  // before the one it was finally redone by hand, 41 cells at a time. The
+  // sheet had gone into edDraft and the page was left before Save.
+  //
+  // Browsers ignore the message and show their own wording, so the only job
+  // here is returning a value at all. preventDefault() is the modern spelling
+  // and returnValue the one Safari still wants.
+  window.addEventListener("beforeunload", function (e) {
+    if (!edDirtyCount()) return;
+    e.preventDefault();
+    e.returnValue = "";
+    return "";
+  });
 })();
 </script>
 </body></html>`;
