@@ -564,6 +564,26 @@ FANDOM_SERIES_DETAILS: dict = {}
 _fandom_cache_at = 0.0
 
 
+def _norm_alias(s: str) -> str:
+    """Lowercase, collapse whitespace — the one normalization both sides of
+    the static-map comparison must agree on.
+
+    They did not agree. wikis.json stores aliases in display case ("Against
+    the Gods", "Coiling Dragon", "The Greatest Estate Developer") because a
+    human types them into the review card, while the lookup lowercased the
+    incoming title and then tested it against those raw strings. Every
+    capitalized alias was therefore unreachable — measured 2026-09-03, 6 of
+    25 entries had dead aliases.
+
+    The cost was invisible rather than fatal: a miss here just falls through
+    to the resolver cascade, so the book usually still resolved, only after
+    an 8-35s round trip through Wikidata and a search engine instead of the
+    dict lookup that exists precisely to avoid that. "Fast and 100%
+    reliable" was doing neither.
+    """
+    return re.sub(r"\s+", " ", (s or "").lower()).strip()
+
+
 def _refresh_fandom_wikis() -> dict:
     """Reload FANDOM_WIKIS (and its two derived maps) if the cache is stale.
 
@@ -593,11 +613,14 @@ def _refresh_fandom_wikis() -> dict:
     FANDOM_WIKIS.clear()
     FANDOM_WIKIS.update(data)
 
+    # Keys AND aliases are normalized the same way resolve_fandom_subdomain
+    # normalizes an incoming title (lowercased, whitespace collapsed) — see
+    # _norm_alias for the bug that came from not doing this.
     FANDOM_STATIC_MAP.clear()
     for k, cfg in FANDOM_WIKIS.items():
         for alias in cfg.get("aliases", []):
-            FANDOM_STATIC_MAP[alias] = cfg["subdomain"]
-        FANDOM_STATIC_MAP[k] = cfg["subdomain"]
+            FANDOM_STATIC_MAP[_norm_alias(alias)] = cfg["subdomain"]
+        FANDOM_STATIC_MAP[_norm_alias(k)] = cfg["subdomain"]
 
     FANDOM_SERIES_DETAILS.clear()
     FANDOM_SERIES_DETAILS.update({
@@ -624,12 +647,20 @@ def resolve_fandom_subdomain(title: str, wikidata_id: Optional[str] = None,
     candidates = get_series_title_candidates(title)
 
     # Tier 0: Static mapping lookup (fast and 100% reliable)
+    #
+    # Reads FANDOM_STATIC_MAP, which _refresh_fandom_wikis already builds
+    # from exactly the same keys and aliases. This scan used to walk
+    # FANDOM_WIKIS itself and re-implement the comparison inline — leaving
+    # the map built on every refresh and read by nobody, and leaving the
+    # inline copy free to disagree with it, which is precisely what it did
+    # (it compared a lowercased title against display-case aliases; see
+    # _norm_alias).
     for cand in candidates:
-        cand_clean = re.sub(r'\s+', ' ', cand.lower()).strip()
-        for subdomain_key, config in FANDOM_WIKIS.items():
-            if cand_clean == subdomain_key or cand_clean in config.get("aliases", []):
-                return config["subdomain"]
-            
+        sub = FANDOM_STATIC_MAP.get(_norm_alias(cand))
+        if sub:
+            return sub
+
+
     for cand in candidates:
         sub = _resolve_fandom_subdomain_single(cand, wikidata_id)
         if sub:
