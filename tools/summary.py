@@ -1854,6 +1854,154 @@ def author_works(name: str, exclude: str = "", exclude_key: str = ""):
 
 # ── Shared assembly (used by /summary and /summary/stream) ──
 
+# Which generation of the Fandom resolver produced a cached response's
+# chapters/characters. Bumped whenever the resolver's REACH changes — when
+# books that previously resolved to nothing can now reach a wiki — so that
+# already-cached summaries each get exactly one re-probe.
+#
+#   1 → the original five-tier cascade.
+#   2 → 2026-09-03. Two of those five tiers turned out to be dead and had
+#       been for a while: Google CSE has been unobtainable to new customers
+#       since Jan 2026, and DuckDuckGo answers with a challenge page that
+#       the code read as "no result" without logging. Brave replaced them,
+#       the static map's case-broken aliases were fixed, and
+#       _wiki_matches_book stopped writing 30-day negatives against wikis
+#       that had merely answered an error status. Six titles verified
+#       reachable that were not before.
+#
+# WHY A MARKER RATHER THAN A CACHE-VERSION BUMP: summary_v13 → _v14 would
+# orphan every cached summary and re-run Gemini across the whole catalog to
+# repair two fields.
+#
+# WHY A MARKER RATHER THAN AN EMPTINESS CHECK: "characters is empty" stays
+# true forever for the many books that genuinely have no wiki, so healing on
+# emptiness alone would re-run the full cascade on every read of every such
+# book. That cost is precisely why the existing heal was gated on the KEY
+# being absent — which in turn is why it could never repair anything except
+# responses predating the field.
+_FANDOM_RESOLVER_GEN = 2
+
+
+def _resolve_chapters(record: book_data.BookRecord) -> list:
+    """Fandom wiki first (web/light novels), Open Library's TOC second.
+
+    Module-level rather than a closure inside _gather_extras because the
+    cache-read self-heal needs the identical logic, and a second copy of it
+    would be free to drift from this one.
+    """
+    try:
+        from tools.fandom import (
+            resolve_series_config_first,
+            resolve_fandom_subdomain,
+            extract_chapters_from_fandom,
+        )
+        # Try the structured catalog FIRST — it disambiguates books that
+        # share one Fandom subdomain (e.g. "Lord of the Mysteries" vs
+        # "Circle of Inevitability", same wiki, different series) via
+        # series_filter/exclude_series_patterns. The older
+        # resolve_fandom_subdomain has no way to express that distinction
+        # and would silently merge them, which is what caused wrong
+        # volumes/covers to show up for the wrong title.
+        series_config = resolve_series_config_first(record.title, record.categories)
+        subdomain = (series_config.subdomain if series_config
+                     else resolve_fandom_subdomain(record.title, categories=record.categories))
+        if subdomain:
+            chapters = extract_chapters_from_fandom(subdomain, record.title)
+            if chapters:
+                return chapters
+    except Exception as e:
+        log.warning(f"Error fetching Fandom chapters for '{record.title}': {e}")
+
+    # Regular (non-Fandom) books: use Open Library's table of contents when
+    # it exists — web/light novels go through Fandom above; mainstream books
+    # get their real chapter list here instead of showing none.
+    try:
+        ol_chapters = book_data.fetch_chapters_from_open_library(
+            record.isbn_13, record.isbn_10, record.open_library_work_key
+        )
+        if ol_chapters:
+            return ol_chapters
+    except Exception as e:
+        log.warning(f"Error fetching Open Library chapters for '{record.title}': {e}")
+    return []
+
+
+def _resolve_characters(record: book_data.BookRecord) -> Optional[list]:
+    """Fandom wiki first (web novels), Wikidata P674 fallback (classics) —
+    the same source split as _resolve_chapters. Every entry carries name/slug/
+    description/source; None when neither source knows this book."""
+    try:
+        from tools.fandom import (
+            resolve_series_config_first,
+            resolve_fandom_subdomain,
+            extract_characters_from_fandom,
+        )
+        series_config = resolve_series_config_first(record.title, record.categories)
+        subdomain = (series_config.subdomain if series_config
+                     else resolve_fandom_subdomain(record.title, categories=record.categories))
+        if subdomain:
+            chars = extract_characters_from_fandom(subdomain, record.title)
+            if chars:
+                for c in chars:  # fandom path doesn't slug — normalize here
+                    c.setdefault("slug", slug_mod.character_slug(c.get("name", "")))
+                return [c for c in chars if c.get("slug")]
+    except Exception as e:
+        log.warning(f"Error fetching Fandom characters for '{record.title}': {e}")
+    try:
+        return resolve_wikidata_characters(record)
+    except Exception as e:
+        log.warning(f"Wikidata characters failed for '{record.title}': {e}")
+    return None
+
+
+def _heal_fandom_fields(cache_key: tuple, snapshot: dict) -> None:
+    """Re-probe Fandom once for a summary cached under an older resolver.
+
+    RUNS AS A BACKGROUND TASK, never on the read itself. A cold cascade
+    measured 8-35 seconds per title, and this would otherwise land on the
+    first viewer of every already-cached book at once — a cache HIT is the
+    one path that is supposed to be fast. The reader sees the response it
+    would have seen anyway; the next reader sees the repaired one.
+
+    Only fills fields that are currently EMPTY. A book already showing
+    chapters (Open Library's TOC, say) keeps them rather than having them
+    swapped for a different list on a background whim — this heals absence,
+    which is the actual complaint, and never overwrites present data.
+
+    Writes the generation marker whether or not anything was found, so a
+    book with genuinely no wiki is probed exactly once and then left alone.
+    """
+    title = snapshot.get("title") or ""
+    try:
+        record = book_data.BookRecord(
+            found=True, title=title, author=snapshot.get("author") or "",
+            categories=snapshot.get("categories") or [],
+            isbn_13=snapshot.get("isbn_13"), isbn_10=snapshot.get("isbn_10"),
+            open_library_work_key=snapshot.get("open_library_work_key"),
+        )
+        chapters = None if snapshot.get("chapters") else _resolve_chapters(record)
+        characters = None if snapshot.get("characters") else _resolve_characters(record)
+    except Exception as e:
+        log.warning(f"Fandom self-heal failed for '{title}': {e}")
+        return
+
+    # Re-read instead of writing back the snapshot: this route heals several
+    # unrelated fields on the way through and each one persists its own
+    # cache.set, so a background task holding a copy from the top of the
+    # request would undo whatever landed while the cascade was running.
+    current = cache.get(*cache_key)
+    if not isinstance(current, dict) or not current.get("found"):
+        return
+    if chapters and not current.get("chapters"):
+        current["chapters"] = chapters
+    if characters and not current.get("characters"):
+        current["characters"] = characters
+    current["fandom_gen"] = _FANDOM_RESOLVER_GEN
+    cache.set(current, *cache_key)
+    log.info(f"Fandom self-heal for '{title}': "
+             f"+{len(chapters or [])} chapters, +{len(characters or [])} characters")
+
+
 def _gather_extras(record: book_data.BookRecord) -> dict:
     """
     Everything in the summary payload EXCEPT the Gemini summary text —
@@ -1864,66 +2012,10 @@ def _gather_extras(record: book_data.BookRecord) -> dict:
     import concurrent.futures
 
     def get_chapters():
-        try:
-            from tools.fandom import (
-                resolve_series_config_first,
-                resolve_fandom_subdomain,
-                extract_chapters_from_fandom,
-            )
-            # Try the structured catalog FIRST — it disambiguates books that
-            # share one Fandom subdomain (e.g. "Lord of the Mysteries" vs
-            # "Circle of Inevitability", same wiki, different series) via
-            # series_filter/exclude_series_patterns. The older
-            # resolve_fandom_subdomain has no way to express that distinction
-            # and would silently merge them, which is what caused wrong
-            # volumes/covers to show up for the wrong title.
-            series_config = resolve_series_config_first(record.title)
-            subdomain = series_config.subdomain if series_config else resolve_fandom_subdomain(record.title)
-            if subdomain:
-                chapters = extract_chapters_from_fandom(subdomain, record.title)
-                if chapters:
-                    return chapters
-        except Exception as e:
-            log.warning(f"Error fetching Fandom chapters for '{record.title}': {e}")
-
-        # Regular (non-Fandom) books: use Open Library's table of contents when
-        # it exists — web/light novels go through Fandom above; mainstream books
-        # get their real chapter list here instead of showing none.
-        try:
-            ol_chapters = book_data.fetch_chapters_from_open_library(
-                record.isbn_13, record.isbn_10, record.open_library_work_key
-            )
-            if ol_chapters:
-                return ol_chapters
-        except Exception as e:
-            log.warning(f"Error fetching Open Library chapters for '{record.title}': {e}")
-        return []
+        return _resolve_chapters(record)
 
     def get_characters():
-        """Fandom wiki first (web novels), Wikidata P674 fallback (classics) —
-        the same source split as get_chapters. Every entry carries name/slug/
-        description/source; None when neither source knows this book."""
-        try:
-            from tools.fandom import (
-                resolve_series_config_first,
-                resolve_fandom_subdomain,
-                extract_characters_from_fandom,
-            )
-            series_config = resolve_series_config_first(record.title)
-            subdomain = series_config.subdomain if series_config else resolve_fandom_subdomain(record.title)
-            if subdomain:
-                chars = extract_characters_from_fandom(subdomain, record.title)
-                if chars:
-                    for c in chars:  # fandom path doesn't slug — normalize here
-                        c.setdefault("slug", slug_mod.character_slug(c.get("name", "")))
-                    return [c for c in chars if c.get("slug")]
-        except Exception as e:
-            log.warning(f"Error fetching Fandom characters for '{record.title}': {e}")
-        try:
-            return resolve_wikidata_characters(record)
-        except Exception as e:
-            log.warning(f"Wikidata characters failed for '{record.title}': {e}")
-        return None
+        return _resolve_characters(record)
 
     def get_fandom_cover():
         """
@@ -2182,6 +2274,10 @@ def _assemble_result(record: book_data.BookRecord, depth: str, summary_text: str
         "nyt": extras["nyt"],
         "editions": extras["editions"],
         "characters": extras["characters"],
+        # Which resolver produced the two fields above — read by the
+        # cache-hit heal to know whether this response predates a resolver
+        # that could reach wikis this one could not. See _FANDOM_RESOLVER_GEN.
+        "fandom_gen": _FANDOM_RESOLVER_GEN,
         "share_slug": share_slug,
         "google_volume_id": record.google_volume_id,
         "open_library_work_key": record.open_library_work_key,
@@ -2478,19 +2574,24 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks, request: Req
                         if ed:
                             cached["editions"] = ed
                             healed = True
-                    # Characters: heal only when the KEY is absent (an entry
-                    # written before v13's shape) — a present None means both
-                    # sources were already checked; re-probing Wikidata/Fandom
-                    # on every cached read of every characterless book would
-                    # be wasted latency.
-                    if "characters" not in cached:
-                        wd = resolve_wikidata_characters(tmp)
-                        cached["characters"] = wd
-                        healed = True
                     if healed:
                         cache.set(cached, *cache_key)  # persist the heal
                 except Exception as e:
                     log.warning(f"Free-ebook/quotes/nyt self-heal failed for '{cached.get('title')}': {e}")
+
+            # Re-probe Fandom for responses cached under an older, weaker
+            # resolver — the one repair the heals above cannot make, because
+            # every one of them keys on a field being absent or null and
+            # "this field is empty for a reason that has since been fixed"
+            # looks identical to "this book has no wiki". Only the marker
+            # tells those apart, and only once per book.
+            #
+            # Chapters had NO heal at all before this: a single 3-second wiki
+            # search timing out at generation time hid a book's chapter list
+            # for the full 30-day life of the entry.
+            if (cached.get("fandom_gen", 0) < _FANDOM_RESOLVER_GEN
+                    and (not cached.get("chapters") or not cached.get("characters"))):
+                background_tasks.add_task(_heal_fandom_fields, cache_key, dict(cached))
 
             # Refresh the static page on VIEW, not just on regeneration: a page
             # published in an older content format gets rewritten by
@@ -2574,6 +2675,15 @@ def summary_stream(req: SummaryRequest, background_tasks: BackgroundTasks, reque
         cached = cache.get(*cache_key)
         if cached:
             _refresh_canonical(cached)  # classic route self-heals this too
+            # The Fandom re-probe has to be here as well as on the classic
+            # route, and this is the copy that actually matters: the site
+            # calls /summary/stream and nothing else (bookhub/summary.html),
+            # so a heal wired only into /summary would sit there looking
+            # correct and never once run for a real reader.
+            if isinstance(cached, dict) and cached.get("found") \
+                    and cached.get("fandom_gen", 0) < _FANDOM_RESOLVER_GEN \
+                    and (not cached.get("chapters") or not cached.get("characters")):
+                background_tasks.add_task(_heal_fandom_fields, cache_key, dict(cached))
             # Refresh a stale-format static page on view (version-gated; cheap
             # no-op once current). Background task runs after the stream ends.
             if isinstance(cached, dict) and cached.get("found") \
