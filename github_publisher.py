@@ -253,7 +253,54 @@ def _published_payload_versions(result: dict) -> dict:
     return out
 
 
-def _page_is_stale(markdown: str) -> bool:
+# Front-matter lines whose EMPTINESS on a published page is meaningful: the
+# page can be missing them while the summary that would rebuild it has them.
+_RICH_LIST_FIELDS = (
+    ("chapters", re.compile(r"^chapters:\s*(.*)$", re.MULTILINE)),
+    ("characters", re.compile(r"^characters:\s*(.*)$", re.MULTILINE)),
+)
+
+
+def _page_missing_data(markdown: str, result: dict) -> bool:
+    """Does the summary now carry list data the committed page does not?
+
+    Neither chapters nor characters is a versioned payload — they are plain
+    lists with no `v` to compare — so _page_is_stale's version tests are
+    blind to them, and a page written while the Fandom resolver was failing
+    keeps `chapters: []` and `characters: []` at the CURRENT format version.
+    Nothing would ever rewrite it. Measured 2026-09-03 across the 200 live
+    book pages: 164 carry no chapters, 134 no characters, 116 neither.
+
+    Comparing the data itself also disarms an ordering trap that a content
+    version bump would have walked straight into. The Fandom heal and the
+    republish are both background tasks, and the republish is handed the
+    PRE-heal response — so a version-driven rewrite would commit the still
+    empty page, stamp it current, and freeze it exactly as
+    _page_is_stale's own docstring describes happening to Peter Pan. Asking
+    "does the response have what the page lacks" is false on that first pass
+    and true on the next one, which is the correct answer both times.
+
+    Deliberately one-directional: a page is stale when the response has MORE
+    than it does, never when it has less. A resolver that has gone quiet
+    must not strip a good page back to nothing.
+    """
+    for name, line_re in _RICH_LIST_FIELDS:
+        fresh = result.get(name)
+        if not isinstance(fresh, list) or not fresh:
+            continue                       # nothing new to offer this page
+        m = line_re.search(markdown or "")
+        if not m:
+            return True                    # page predates the field entirely
+        try:
+            current = json.loads(m.group(1))
+        except Exception:
+            return True                    # unparseable: a rewrite fixes it
+        if not current:
+            return True
+    return False
+
+
+def _page_is_stale(markdown: str, result: dict | None = None) -> bool:
     """Whether a published page needs rewriting.
 
     content_version alone is not the test, because it records the FORMAT the
@@ -271,8 +318,13 @@ def _page_is_stale(markdown: str) -> bool:
     Asked of EVERY versioned payload, not just free_ebook — see
     _VERSIONED_PAYLOADS. Checking one of them was the same mistake one field
     over, and it froze five pages holding another work's quotations.
+
+    `result` extends the same principle to the fields that have no version to
+    compare at all — see _page_missing_data.
     """
     if _page_content_version(markdown) < PUBLISH_CONTENT_VERSION:
+        return True
+    if result is not None and _page_missing_data(markdown, result):
         return True
     for _name, line_re, version_attr in _VERSIONED_PAYLOADS:
         m = line_re.search(markdown or "")
@@ -648,7 +700,7 @@ def publish_book(result: dict) -> None:
                 # Same book already published. Refresh it in place only if it
                 # is stale — an older content format, OR a current format
                 # holding an out-of-date payload (see _page_is_stale).
-                if _page_is_stale(content):
+                if _page_is_stale(content, result):
                     md = _book_markdown(result, book_slug, a_slug, content)
                     if _update_file(path, md,
                                     f"Refresh book page to v{PUBLISH_CONTENT_VERSION}: {title}", sha):
@@ -662,7 +714,7 @@ def publish_book(result: dict) -> None:
                 c_exists, c_content, c_sha = _file_exists(f"_books/{candidate}.md")
                 if c_exists:
                     if (gid and gid in c_content) or _same_book(c_content, title, a_slug):
-                        if _page_is_stale(c_content):
+                        if _page_is_stale(c_content, result):
                             md = _book_markdown(result, candidate, a_slug, c_content)
                             if _update_file(f"_books/{candidate}.md", md,
                                             f"Refresh book page to v{PUBLISH_CONTENT_VERSION}: {title}", c_sha):
