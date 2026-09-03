@@ -201,7 +201,7 @@ def _get_fandom_from_brave(title: str) -> list[str]:
     # Cached because /summary resolves the same title twice (get_chapters and
     # get_characters each run the cascade), which would otherwise spend two
     # calls of a 2,000/month budget on one page view.
-    cache_key = ("fandom_brave_v1", title.lower())
+    cache_key = ("fandom_brave_v2", title.lower())
     cached = cache.get(*cache_key)
     if cached is not None:
         return cached
@@ -234,9 +234,17 @@ def _get_fandom_from_brave(title: str) -> list[str]:
         if m and m.group(1) not in _GENERIC_BOOK_WIKIS and m.group(1) not in subs:
             subs.append(m.group(1))
 
-    # Negative results get a short TTL: a wiki that does not exist today may
-    # be created next month, and the default 30 days would outlive that.
-    cache.set(subs, *cache_key, ttl=None if subs else 86400 * 3)
+    # An empty result is barely evidence and is cached for an hour, not for
+    # days. A 200 from a search API can still be a degraded 200 — zero
+    # results for a book that plainly has a wiki — and the 3-day negative
+    # this used to write turned one such response into a book that stayed
+    # missing. It happened immediately, to "The Eye of the World", from a
+    # deploy-polling loop hitting the same title ~22 times: the wiki
+    # resolved fine before and after, and nothing but this entry stood
+    # between them. An hour still spends only one call on a /summary, which
+    # resolves the same title twice seconds apart — that was the entire
+    # reason to cache here. v2 orphans what v1 froze.
+    cache.set(subs, *cache_key, ttl=None if subs else 3600)
     return subs
 
 
