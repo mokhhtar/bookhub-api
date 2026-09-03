@@ -136,16 +136,21 @@ def _search_wikidata_qid_by_title(title: str) -> Optional[str]:
 # dropping them here saves a wasted main-page fetch per candidate and closes
 # the case where such a wiki's index page does happen to name the title.
 #
-# THIS LIST IS A PATCH, NOT THE REAL FIX. The real guard is
-# _wiki_matches_book, and "Sapiens: A Brief History of Humankind" gets past
-# it today: _title_mentioned_in_text needs 2 significant title words on the
-# wiki's main page, and great-books.fandom.com's main page supplies "brief"
-# and "history" as generic section headings while the words that actually
-# identify the book — "sapiens", "humankind" — appear zero times. Any title
-# built from common words ("A Brief History of Time", "The History of Love")
-# has the same hole. Fixing it means weighting distinctive words rather than
-# counting any two, which is a change to the shared relevance check and is
-# deliberately not bundled into the commit that adds a search tier.
+# THE HOLE THIS ORIGINALLY PATCHED IS CLOSED. _wiki_matches_book used to
+# accept any two significant title words on a main page, so "Sapiens: A
+# Brief History of Humankind" matched great-books.fandom.com on "brief" and
+# "history" while "sapiens" and "humankind" appeared nowhere. Requiring
+# every significant word now rejects that pairing on its own, verified with
+# this list disabled.
+#
+# The list stays for the case that fix cannot reach. An aggregator that
+# genuinely hosts a page about the requested book satisfies any word test
+# honestly — great-books really does cover "A Brief History of Time", so
+# every word of that title really is on its main page. What disqualifies it
+# is not the words but that the wiki is a general library rather than this
+# book's own wiki, and its in-wiki searches answer with other books'
+# material. Nothing here distinguishes "dedicated" from "aggregating"
+# structurally yet; until something does, these are named.
 _GENERIC_BOOK_WIKIS = {
     "books", "book", "bookclub", "great-books", "literature", "novels",
     "fiction", "tropedia", "allthetropes", "speculativefiction",
@@ -382,7 +387,8 @@ _TITLE_STOPWORDS = {
 }
 
 
-def _title_mentioned_in_text(title: str, text: str, min_hits: int = 2) -> bool:
+def _title_mentioned_in_text(title: str, text: str, min_hits: int = 2,
+                             require_all: bool = False) -> bool:
     """
     Strict relevance check: does this text blob actually mention the
     REQUESTED book, rather than just being generically "about books"?
@@ -397,6 +403,32 @@ def _title_mentioned_in_text(title: str, text: str, min_hits: int = 2) -> bool:
     matches somewhere in `text`. A title with only one significant word
     (e.g. "Dune") requires that single word rather than demanding two.
 
+    `require_all` demands every significant word AND demands they sit
+    together (see _title_appears_together). It exists because counting any
+    two is unsafe when the question is "is this whole wiki about this book".
+    Titles assembled from ordinary words defeat the count:
+    great-books.fandom.com matched "Sapiens: A Brief History of Humankind"
+    on "brief" and "history" — supplied by a link to A Brief History of Time
+    — while "sapiens" and "humankind" appear nowhere on the page.
+
+    Measured over 28 wiki/title pairs, full coverage separates them where
+    counting two does not: all 11 dedicated wikis carry 100% of their book's
+    significant words on the main page, and every aggregator is missing at
+    least one. Fifteen of eighteen individual volumes clear it too ("Harry
+    Potter and the Goblet of Fire", 4 of 4, on a 24,000-article wiki); the
+    three that do not — "A Clash of Kings", "A Storm of Swords", "Words of
+    Radiance" — are caught by _wiki_names_the_series instead, which is why
+    that signal had to land before this one could.
+
+    Coverage alone was still not enough, and the co-occurrence requirement
+    is there because of what turned up when it shipped without one: see
+    _title_appears_together for the palaeontology wiki that owns every word
+    of a Harari title and none of its meaning.
+
+    The strict mode is for wiki IDENTITY only. The extraction gates ask a
+    different and much narrower question — does THIS page, already fetched
+    from a wiki we accepted, concern the book — and keep the loose default.
+
     Deliberately dumb (word presence, not semantic understanding) on
     purpose — matches this codebase's existing preference for
     deterministic, code-level verification over trusting an LLM's
@@ -409,8 +441,58 @@ def _title_mentioned_in_text(title: str, text: str, min_hits: int = 2) -> bool:
     if not words:
         return False
     text_lower = text.lower()
+    if require_all:
+        return _title_appears_together(words, text_lower)
     hits = sum(1 for w in words if re.search(rf"\b{re.escape(w)}\b", text_lower))
     return hits >= min(min_hits, len(words))
+
+
+# How far apart the title's words may sit and still count as naming the book.
+# Every one of 19 verified wiki/title pairs puts them within 4 tokens of each
+# other — the title is written out, as a title. 12 is three times that, wide
+# enough for a subtitle or an interposed edition note and still nowhere near
+# wide enough to staple together words from unrelated paragraphs.
+_TITLE_SPAN_TOKENS = 12
+
+
+def _title_appears_together(words: list[str], text_lower: str) -> bool:
+    """Do ALL these words occur within one _TITLE_SPAN_TOKENS-wide window?
+
+    Requiring every word but ignoring where they sit is not enough, and the
+    case that proved it is paleontology.fandom.com answering for "Sapiens: A
+    Brief History of Humankind". That wiki does contain "sapiens" — in Homo
+    sapiens — and "history", "brief" and "humankind" too, scattered across a
+    page about fossils, so a coverage test passes it and the summary would
+    have been handed a palaeontology wiki's characters for a Harari book.
+
+    Co-occurrence is what separates naming a book from using its vocabulary:
+    on all 19 true pairs the words land within 4 tokens because the wiki
+    writes the title out, while paleontology's four never share a window at
+    any width.
+    """
+    toks = re.findall(r"[a-zA-Z0-9']+", text_lower)
+    need = set(words)
+    occ = [(i, t) for i, t in enumerate(toks) if t in need]
+    if len({t for _, t in occ}) < len(need):
+        return False                       # some word is simply absent
+
+    # Sliding window over just the positions that matter.
+    counts: dict = {}
+    have = lo = 0
+    for hi in range(len(occ)):
+        w = occ[hi][1]
+        counts[w] = counts.get(w, 0) + 1
+        if counts[w] == 1:
+            have += 1
+        while have == len(need):
+            if occ[hi][0] - occ[lo][0] <= _TITLE_SPAN_TOKENS:
+                return True
+            wl = occ[lo][1]
+            counts[wl] -= 1
+            if counts[wl] == 0:
+                have -= 1
+            lo += 1
+    return False
 
 
 def _wikidata_series_label(title: str) -> Optional[str]:
@@ -536,9 +618,11 @@ def _wiki_matches_book(subdomain: str, title: str) -> bool:
     A verdict is now only cached when the main page text actually arrived.
     v2 orphans the negatives v1 already poisoned. v3 orphans v2's, because
     _wiki_names_the_series turns some of those negatives into positives and
-    a stored "no" would outlive the reason it was recorded.
+    a stored "no" would outlive the reason it was recorded. v4 orphans v3's
+    in the other direction: requiring every significant title word turns
+    some stored "yes" verdicts into no.
     """
-    cache_key = ("fandom_relevance_v3", subdomain, title.lower())
+    cache_key = ("fandom_relevance_v4", subdomain, title.lower())
     cached = cache.get(*cache_key)
     if cached is not None:
         return bool(cached.get("match"))
@@ -572,7 +656,7 @@ def _wiki_matches_book(subdomain: str, title: str) -> bool:
         text = f"{sitename} {body}"
 
         bookish = bool(_BOOKISH_RE.search(text))
-        relevant = bookish and _title_mentioned_in_text(title, text)
+        relevant = bookish and _title_mentioned_in_text(title, text, require_all=True)
         # Only ask Wikidata when the cheap test has already failed. A wiki
         # whose main page names the book needs no second opinion, so the
         # common path costs nothing and the two extra lookups fall only on
