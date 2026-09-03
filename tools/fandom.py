@@ -2039,19 +2039,42 @@ def resolve_fandom(title: str = Query(..., min_length=1), wikidata_id: Optional[
     """
     Endpoint to resolve a book's Fandom subdomain.
     Caches the results to minimize external network requests.
+
+    THE NULL RESULT IS NOT CACHED FOR 30 DAYS ANY MORE, and the story is
+    worth keeping because of how much time the old behaviour cost. This
+    stored `{"subdomain": None}` under the default TTL, and `if cached:` is
+    true for that dict, so one failed resolution pinned a title to "no
+    wiki" for a month. Two titles landed in that state during a bad window
+    and then survived a relevance-cache bump, a series-cache bump and a
+    revert of a perfectly good change — every one of which was invisible
+    here, because none of them touched THIS key.
+
+    Worse, they were never actually broken. /summary calls
+    resolve_fandom_subdomain directly and never comes through this route,
+    so the books kept serving their chapters and characters the whole time
+    while this endpoint — used only for spot checks — insisted they
+    resolved to nothing. A diagnostic that lies is worse than no
+    diagnostic, and this one sent a real change to the bin on false
+    evidence.
+
+    v2 orphans the entries v1 froze.
     """
-    cache_key = ("fandom_resolve_v1", title, wikidata_id or "")
+    cache_key = ("fandom_resolve_v2", title, wikidata_id or "")
     cached = cache.get(*cache_key)
-    if cached:
+    if cached is not None:
         return cached
-        
+
+
     # Same fix applied everywhere else: try the structured catalog first,
     # since it correctly distinguishes series sharing a subdomain (e.g.
     # lotm vs coi) that the flat FANDOM_WIKIS alias map cannot.
     catalog_cfg = resolve_series_config_first(title)
     subdomain = catalog_cfg.subdomain if catalog_cfg else resolve_fandom_subdomain(title, wikidata_id)
     result = {"subdomain": subdomain, "title": title}
-    cache.set(result, *cache_key)
+    # A resolution that found a wiki is a durable fact and keeps the default
+    # 30 days. A resolution that found nothing is a snapshot of one moment's
+    # search results, wiki availability and rate limits — 15 minutes.
+    cache.set(result, *cache_key, ttl=None if subdomain else 900)
     return result
 
 @router.get("/universe", response_model=UniverseResponse)
