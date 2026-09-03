@@ -429,8 +429,24 @@ def _wiki_matches_book(subdomain: str, title: str) -> bool:
     verdict leak into every other title that later resolves to the same
     wiki). FAIL-OPEN on network trouble; a cleanly-fetched main page
     failing either check is rejected.
+
+    "Network trouble" now includes a main page that answers with an error
+    STATUS, which it did not before, and the gap was doing real damage. A
+    timeout on that request raised, hit the except, and failed open — but a
+    non-200 fell through with `text` still holding nothing but the sitename,
+    and no wiki's sitename alone carries book vocabulary ("A Wheel of Time
+    Wiki", "Kingkiller Chronicle Wiki", "Stormlight Archive Wiki" all fail
+    _BOOKISH_RE). So the identical failure produced opposite verdicts
+    depending only on whether httpx raised or returned, and the returning
+    case cached `match: False` for THIRTY DAYS against a healthy wiki.
+    Observed live: wot.fandom.com was locked out for "The Eye of the World"
+    while "Eye of the World" — a different cache key, same two significant
+    words — resolved to it fine.
+
+    A verdict is now only cached when the main page text actually arrived.
+    v2 orphans the negatives v1 already poisoned.
     """
-    cache_key = ("fandom_relevance_v1", subdomain, title.lower())
+    cache_key = ("fandom_relevance_v2", subdomain, title.lower())
     cached = cache.get(*cache_key)
     if cached is not None:
         return bool(cached.get("match"))
@@ -448,13 +464,20 @@ def _wiki_matches_book(subdomain: str, title: str) -> bool:
         mainpage = general.get("mainpage", "Main Page")
         sitename = general.get("sitename", "")
 
-        text = sitename
         r2 = httpx.get(url, params={
             "action": "parse", "page": mainpage, "prop": "text", "format": "json",
         }, headers=headers, timeout=8.0)
-        if r2.status_code == 200:
-            html = ((r2.json().get("parse") or {}).get("text") or {}).get("*", "")
-            text += " " + clean_wiki_html(html)[:8000]
+        if r2.status_code != 200:
+            log.warning(f"Main page of '{subdomain}' returned HTTP {r2.status_code} — "
+                        f"relevance for '{title}' is inconclusive, failing open")
+            return True  # fail-open, and deliberately NOT cached
+        html = ((r2.json().get("parse") or {}).get("text") or {}).get("*", "")
+        body = clean_wiki_html(html)[:8000]
+        if not body:
+            log.warning(f"Main page of '{subdomain}' parsed to empty text — "
+                        f"relevance for '{title}' is inconclusive, failing open")
+            return True  # same reason: no evidence is not evidence of absence
+        text = f"{sitename} {body}"
 
         bookish = bool(_BOOKISH_RE.search(text))
         relevant = bookish and _title_mentioned_in_text(title, text)
