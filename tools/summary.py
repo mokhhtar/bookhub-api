@@ -2357,6 +2357,261 @@ def _resolved_quota_ok(request: Request) -> bool:
 
 
 # ── Route ───────────────────────────────────────────────────
+def _heal_cached_summary(cached, req, cache_key, request, background_tasks):
+    """Every repair a cache HIT performs, and the response to return.
+
+    THIS LIVED INSIDE /summary AND NOWHERE ELSE, which meant it almost never
+    ran. bookhub/summary.html calls /summary/stream and only falls back to
+    the classic route when streaming fails, so the streaming path — the one
+    real readers take — healed exactly one field (canonical_id) and skipped
+    the rest: ratings, page_count, free_ebook, quotes, NYT, editions, the
+    Amazon link, the slug/static-page backfill, and the title/author
+    correction that every other lookup keys on. A book cached with a
+    transient failure kept it for the full 30 days, and wrong Wikiquote
+    payloads were never cleared, because the code that clears them sat on a
+    route the site does not call.
+
+    Same shape as the Fandom heal that exposed it: a repair wired to the
+    wrong route looks completely correct in review and never runs once.
+
+    Kept synchronous, as it always was on the classic route. Each resolver
+    underneath has its own short negative cache, so the common case is a
+    handful of Redis reads; paying it inline is what lets the healed values
+    appear in THIS response instead of the next one.
+    """
+    # Self-healing cache migration: verify if the cached amazon_url is valid and English,
+    # or if we can upgrade it now using the Amazon Creators API.
+    amazon_url = cached.get("amazon_url", "")
+    is_bad_url = False
+    if "/dp/" in amazon_url:
+        parts = amazon_url.split("/dp/")
+        if len(parts) > 1:
+            asin = parts[1].split("?")[0]
+            # If ASIN doesn't start with 0, 1, or B, it's a foreign/bad print ISBN that will 404 on Amazon US
+            if not (asin.startswith("0") or asin.startswith("1") or asin.startswith("B")):
+                is_bad_url = True
+    else:
+        # Upgrade search fallback URLs to direct product URLs if Amazon API is now configured
+        import os
+        if not amazon_url or ("s?k=" in amazon_url and os.environ.get("AMAZON_CREDENTIAL_ID")):
+            is_bad_url = True
+
+    if isinstance(cached, dict) and cached.get("found") and ("amazon_url" not in cached or is_bad_url):
+        import os
+        import urllib.parse
+        amazon_url = _get_amazon_url_from_api(cached.get("title", req.title), cached.get("author", req.author))
+        if not amazon_url:
+            tag = _amazon_tag()
+            isbn_10 = cached.get("isbn_10")
+            if not isbn_10 and cached.get("isbn_13"):
+                from book_data import isbn13_to_isbn10
+                isbn_10 = isbn13_to_isbn10(cached["isbn_13"])
+                cached["isbn_10"] = isbn_10
+            
+            if isbn_10 and (isbn_10.startswith("0") or isbn_10.startswith("1")):
+                amazon_url = f"https://www.amazon.com/dp/{isbn_10}?tag={tag}"
+            else:
+                q = urllib.parse.quote(f"{cached.get('title', req.title)} {cached.get('author', req.author)}".strip())
+                amazon_url = f"https://www.amazon.com/s?k={q}&tag={tag}"
+        cached["amazon_url"] = amazon_url
+        cache.set(cached, *cache_key)
+
+    # Backfill slug/static_page/author_slug on the way out (cheap Redis
+    # lookups) so repeat visitors get the clean static URL once the page
+    # is built, even for responses cached before these fields existed.
+    if isinstance(cached, dict) and cached.get("found"):
+        c_slug = cached.get("slug") or slug_mod.book_slug(cached.get("title", ""))
+        ready, actual_slug = github_publisher.resolve_published(
+            c_slug, cached.get("google_volume_id") or cached.get("isbn_13") or ""
+        )
+        cached["slug"] = actual_slug
+        cached["static_page"] = ready
+        if not cached.get("author_slug"):
+            cached["author_slug"] = slug_mod.author_slug(cached.get("author", ""))
+        _refresh_canonical(cached)  # keep the community key formula-current
+        # Feed the published-books index (drives /search static links)
+        # from the cache-hit path too — pages published before the index
+        # existed mostly serve from cache, so without this they'd never
+        # gain the author identity that lets a gid-less search row match.
+        if ready and actual_slug:
+            github_publisher.index_published_ready(
+                actual_slug,
+                cached.get("google_volume_id") or cached.get("isbn_13") or "",
+                cached.get("author_slug") or "")
+
+        # Self-heal ratings/page_count: a past Goodreads throttle (common
+        # from Render's datacenter IP) can leave these empty in an otherwise
+        # good cached summary. Retry on read — resolve_ratings has its own
+        # short negative cache, so this is cheap and recovers automatically.
+        if not cached.get("ratings") or not cached.get("page_count"):
+            try:
+                tmp = book_data.BookRecord(
+                    found=True, title=cached.get("title", ""), author=cached.get("author", ""),
+                    isbn_13=cached.get("isbn_13"), isbn_10=cached.get("isbn_10"),
+                    open_library_work_key=cached.get("open_library_work_key"),
+                )
+                fresh = resolve_ratings(tmp)
+                if fresh:
+                    cached["ratings"] = fresh
+                    if not cached.get("page_count") and fresh.get("pages"):
+                        cached["page_count"] = fresh["pages"]
+                    cache.set(cached, *cache_key)  # persist the heal
+            except Exception as e:
+                log.warning(f"Ratings self-heal failed for '{cached.get('title')}': {e}")
+
+        # Self-heal free_ebook/quotes the same way: a transient
+        # Gutendex/Wikiquote failure at generation time bakes None into
+        # this 30-day cached response. Both wrappers sit behind their own
+        # 1h negative cache, so a book with genuinely no free edition or
+        # quotes page costs at most one lookup per hour.
+        # Quotes cached before the speakers field shipped get refreshed
+        # too (the wikiquote_v3 sub-cache already carries speakers).
+        # Title/author formatting heals FIRST, before anything that looks
+        # a book up by name. Ordering is load-bearing: this block used to
+        # run last, so the free-ebook and quotes heal below still searched
+        # for "Ivanhoe by Sir Walter Scott" and kept coming back empty.
+        fixed_author = book_data._prefer_requested_author(
+            cached.get("author") or "", (req.author or "").strip())
+        fixed_title = book_data._strip_author_from_title(
+            book_data._prefer_requested_author(
+                cached.get("title") or "", (req.title or "").strip()),
+            fixed_author or cached.get("author") or "")
+        renamed = ((fixed_author and fixed_author != cached.get("author"))
+                   or (fixed_title and fixed_title != cached.get("title")))
+        cached["author"] = fixed_author or cached.get("author")
+        cached["title"] = fixed_title or cached.get("title")
+
+        # A change test alone is not enough. The first read after a name
+        # fix ships corrects the name and writes it back, so on every read
+        # after that "did it change?" is false forever — while the slug and
+        # the lookups it poisoned stay wrong. Check the INVARIANT instead:
+        # a page's slug is either the title's slug or one of the collision
+        # variants resolve_published may hand back. Anything else is a slug
+        # left over from a title we have since corrected.
+        base_slug = slug_mod.book_slug(cached["title"])
+        a_slug = slug_mod.author_slug(cached["author"])
+        legitimate = {base_slug, f"{base_slug}-{a_slug}", f"{base_slug}-2"}
+        stale_slug = bool(base_slug) and cached.get("slug") not in legitimate
+
+        if renamed or stale_slug:
+            cached["author_slug"] = a_slug
+            cached["canonical_id"] = _canonical_id_from(cached["title"], cached["author"])
+            cached["slug"] = base_slug
+            cached["static_page"] = False
+            # Every lookup below keys on the title, so anything resolved
+            # under the wrong one has to be discarded and fetched again.
+            for stale in ("free_ebook", "quotes", "nyt", "editions"):
+                cached[stale] = None
+            cache.set(cached, *cache_key)
+
+        _q = cached.get("quotes")
+        # A v3 payload may carry Wikiquote disambiguation entries that were
+        # never quotations. Re-running the resolver is what drops them —
+        # and for a page whose every entry was one, the card correctly
+        # disappears rather than showing descriptions.
+        _q_texts = (_q or {}).get("texts") or [] if isinstance(_q, dict) else []
+        _quotes_stale = (_q is None
+                         or (isinstance(_q, dict) and _q.get("v", 0) < _WQ_PAYLOAD_VERSION)
+                         or any(_WQ_DISAMBIGUATION_RE.search(t) for t in _q_texts))
+        _fe = cached.get("free_ebook")
+        # Same invariant test as quotes, for the same reason: healing only
+        # when the field is None is healing only the case that is already
+        # harmless. A wrong entry is present, not absent.
+        _fe_stale = (_fe is None
+                     or (isinstance(_fe, dict)
+                         and _fe.get("v", 0) < _FREE_EBOOK_PAYLOAD_VERSION))
+        if (_fe_stale or _quotes_stale
+                or cached.get("nyt") is None or cached.get("editions") is None):
+            try:
+                tmp = book_data.BookRecord(
+                    found=True, title=cached.get("title", ""), author=cached.get("author", ""),
+                    open_library_work_key=cached.get("open_library_work_key"),
+                )
+                healed = False
+                if _fe_stale:
+                    # force: our own staleness test is what got us here, and
+                    # the sub-cache entry underneath was written by the same
+                    # resolver run that produced the payload we just
+                    # rejected. Serving it back is how this heal used to
+                    # "succeed" without changing anything.
+                    fe = _cached_free_ebook(tmp, force=True)
+                    if fe:
+                        cached["free_ebook"] = fe
+                        healed = True
+                    elif _fe is not None:
+                        # Re-resolved to nothing: the edition we were
+                        # offering no longer qualifies. Drop it rather than
+                        # keep promising a download that answers 401.
+                        cached["free_ebook"] = None
+                        healed = True
+                if _quotes_stale:
+                    wq = _cached_quotes(tmp, force=True)  # same reason as above
+                    if wq:
+                        cached["quotes"] = wq
+                        healed = True
+                    elif _q_texts:
+                        # Stale payload + empty clean lookup = the entries
+                        # we were holding are ones this resolver will no
+                        # longer produce. Clear them.
+                        #
+                        # This used to clear only when the old texts LOOKED
+                        # like disambiguation descriptions, which is the
+                        # same mistake in miniature: it recognised one shape
+                        # of damage and so missed the next. The redirect bug
+                        # (Kidnapped's quotes came from "Crime") produces
+                        # texts that are perfectly well-formed quotations —
+                        # they simply belong to another page — and no
+                        # inspection of them would ever say so.
+                        #
+                        # A transient Wikiquote failure can also empty the
+                        # lookup, and this clears on that too. Accepted: the
+                        # negative is cached for 1h, so the next read after
+                        # it recovers restores the card, whereas keeping a
+                        # payload we know is stale is wrong until someone
+                        # notices. An absent card is the correct outcome.
+                        cached["quotes"] = None
+                        healed = True
+                # Also heals summaries generated before NYT_API_KEY was
+                # configured; the 24h negative cache in _cached_nyt keeps
+                # this within NYT's 500/day budget.
+                if cached.get("nyt") is None:
+                    ny = _cached_nyt(tmp)
+                    if ny:
+                        cached["nyt"] = ny
+                        healed = True
+                if cached.get("editions") is None:
+                    ed = _cached_editions(tmp)
+                    if ed:
+                        cached["editions"] = ed
+                        healed = True
+                if healed:
+                    cache.set(cached, *cache_key)  # persist the heal
+            except Exception as e:
+                log.warning(f"Free-ebook/quotes/nyt self-heal failed for '{cached.get('title')}': {e}")
+
+        # Re-probe Fandom for responses cached under an older, weaker
+        # resolver — the one repair the heals above cannot make, because
+        # every one of them keys on a field being absent or null and
+        # "this field is empty for a reason that has since been fixed"
+        # looks identical to "this book has no wiki". Only the marker
+        # tells those apart, and only once per book.
+        #
+        # Chapters had NO heal at all before this: a single 3-second wiki
+        # search timing out at generation time hid a book's chapter list
+        # for the full 30-day life of the entry.
+        if (cached.get("fandom_gen", 0) < _FANDOM_RESOLVER_GEN
+                and (not cached.get("chapters") or not cached.get("characters"))):
+            background_tasks.add_task(_heal_fandom_fields, cache_key, dict(cached))
+
+        # Refresh the static page on VIEW, not just on regeneration: a page
+        # published in an older content format gets rewritten by
+        # publish_book (version-gated → a cheap Redis-flag no-op once the
+        # page is current). Runs in the background; never blocks the read.
+        if github_publisher.is_enabled() and req.language == "en" and _publish_quota_ok(request):
+            background_tasks.add_task(github_publisher.publish_book, cached)
+    return cached
+
+
 @router.post("/summary")
 def summary(req: SummaryRequest, background_tasks: BackgroundTasks, request: Request):
     # v5: response gained categories/slug/static_page — never serve stale v4 shapes.
@@ -2377,237 +2632,7 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks, request: Req
     cache_key = ("summary_v13", req.title, req.author, req.depth, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id, req.language)
     cached = cache.get(*cache_key)
     if cached:
-        # Self-healing cache migration: verify if the cached amazon_url is valid and English,
-        # or if we can upgrade it now using the Amazon Creators API.
-        amazon_url = cached.get("amazon_url", "")
-        is_bad_url = False
-        if "/dp/" in amazon_url:
-            parts = amazon_url.split("/dp/")
-            if len(parts) > 1:
-                asin = parts[1].split("?")[0]
-                # If ASIN doesn't start with 0, 1, or B, it's a foreign/bad print ISBN that will 404 on Amazon US
-                if not (asin.startswith("0") or asin.startswith("1") or asin.startswith("B")):
-                    is_bad_url = True
-        else:
-            # Upgrade search fallback URLs to direct product URLs if Amazon API is now configured
-            import os
-            if not amazon_url or ("s?k=" in amazon_url and os.environ.get("AMAZON_CREDENTIAL_ID")):
-                is_bad_url = True
-
-        if isinstance(cached, dict) and cached.get("found") and ("amazon_url" not in cached or is_bad_url):
-            import os
-            import urllib.parse
-            amazon_url = _get_amazon_url_from_api(cached.get("title", req.title), cached.get("author", req.author))
-            if not amazon_url:
-                tag = _amazon_tag()
-                isbn_10 = cached.get("isbn_10")
-                if not isbn_10 and cached.get("isbn_13"):
-                    from book_data import isbn13_to_isbn10
-                    isbn_10 = isbn13_to_isbn10(cached["isbn_13"])
-                    cached["isbn_10"] = isbn_10
-                
-                if isbn_10 and (isbn_10.startswith("0") or isbn_10.startswith("1")):
-                    amazon_url = f"https://www.amazon.com/dp/{isbn_10}?tag={tag}"
-                else:
-                    q = urllib.parse.quote(f"{cached.get('title', req.title)} {cached.get('author', req.author)}".strip())
-                    amazon_url = f"https://www.amazon.com/s?k={q}&tag={tag}"
-            cached["amazon_url"] = amazon_url
-            cache.set(cached, *cache_key)
-
-        # Backfill slug/static_page/author_slug on the way out (cheap Redis
-        # lookups) so repeat visitors get the clean static URL once the page
-        # is built, even for responses cached before these fields existed.
-        if isinstance(cached, dict) and cached.get("found"):
-            c_slug = cached.get("slug") or slug_mod.book_slug(cached.get("title", ""))
-            ready, actual_slug = github_publisher.resolve_published(
-                c_slug, cached.get("google_volume_id") or cached.get("isbn_13") or ""
-            )
-            cached["slug"] = actual_slug
-            cached["static_page"] = ready
-            if not cached.get("author_slug"):
-                cached["author_slug"] = slug_mod.author_slug(cached.get("author", ""))
-            _refresh_canonical(cached)  # keep the community key formula-current
-            # Feed the published-books index (drives /search static links)
-            # from the cache-hit path too — pages published before the index
-            # existed mostly serve from cache, so without this they'd never
-            # gain the author identity that lets a gid-less search row match.
-            if ready and actual_slug:
-                github_publisher.index_published_ready(
-                    actual_slug,
-                    cached.get("google_volume_id") or cached.get("isbn_13") or "",
-                    cached.get("author_slug") or "")
-
-            # Self-heal ratings/page_count: a past Goodreads throttle (common
-            # from Render's datacenter IP) can leave these empty in an otherwise
-            # good cached summary. Retry on read — resolve_ratings has its own
-            # short negative cache, so this is cheap and recovers automatically.
-            if not cached.get("ratings") or not cached.get("page_count"):
-                try:
-                    tmp = book_data.BookRecord(
-                        found=True, title=cached.get("title", ""), author=cached.get("author", ""),
-                        isbn_13=cached.get("isbn_13"), isbn_10=cached.get("isbn_10"),
-                        open_library_work_key=cached.get("open_library_work_key"),
-                    )
-                    fresh = resolve_ratings(tmp)
-                    if fresh:
-                        cached["ratings"] = fresh
-                        if not cached.get("page_count") and fresh.get("pages"):
-                            cached["page_count"] = fresh["pages"]
-                        cache.set(cached, *cache_key)  # persist the heal
-                except Exception as e:
-                    log.warning(f"Ratings self-heal failed for '{cached.get('title')}': {e}")
-
-            # Self-heal free_ebook/quotes the same way: a transient
-            # Gutendex/Wikiquote failure at generation time bakes None into
-            # this 30-day cached response. Both wrappers sit behind their own
-            # 1h negative cache, so a book with genuinely no free edition or
-            # quotes page costs at most one lookup per hour.
-            # Quotes cached before the speakers field shipped get refreshed
-            # too (the wikiquote_v3 sub-cache already carries speakers).
-            # Title/author formatting heals FIRST, before anything that looks
-            # a book up by name. Ordering is load-bearing: this block used to
-            # run last, so the free-ebook and quotes heal below still searched
-            # for "Ivanhoe by Sir Walter Scott" and kept coming back empty.
-            fixed_author = book_data._prefer_requested_author(
-                cached.get("author") or "", (req.author or "").strip())
-            fixed_title = book_data._strip_author_from_title(
-                book_data._prefer_requested_author(
-                    cached.get("title") or "", (req.title or "").strip()),
-                fixed_author or cached.get("author") or "")
-            renamed = ((fixed_author and fixed_author != cached.get("author"))
-                       or (fixed_title and fixed_title != cached.get("title")))
-            cached["author"] = fixed_author or cached.get("author")
-            cached["title"] = fixed_title or cached.get("title")
-
-            # A change test alone is not enough. The first read after a name
-            # fix ships corrects the name and writes it back, so on every read
-            # after that "did it change?" is false forever — while the slug and
-            # the lookups it poisoned stay wrong. Check the INVARIANT instead:
-            # a page's slug is either the title's slug or one of the collision
-            # variants resolve_published may hand back. Anything else is a slug
-            # left over from a title we have since corrected.
-            base_slug = slug_mod.book_slug(cached["title"])
-            a_slug = slug_mod.author_slug(cached["author"])
-            legitimate = {base_slug, f"{base_slug}-{a_slug}", f"{base_slug}-2"}
-            stale_slug = bool(base_slug) and cached.get("slug") not in legitimate
-
-            if renamed or stale_slug:
-                cached["author_slug"] = a_slug
-                cached["canonical_id"] = _canonical_id_from(cached["title"], cached["author"])
-                cached["slug"] = base_slug
-                cached["static_page"] = False
-                # Every lookup below keys on the title, so anything resolved
-                # under the wrong one has to be discarded and fetched again.
-                for stale in ("free_ebook", "quotes", "nyt", "editions"):
-                    cached[stale] = None
-                cache.set(cached, *cache_key)
-
-            _q = cached.get("quotes")
-            # A v3 payload may carry Wikiquote disambiguation entries that were
-            # never quotations. Re-running the resolver is what drops them —
-            # and for a page whose every entry was one, the card correctly
-            # disappears rather than showing descriptions.
-            _q_texts = (_q or {}).get("texts") or [] if isinstance(_q, dict) else []
-            _quotes_stale = (_q is None
-                             or (isinstance(_q, dict) and _q.get("v", 0) < _WQ_PAYLOAD_VERSION)
-                             or any(_WQ_DISAMBIGUATION_RE.search(t) for t in _q_texts))
-            _fe = cached.get("free_ebook")
-            # Same invariant test as quotes, for the same reason: healing only
-            # when the field is None is healing only the case that is already
-            # harmless. A wrong entry is present, not absent.
-            _fe_stale = (_fe is None
-                         or (isinstance(_fe, dict)
-                             and _fe.get("v", 0) < _FREE_EBOOK_PAYLOAD_VERSION))
-            if (_fe_stale or _quotes_stale
-                    or cached.get("nyt") is None or cached.get("editions") is None):
-                try:
-                    tmp = book_data.BookRecord(
-                        found=True, title=cached.get("title", ""), author=cached.get("author", ""),
-                        open_library_work_key=cached.get("open_library_work_key"),
-                    )
-                    healed = False
-                    if _fe_stale:
-                        # force: our own staleness test is what got us here, and
-                        # the sub-cache entry underneath was written by the same
-                        # resolver run that produced the payload we just
-                        # rejected. Serving it back is how this heal used to
-                        # "succeed" without changing anything.
-                        fe = _cached_free_ebook(tmp, force=True)
-                        if fe:
-                            cached["free_ebook"] = fe
-                            healed = True
-                        elif _fe is not None:
-                            # Re-resolved to nothing: the edition we were
-                            # offering no longer qualifies. Drop it rather than
-                            # keep promising a download that answers 401.
-                            cached["free_ebook"] = None
-                            healed = True
-                    if _quotes_stale:
-                        wq = _cached_quotes(tmp, force=True)  # same reason as above
-                        if wq:
-                            cached["quotes"] = wq
-                            healed = True
-                        elif _q_texts:
-                            # Stale payload + empty clean lookup = the entries
-                            # we were holding are ones this resolver will no
-                            # longer produce. Clear them.
-                            #
-                            # This used to clear only when the old texts LOOKED
-                            # like disambiguation descriptions, which is the
-                            # same mistake in miniature: it recognised one shape
-                            # of damage and so missed the next. The redirect bug
-                            # (Kidnapped's quotes came from "Crime") produces
-                            # texts that are perfectly well-formed quotations —
-                            # they simply belong to another page — and no
-                            # inspection of them would ever say so.
-                            #
-                            # A transient Wikiquote failure can also empty the
-                            # lookup, and this clears on that too. Accepted: the
-                            # negative is cached for 1h, so the next read after
-                            # it recovers restores the card, whereas keeping a
-                            # payload we know is stale is wrong until someone
-                            # notices. An absent card is the correct outcome.
-                            cached["quotes"] = None
-                            healed = True
-                    # Also heals summaries generated before NYT_API_KEY was
-                    # configured; the 24h negative cache in _cached_nyt keeps
-                    # this within NYT's 500/day budget.
-                    if cached.get("nyt") is None:
-                        ny = _cached_nyt(tmp)
-                        if ny:
-                            cached["nyt"] = ny
-                            healed = True
-                    if cached.get("editions") is None:
-                        ed = _cached_editions(tmp)
-                        if ed:
-                            cached["editions"] = ed
-                            healed = True
-                    if healed:
-                        cache.set(cached, *cache_key)  # persist the heal
-                except Exception as e:
-                    log.warning(f"Free-ebook/quotes/nyt self-heal failed for '{cached.get('title')}': {e}")
-
-            # Re-probe Fandom for responses cached under an older, weaker
-            # resolver — the one repair the heals above cannot make, because
-            # every one of them keys on a field being absent or null and
-            # "this field is empty for a reason that has since been fixed"
-            # looks identical to "this book has no wiki". Only the marker
-            # tells those apart, and only once per book.
-            #
-            # Chapters had NO heal at all before this: a single 3-second wiki
-            # search timing out at generation time hid a book's chapter list
-            # for the full 30-day life of the entry.
-            if (cached.get("fandom_gen", 0) < _FANDOM_RESOLVER_GEN
-                    and (not cached.get("chapters") or not cached.get("characters"))):
-                background_tasks.add_task(_heal_fandom_fields, cache_key, dict(cached))
-
-            # Refresh the static page on VIEW, not just on regeneration: a page
-            # published in an older content format gets rewritten by
-            # publish_book (version-gated → a cheap Redis-flag no-op once the
-            # page is current). Runs in the background; never blocks the read.
-            if github_publisher.is_enabled() and req.language == "en" and _publish_quota_ok(request):
-                background_tasks.add_task(github_publisher.publish_book, cached)
-        return cached
+        return _heal_cached_summary(cached, req, cache_key, request, background_tasks)
 
     record = book_data.resolve_book(req.title, req.author, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
 
@@ -2682,23 +2707,12 @@ def summary_stream(req: SummaryRequest, background_tasks: BackgroundTasks, reque
                      req.google_id, req.openlibrary_id, req.bookwyrm_id, req.language)
         cached = cache.get(*cache_key)
         if cached:
-            _refresh_canonical(cached)  # classic route self-heals this too
-            # The Fandom re-probe has to be here as well as on the classic
-            # route, and this is the copy that actually matters: the site
-            # calls /summary/stream and nothing else (bookhub/summary.html),
-            # so a heal wired only into /summary would sit there looking
-            # correct and never once run for a real reader.
-            if isinstance(cached, dict) and cached.get("found") \
-                    and cached.get("fandom_gen", 0) < _FANDOM_RESOLVER_GEN \
-                    and (not cached.get("chapters") or not cached.get("characters")):
-                background_tasks.add_task(_heal_fandom_fields, cache_key, dict(cached))
-            # Refresh a stale-format static page on view (version-gated; cheap
-            # no-op once current). Background task runs after the stream ends.
-            if isinstance(cached, dict) and cached.get("found") \
-                    and github_publisher.is_enabled() and req.language == "en" \
-                    and _publish_quota_ok(request):
-                background_tasks.add_task(github_publisher.publish_book, cached)
-            yield sse({"done": cached})
+            # Same heals as the classic route, from one shared function.
+            # This is the copy that matters: the site calls this route and
+            # falls back to /summary only when streaming fails.
+            healed = _heal_cached_summary(cached, req, cache_key, request,
+                                          background_tasks)
+            yield sse({"done": healed})
             return
 
         record = book_data.resolve_book(req.title, req.author, req.isbn,
