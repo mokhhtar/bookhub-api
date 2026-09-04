@@ -186,12 +186,19 @@ function pagesTab(snap, filterId) {
 
   const rows = shown.map((b) => {
     const cell = (n) => (n ? String(n) : `<span class="warn">0</span>`);
+    const full = b.title || b.slug;
+    // Titles run to sixteen words on this shelf ("A general history of the
+    // pyrates, from their first rise and settlement in the Island of
+    // Providence, to the present time"), and an unbounded column pushed every
+    // count off the right edge — the numbers this tab exists to show. Clipped
+    // to a readable width with the whole title on hover and one click away.
     return `<tr>
-      <td><a href="https://litheca.com/summary/${esc(b.slug)}/" target="_blank" rel="noopener">${esc(b.title || b.slug)}</a></td>
-      <td class="mut">${esc(b.author || "")}</td>
-      <td>${cell(b.chapters)}</td><td>${cell(b.characters)}</td>
-      <td>${b.quotes || "—"}</td><td>${b.free_ebook ? "yes" : "—"}</td>
-      <td class="mut">v${esc(b.version)}</td></tr>`;
+      <td><a class="clip" style="max-width:32ch" title="${esc(full)}"
+        href="https://litheca.com/summary/${esc(b.slug)}/" target="_blank" rel="noopener">${esc(full)}</a></td>
+      <td><span class="clip mut" style="max-width:18ch" title="${esc(b.author || "")}">${esc(b.author || "")}</span></td>
+      <td class="num">${cell(b.chapters)}</td><td class="num">${cell(b.characters)}</td>
+      <td class="num">${b.quotes || "—"}</td><td class="num">${b.free_ebook ? "yes" : "—"}</td>
+      <td class="num mut">v${esc(b.version)}</td></tr>`;
   }).join("");
 
   return `<p class="sub">${books.length} published book page(s) · ${esc(snap.character_pages)} character page(s) ·
@@ -302,7 +309,15 @@ th{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut)
 tr:last-child td{border-bottom:0}
 td a{color:inherit;text-decoration:none;border-bottom:1px solid var(--line)}
 td a:hover{border-bottom-color:currentColor}
-td.mut{color:var(--mut);white-space:normal}
+td.mut{color:var(--mut)}
+/* A max-width on a <td> is advisory in an auto-layout table — the cell grows
+   to fit anyway. Clipping a block-level child is what actually holds, so the
+   long-text columns carry this and the counts stay on screen. */
+.clip{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.num{text-align:right;font-variant-numeric:tabular-nums;width:1%}
+/* The errors tab's detail column is the opposite case: a list of slugs that
+   should wrap rather than be cut off. */
+.issue td.mut{white-space:normal}
 .b-crawled td:nth-child(2),.b-excluded td:nth-child(2),.b-error td:nth-child(2){color:var(--work);font-weight:600}
 .b-indexed td:nth-child(2){color:var(--good)}
 .warn{color:var(--work);font-weight:600}
