@@ -684,13 +684,14 @@ def publish_book(result: dict) -> None:
         # a version behind, recovered on the first request.
         trust_flags = result.get("static_page") is not False
         if trust_flags:
-            if gid and _flag_is_current(cache.get_key(f"published_gid:{gid}")):
+            if gid and _flag_is_current(cache.get_key(f"published_gid:{gid}"), result):
                 return
-            if _flag_is_current(cache.get_key(f"published:{book_slug}")):
+            if _flag_is_current(cache.get_key(f"published:{book_slug}"), result):
                 return
 
         a_slug = slug_mod.author_slug(result.get("author") or "")
         pv = _published_payload_versions(result)
+        rl = _published_rich_lists(result)
 
         # Dedupe layer 2 + collision handling: the repo itself.
         path = f"_books/{book_slug}.md"
@@ -705,7 +706,7 @@ def publish_book(result: dict) -> None:
                     if _update_file(path, md,
                                     f"Refresh book page to v{PUBLISH_CONTENT_VERSION}: {title}", sha):
                         log.info(f"Refreshed stale book page ({path}) to v{PUBLISH_CONTENT_VERSION}")
-                _mark_published(book_slug, gid, a_slug, pv)
+                _mark_published(book_slug, gid, a_slug, pv, rl)
                 return
             # Different book shares the slug — suffix with author, then -2.
             for candidate in (f"{book_slug}-{a_slug}", f"{book_slug}-2"):
@@ -719,7 +720,7 @@ def publish_book(result: dict) -> None:
                             if _update_file(f"_books/{candidate}.md", md,
                                             f"Refresh book page to v{PUBLISH_CONTENT_VERSION}: {title}", c_sha):
                                 log.info(f"Refreshed stale book page (_books/{candidate}.md)")
-                        _mark_published(candidate, gid, a_slug, pv)
+                        _mark_published(candidate, gid, a_slug, pv, rl)
                         return
                     continue
                 book_slug, path = candidate, f"_books/{candidate}.md"
@@ -731,12 +732,22 @@ def publish_book(result: dict) -> None:
         md = _book_markdown(result, book_slug, a_slug)
         if _create_file(path, md, f"Add book page: {title}"):
             log.info(f"Published book page: {path}")
-        _mark_published(book_slug, gid, a_slug, pv)  # set flags even on benign-skip
+        _mark_published(book_slug, gid, a_slug, pv, rl)  # set flags even on benign-skip
     except Exception as e:
         log.warning(f"publish_book failed (non-fatal): {e}")
 
 
-def _flag_is_current(flag) -> bool:
+def _published_rich_lists(result: dict) -> dict:
+    """Which unversioned list fields the page is being published WITH.
+
+    The version-based half of the flag cannot express these — chapters and
+    characters carry no `v` — so the flag records their mere presence
+    instead. See _flag_is_current for what that buys.
+    """
+    return {name: bool(result.get(name)) for name, _line_re in _RICH_LIST_FIELDS}
+
+
+def _flag_is_current(flag, result: dict | None = None) -> bool:
     """A published:* / published_gid:* flag counts as 'done' only if it records
     a content version >= the current one AND the version of EVERY versioned
     payload the page was published with. Absent flag or a pre-versioning flag
@@ -755,14 +766,38 @@ def _flag_is_current(flag) -> bool:
     flag said done and the corrected test never ran. Same bug, one layer out,
     for the same reason — third sighting of this shape. Reading the whole of
     _VERSIONED_PAYLOADS is what stops there being a fourth.
+
+    There was a fourth anyway, and `result` is the answer to it. Teaching
+    _page_is_stale about chapters and characters changed nothing at all in
+    production: A Tale of Two Cities held nine characters in its summary and
+    `characters: []` on its committed page, and publish_book returned HERE,
+    two layers above the test that would have caught it. Versions could not
+    see the problem because these two fields have no version — so the flag
+    now also records whether the page went out WITH them, and a response
+    carrying a list the flag cannot vouch for sends us to read the repo.
+
+    Flags predating that record have none, so they are distrusted once —
+    one repo read per page, after which the flag carries it again. Same
+    deliberate sweep the 'pv' record performs, and the same reason: it is
+    how pages already frozen in this state get re-examined at all.
     """
     if not (isinstance(flag, dict) and flag.get("v", 1) >= PUBLISH_CONTENT_VERSION):
         return False
     published = flag.get("pv")
     if not isinstance(published, dict):
         return False        # pre-'pv' flag: distrust once, then it carries
-    return all(published.get(name, 0) >= _current_payload_version(attr)
-               for name, _line_re, attr in _VERSIONED_PAYLOADS)
+    if not all(published.get(name, 0) >= _current_payload_version(attr)
+               for name, _line_re, attr in _VERSIONED_PAYLOADS):
+        return False
+    if result is not None:
+        rich = flag.get("rl")
+        for name, _line_re in _RICH_LIST_FIELDS:
+            # Only ever distrust in the direction of having MORE to publish,
+            # matching _page_missing_data: a response that has gone quiet
+            # must not send us rewriting a page that is already richer.
+            if result.get(name) and not (isinstance(rich, dict) and rich.get(name)):
+                return False
+    return True
 
 
 # ── Published-books index (single Redis key) ─────────────────
@@ -891,7 +926,7 @@ def _same_book(content: str, title: str, a_slug: str) -> bool:
 
 
 def _mark_published(book_slug: str, gid: str, a_slug: str = "",
-                    pv: dict | None = None) -> None:
+                    pv: dict | None = None, rl: dict | None = None) -> None:
     ts = datetime.now(timezone.utc).timestamp()
     v = PUBLISH_CONTENT_VERSION
     # "a" (author_slug) joined the flags for /search static-link identity
@@ -900,7 +935,10 @@ def _mark_published(book_slug: str, gid: str, a_slug: str = "",
     # from, so a page built on a stale one cannot be short-circuited as done.
     # It records what was PUBLISHED, never the current constants — writing the
     # constants here would make the flag agree with itself forever.
-    entry = {"gid": gid, "ts": ts, "v": v, "a": a_slug, "pv": pv or {}}
+    # "rl" records whether the page went out carrying chapters/characters.
+    # They have no version to compare, so presence is the only thing a flag
+    # can honestly assert about them — see _flag_is_current.
+    entry = {"gid": gid, "ts": ts, "v": v, "a": a_slug, "pv": pv or {}, "rl": rl or {}}
     cache.set_key(f"published:{book_slug}", entry)
     if gid:
         cache.set_key(f"published_gid:{gid}", {**entry, "slug": book_slug})
