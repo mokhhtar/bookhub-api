@@ -1,0 +1,62 @@
+name: Refresh published book pages
+
+# The committed _books/*.md pages are only rewritten when someone VIEWS the
+# book — publish_book runs as a background task off a /summary read. That was
+# fine while a page could only be written by a fresh summary, and stopped
+# being fine once the resolver fixes of 2026-09-03/04 made most existing
+# pages repairable: 164 of 200 carried no chapters, 134 no characters.
+#
+# Those are precisely the pages nobody visits. A book showing neither
+# characters nor chapters is the thin page that never earned traffic, so
+# waiting for a reader to trigger the repair means waiting forever, for
+# exactly the pages that most need it. This walks them instead.
+#
+# Deliberately small: /summary's publish path is capped at
+# SUMMARY_PUBLISH_DAILY (8) per client IP per day and every request from one
+# job shares the runner's IP, so a bigger batch would only heal caches whose
+# pages then could not be written. A full pass takes about three weeks. If
+# that is too slow, raise SUMMARY_PUBLISH_DAILY on Render — not the batch
+# here, which would just spend requests to no effect.
+
+on:
+  schedule:
+    - cron: "40 3 * * *"   # 03:40 UTC — clear of warm-daily's 00:05
+  workflow_dispatch:
+    inputs:
+      batch:
+        description: "Pages to refresh this run (see the cap above)"
+        required: false
+        default: "8"
+      offset:
+        description: "Override the rotating window start (blank = by day-of-year)"
+        required: false
+        default: ""
+      dry_run:
+        description: "List what would be refreshed without calling /summary"
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Wake the instance (free tier sleeps after ~15 min idle)
+        run: curl -sS -m 120 --retry 3 --retry-delay 10 "https://bookhub-api-hnv7.onrender.com/health" || true
+
+      - name: Refresh a batch of published pages
+        env:
+          # Lifts the anonymous GitHub API listing limit from 60/hr to 5000;
+          # the repo is public, so this is a convenience, not access.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/refresh_published_pages.py \
+            --batch "${{ github.event.inputs.batch || '8' }}" \
+            ${{ github.event.inputs.offset != '' && format('--offset {0}', github.event.inputs.offset) || '' }} \
+            ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '' }}
