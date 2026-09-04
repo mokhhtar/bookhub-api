@@ -33,6 +33,51 @@
 
 const KEY = "latest";
 
+// A SECOND, INDEPENDENT FEED. The indexing snapshot answers "what did Google
+// do with this URL"; it cannot answer "is the page any good", and every bug
+// worth catching lately was the second question — a book page linking nine
+// characters whose pages were never published, three pages offering
+// "5, 28, 47, 68…" under a heading that says Chapters. Written by the site
+// repo's page-integrity workflow from the files themselves.
+//
+// Kept as its own key rather than merged into `latest` because the two are
+// produced on different schedules by different jobs, and a merge would mean
+// whichever ran last silently deciding how fresh the other half looked.
+// Written via POST /ingest?feed=pages — see the FEEDS note in fetch() for why
+// the path is shared rather than /ingest/pages.
+const KEY_PAGES = "pages";
+
+const TABS = [
+  { id: "indexing", label: "Indexing" },
+  { id: "pages", label: "Pages" },
+  { id: "errors", label: "Errors" },
+];
+
+// The integrity problems, worst first. `fix` says what actually resolves it,
+// because a dashboard that only names a fault trains you to scroll past it.
+const ISSUES = {
+  dead_character_link: {
+    label: "Dead character link", tone: "work",
+    fix: "The book page links a character page that was never published. Viewing the book republishes both.",
+  },
+  junk_chapters: {
+    label: "Chapter list is not chapters", tone: "work",
+    fix: "An Open Library table of contents holding page numbers or a volume note. The resolver rejects these now; a page written before that has to be emptied by hand.",
+  },
+  stale_version: {
+    label: "Old page format", tone: "wait",
+    fix: "Rewritten automatically the next time the book is viewed.",
+  },
+  empty_page: {
+    label: "No chapters, characters or quotes", tone: "wait",
+    fix: "Often correct — plenty of books genuinely have none. Worth a look only if the book obviously should.",
+  },
+  no_cover: {
+    label: "No cover", tone: "wait",
+    fix: "No cover was found at any provider. Never substitute one from another edition.",
+  },
+};
+
 // Access sets this on every request it lets through, and strips any copy the
 // client tried to send. Presence is a backstop, not the gate — the gate is
 // Access itself, upstream. Verifying the JWT signature here would add key
@@ -69,7 +114,7 @@ const BUCKETS = [
 const bucketOf = (state) =>
   BUCKETS.find((b) => b.test(state || ""))?.key || "other";
 
-function page(snap) {
+function indexingTab(snap) {
   const pages = snap?.pages || [];
   const counts = {};
   for (const p of pages) {
@@ -101,17 +146,150 @@ function page(snap) {
       <td>${esc(state)}</td><td>${esc(crawl)}</td><td>${canon}</td></tr>`;
   }).join("");
 
+  return `<p class="sub">${esc(snap?.site || "—")} · ${pages.length} sitemap URL(s) ·
+checked ${esc(snap?.checked_at ? String(snap.checked_at).replace("T", " ").slice(0, 16) + " UTC" : "—")}</p>
+<div class="cards">${cards || '<div class="card wait"><div class="n">0</div><div class="l">No data yet</div><p>Run the “Indexing status” workflow.</p></div>'}</div>
+<div class="scroll"><table><thead><tr><th>Page</th><th>State</th><th>Last crawl</th><th>Canonical</th></tr></thead>
+<tbody>${rows || '<tr><td colspan="4">Nothing recorded yet.</td></tr>'}</tbody></table></div>
+<footer>Self-reported by Google’s URL Inspection API. There is no supported way to
+request indexing for these pages — the Indexing API covers only JobPosting and
+BroadcastEvent — so “Crawled, not indexed” is answered by improving the page,
+never by asking again.</footer>`;
+}
+
+// The filters are LINKS, not script. The whole dashboard is server-rendered,
+// and adding a first line of JavaScript for four toggles would be a new
+// pattern to keep working for no gain at two hundred rows.
+const FILTERS = [
+  { id: "", label: "All", test: () => true },
+  { id: "missing", label: "Missing chapters or characters",
+    test: (b) => !b.chapters || !b.characters },
+  { id: "nochars", label: "No characters", test: (b) => !b.characters },
+  { id: "nochapters", label: "No chapters", test: (b) => !b.chapters },
+];
+
+function pagesTab(snap, filterId) {
+  const books = snap?.books || [];
+  if (!books.length) {
+    return `<p class="sub">Nothing recorded yet. Run the “Page integrity” workflow in the site repo.</p>`;
+  }
+  const f = FILTERS.find((x) => x.id === filterId) || FILTERS[0];
+  const shown = books.filter(f.test);
+  const missing = books.filter((b) => !b.chapters || !b.characters).length;
+
+  const chips = FILTERS.map((x) => {
+    const n = books.filter(x.test).length;
+    const on = x.id === f.id ? " on" : "";
+    const q = x.id ? `?tab=pages&amp;f=${x.id}` : "?tab=pages";
+    return `<a class="chip${on}" href="${q}">${esc(x.label)} <b>${n}</b></a>`;
+  }).join("");
+
+  const rows = shown.map((b) => {
+    const cell = (n) => (n ? String(n) : `<span class="warn">0</span>`);
+    return `<tr>
+      <td><a href="https://litheca.com/summary/${esc(b.slug)}/" target="_blank" rel="noopener">${esc(b.title || b.slug)}</a></td>
+      <td class="mut">${esc(b.author || "")}</td>
+      <td>${cell(b.chapters)}</td><td>${cell(b.characters)}</td>
+      <td>${b.quotes || "—"}</td><td>${b.free_ebook ? "yes" : "—"}</td>
+      <td class="mut">v${esc(b.version)}</td></tr>`;
+  }).join("");
+
+  return `<p class="sub">${books.length} published book page(s) · ${esc(snap.character_pages)} character page(s) ·
+scanned ${esc(String(snap.generated_at || "").replace("T", " ").slice(0, 16))} UTC</p>
+<div class="cards">
+  <div class="card ${missing ? "wait" : "good"}"><div class="n">${missing}</div>
+    <div class="l">Missing chapters or characters</div>
+    <p>Repaired as the refresh sweep reaches them — eight pages a day, so this should fall steadily.</p></div>
+  <div class="card good"><div class="n">${books.length - missing}</div>
+    <div class="l">Complete</div><p>Carrying both a chapter list and a cast.</p></div>
+</div>
+<div class="chips">${chips}</div>
+<div class="scroll"><table><thead><tr><th>Book</th><th>Author</th><th>Chapters</th>
+<th>Characters</th><th>Quotes</th><th>Free ebook</th><th>Format</th></tr></thead>
+<tbody>${rows || '<tr><td colspan="7">Nothing matches this filter.</td></tr>'}</tbody></table></div>
+<footer>Read from the committed <code>_books/*.md</code>, so this is what a reader
+and Google actually get — not what the API would answer if asked today.</footer>`;
+}
+
+function errorsTab(snap) {
+  const books = snap?.books || [];
+  if (!books.length) {
+    return `<p class="sub">Nothing recorded yet. Run the “Page integrity” workflow in the site repo.</p>`;
+  }
+  const groups = new Map();
+  for (const b of books) {
+    for (const i of b.issues || []) {
+      if (!groups.has(i.kind)) groups.set(i.kind, []);
+      groups.get(i.kind).push({ b, detail: i.detail });
+    }
+  }
+  // Known kinds first, in the order ISSUES declares; anything the scanner
+  // starts reporting that this Worker has never heard of still gets shown,
+  // under its own name, rather than being dropped for being unrecognised.
+  const order = Object.keys(ISSUES).filter((k) => groups.has(k))
+    .concat([...groups.keys()].filter((k) => !ISSUES[k]));
+
+  if (!order.length) {
+    return `<p class="sub">No integrity problems across ${books.length} pages.</p>`;
+  }
+
+  const sections = order.map((kind) => {
+    const meta = ISSUES[kind] || { label: kind, tone: "work", fix: "" };
+    const hits = groups.get(kind);
+    const rows = hits.map(({ b, detail }) => `<tr>
+      <td><a href="https://litheca.com/summary/${esc(b.slug)}/" target="_blank" rel="noopener">${esc(b.title || b.slug)}</a></td>
+      <td class="mut">${esc(detail || "")}</td></tr>`).join("");
+    return `<section class="issue">
+      <h2 class="${meta.tone}">${esc(meta.label)} <span class="count">${hits.length}</span></h2>
+      <p class="fix">${esc(meta.fix)}</p>
+      <div class="scroll"><table><tbody>${rows}</tbody></table></div>
+    </section>`;
+  }).join("");
+
+  const total = [...groups.values()].reduce((n, v) => n + v.length, 0);
+  return `<p class="sub">${total} issue(s) across ${books.length} pages ·
+scanned ${esc(String(snap.generated_at || "").replace("T", " ").slice(0, 16))} UTC</p>
+${sections}
+<footer>Only shapes that are wrong however you look at them. An empty chapter
+list is not one — plenty of books genuinely have none — so it is reported as a
+fact on the Pages tab and reaches this tab only when the page has nothing at
+all.</footer>`;
+}
+
+function page(snap, psnap, tab, filterId) {
+  const active = TABS.find((t) => t.id === tab) ? tab : "indexing";
+  const nErr = (psnap?.books || []).reduce((n, b) => n + (b.issues?.length || 0), 0);
+  const nav = TABS.map((t) => {
+    const badge = t.id === "errors" && nErr ? ` <b>${nErr}</b>` : "";
+    return `<a class="tab${t.id === active ? " on" : ""}" href="?tab=${t.id}">${esc(t.label)}${badge}</a>`;
+  }).join("");
+
+  const body = active === "pages" ? pagesTab(psnap, filterId)
+    : active === "errors" ? errorsTab(psnap)
+    : indexingTab(snap);
+
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<title>Indexing status — Litheca</title><style>
+<title>Site status — Litheca</title><style>
 :root{--bg:#fbfaf8;--fg:#1d211e;--mut:#5b625c;--line:#e2e0da;--good:#2f6b4f;--work:#a3342a;--wait:#8a6d3b;--card:#fff}
 @media (prefers-color-scheme:dark){:root{--bg:#141715;--fg:#e8e9e4;--mut:#a8aea3;--line:#2c302d;--card:#1b1f1c}}
 *{box-sizing:border-box}body{margin:0;padding:28px 20px 60px;background:var(--bg);color:var(--fg);
 font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
-.wrap{max-width:1000px;margin:0 auto}h1{font-size:22px;margin:0 0 4px}
+.wrap{max-width:1000px;margin:0 auto}h1{font-size:22px;margin:0 0 12px}
 .sub{color:var(--mut);font-size:13px;margin:0 0 24px}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:28px}
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:20px;flex-wrap:wrap}
+.tab{padding:8px 14px;font-size:13px;font-weight:600;color:var(--mut);text-decoration:none;
+border:1px solid transparent;border-bottom:0;border-radius:3px 3px 0 0;margin-bottom:-1px}
+.tab:hover{color:var(--fg)}
+.tab.on{color:var(--fg);background:var(--card);border-color:var(--line);border-bottom:1px solid var(--card)}
+.tab b{font-weight:700;color:var(--work)}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.chip{font-size:12px;padding:5px 11px;border:1px solid var(--line);border-radius:999px;
+color:var(--mut);text-decoration:none;background:var(--card)}
+.chip:hover{color:var(--fg)}.chip.on{color:var(--fg);border-color:currentColor;font-weight:600}
+.chip b{font-weight:700}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:22px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:3px;padding:14px 16px}
 .card .n{font-size:30px;font-weight:650;line-height:1.1}
 .card .l{font-weight:600;font-size:13px;margin-bottom:6px}
@@ -124,21 +302,21 @@ th{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut)
 tr:last-child td{border-bottom:0}
 td a{color:inherit;text-decoration:none;border-bottom:1px solid var(--line)}
 td a:hover{border-bottom-color:currentColor}
+td.mut{color:var(--mut);white-space:normal}
 .b-crawled td:nth-child(2),.b-excluded td:nth-child(2),.b-error td:nth-child(2){color:var(--work);font-weight:600}
 .b-indexed td:nth-child(2){color:var(--good)}
 .warn{color:var(--work);font-weight:600}
-footer{margin-top:26px;font-size:12px;color:var(--mut)}
+.issue{margin-bottom:26px}
+.issue h2{font-size:14px;margin:0 0 4px;display:flex;align-items:center;gap:8px}
+.issue h2.work{color:var(--work)}.issue h2.wait{color:var(--wait)}
+.issue h2 .count{font-size:12px;color:var(--mut);font-weight:600}
+.issue .fix{margin:0 0 10px;font-size:12px;color:var(--mut);max-width:70ch}
+footer{margin-top:26px;font-size:12px;color:var(--mut);max-width:75ch}
+code{font-size:12px}
 </style></head><body><div class="wrap">
-<h1>Indexing status</h1>
-<p class="sub">${esc(snap?.site || "—")} · ${pages.length} sitemap URL(s) ·
-checked ${esc(snap?.checked_at ? String(snap.checked_at).replace("T", " ").slice(0, 16) + " UTC" : "—")}</p>
-<div class="cards">${cards || '<div class="card wait"><div class="n">0</div><div class="l">No data yet</div><p>Run the “Indexing status” workflow.</p></div>'}</div>
-<div class="scroll"><table><thead><tr><th>Page</th><th>State</th><th>Last crawl</th><th>Canonical</th></tr></thead>
-<tbody>${rows || '<tr><td colspan="4">Nothing recorded yet.</td></tr>'}</tbody></table></div>
-<footer>Self-reported by Google’s URL Inspection API. There is no supported way to
-request indexing for these pages — the Indexing API covers only JobPosting and
-BroadcastEvent — so “Crawled, not indexed” is answered by improving the page,
-never by asking again.</footer>
+<h1>Site status</h1>
+<nav class="tabs">${nav}</nav>
+${body}
 </div></body></html>`;
 }
 
@@ -146,7 +324,30 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    if (url.pathname === "/ingest" && request.method === "POST") {
+    // ONE PATH, TWO FEEDS, selected by ?feed=. Not /ingest/pages, which would
+    // have read better: /ingest is reached through a path-scoped Cloudflare
+    // Access application carrying a Bypass policy, and whether that rule
+    // covers a deeper path is console state no file here records. A query
+    // parameter cannot fall outside it, so the second feed needs no Access
+    // change and cannot be broken by one.
+    //
+    // Still an explicit selector rather than sniffing the body: a caller
+    // naming a feed this Worker does not know is refused, instead of being
+    // quietly treated as the other one and overwriting its key.
+    const FEEDS = {
+      indexing: { key: KEY, field: "pages" },
+      pages: { key: KEY_PAGES, field: "books" },
+    };
+    const ingest = url.pathname === "/ingest"
+      ? FEEDS[url.searchParams.get("feed") || "indexing"] || "unknown"
+      : null;
+
+    if (ingest === "unknown") {
+      return new Response(`unknown feed; expected one of ${Object.keys(FEEDS).join(", ")}`,
+                          { status: 400 });
+    }
+
+    if (ingest && request.method === "POST") {
       if (!env.INGEST_SECRET) {
         return new Response("ingest not configured", { status: 503 });
       }
@@ -160,12 +361,12 @@ export default {
       } catch (e) {
         return new Response("bad json", { status: 400 });
       }
-      if (!Array.isArray(body?.pages)) {
-        return new Response("expected {pages:[...]}", { status: 400 });
+      if (!Array.isArray(body?.[ingest.field])) {
+        return new Response(`expected {${ingest.field}:[...]}`, { status: 400 });
       }
       body.checked_at = new Date().toISOString();
-      await env.SEO.put(KEY, JSON.stringify(body));
-      return Response.json({ ok: true, pages: body.pages.length });
+      await env.SEO.put(ingest.key, JSON.stringify(body));
+      return Response.json({ ok: true, [ingest.field]: body[ingest.field].length });
     }
 
     if (url.pathname === "/" && request.method === "GET") {
@@ -176,14 +377,19 @@ export default {
           { status: 403, headers: { "Content-Type": "text/plain; charset=utf-8" } },
         );
       }
-      const raw = await env.SEO.get(KEY);
-      let snap = null;
-      try {
-        snap = raw ? JSON.parse(raw) : null;
-      } catch (e) {
-        snap = null;
-      }
-      return new Response(page(snap), {
+      // One unreadable feed must not blank the other: each is parsed on its
+      // own and a failure leaves that tab empty, not the dashboard.
+      const read = async (k) => {
+        try {
+          const raw = await env.SEO.get(k);
+          return raw ? JSON.parse(raw) : null;
+        } catch (e) {
+          return null;
+        }
+      };
+      const [snap, psnap] = await Promise.all([read(KEY), read(KEY_PAGES)]);
+      return new Response(page(snap, psnap, url.searchParams.get("tab"),
+                               url.searchParams.get("f") || ""), {
         headers: {
           "Content-Type": "text/html; charset=utf-8",
           "Cache-Control": "no-store",
