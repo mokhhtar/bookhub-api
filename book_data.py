@@ -1141,8 +1141,14 @@ def _resolve_book(title: str, author: str = "", isbn: Optional[str] = None, goog
                     # catalog-aware resolver first so series sharing a
                     # subdomain (e.g. lotm vs coi) aren't confused with
                     # each other by the flat FANDOM_WIKIS alias map.
-                    catalog_cfg_early = resolve_series_config_first(title)
-                    subdomain = catalog_cfg_early.subdomain if catalog_cfg_early else resolve_fandom_subdomain(title)
+                    # `series_record` is a resolved book, so its categories are
+                    # in scope here and the non-fiction gate can do its job —
+                    # unlike the search tier below, which only has a raw query
+                    # string and has no categories to pass.
+                    _cats = series_record.categories
+                    catalog_cfg_early = resolve_series_config_first(title, _cats)
+                    subdomain = (catalog_cfg_early.subdomain if catalog_cfg_early
+                                 else resolve_fandom_subdomain(title, categories=_cats))
                     if subdomain:
                         vol_part = title.split(",")[-1].strip() if "," in title else title
                         catalog_cfg = get_config_by_subdomain(subdomain, title)

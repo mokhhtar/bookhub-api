@@ -2060,7 +2060,10 @@ def _gather_extras(record: book_data.BookRecord) -> dict:
         """
         try:
             from tools.fandom import resolve_series_config_first
-            series_config = resolve_series_config_first(record.title)
+            # categories, like every other caller in this file: the catalog
+            # holds web novels only, so a self-help or memoir title has
+            # nothing to find here and should not go looking.
+            series_config = resolve_series_config_first(record.title, record.categories)
             if series_config and series_config.cover_url:
                 return series_config.cover_url
         except Exception as e:
