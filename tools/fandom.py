@@ -862,9 +862,36 @@ def resolve_fandom_subdomain(title: str, wikidata_id: Optional[str] = None,
     already has Google Books/Open Library categories in scope, passing
     them lets is_confidently_nonfiction() skip resolution entirely for
     non-fiction titles (no legitimate dedicated wiki exists for those).
+
+    CACHED HERE rather than in each caller, because there are four of them
+    (chapters, characters, quiz, /fandom/resolve) and the cascade underneath
+    is the single most expensive thing this module does — 8 to 35 seconds
+    cold, and a Brave call against a metered budget. The pieces were already
+    cached individually (Brave results, per-wiki relevance verdicts), which
+    left the orchestration and the whole Wikidata tier paying full price on
+    every caller.
+
+    A found subdomain keeps the default 30 days; a null expires in 15
+    minutes. That split is not a guess — it is what /fandom/resolve had to
+    learn the hard way, where a null cached for 30 days pinned two books to
+    "no wiki" and made three correct fixes look like failures.
     """
     if is_confidently_nonfiction(categories):
         return None
+
+    cache_key = ("fandom_subdomain_v1", title.lower(), wikidata_id or "")
+    cached = cache.get(*cache_key)
+    if cached is not None:
+        return cached.get("sub")
+
+    sub = _resolve_fandom_subdomain_uncached(title, wikidata_id)
+    cache.set({"sub": sub}, *cache_key, ttl=None if sub else 900)
+    return sub
+
+
+def _resolve_fandom_subdomain_uncached(title: str,
+                                       wikidata_id: Optional[str] = None) -> Optional[str]:
+    """The resolution itself. Split out so the cache above has one exit."""
     _refresh_fandom_wikis()
     candidates = get_series_title_candidates(title)
 

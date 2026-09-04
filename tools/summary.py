@@ -1890,7 +1890,43 @@ def author_works(name: str, exclude: str = "", exclude_key: str = ""):
 _FANDOM_RESOLVER_GEN = 3
 
 
-def _resolve_chapters(record: book_data.BookRecord) -> list:
+def _fandom_subdomain_for(record: book_data.BookRecord, memo: dict | None = None) -> Optional[str]:
+    """This book's Fandom subdomain, resolved AT MOST ONCE per request.
+
+    Chapters and characters both need it, and inside _gather_extras they run
+    CONCURRENTLY — so they start the same cascade at the same instant, and no
+    cache underneath can help: both miss, both pay, and a new book spends two
+    full resolutions and two Brave calls to learn one fact. `memo` is the
+    thread-safe holder that closes that window; the first closure in resolves
+    and the second waits on the lock and reads the answer. Passing no memo
+    (the self-heal, which calls the two in sequence) is fine — the cache in
+    resolve_fandom_subdomain covers that case on its own.
+
+    The catalog is consulted FIRST, and that ordering is load-bearing: two
+    real books can share one subdomain ("Lord of the Mysteries" and "Circle
+    of Inevitability"), and only CATALOG_SERIES can tell them apart —
+    resolve_fandom_subdomain is a flat alias map with no way to express the
+    distinction and would silently merge them, which is the wrong-volumes,
+    wrong-cover bug this ordering exists to prevent.
+    """
+    if memo is None:
+        return _fandom_subdomain_uncached(record)
+    lock = memo["lock"]
+    with lock:
+        if "sub" not in memo:
+            memo["sub"] = _fandom_subdomain_uncached(record)
+        return memo["sub"]
+
+
+def _fandom_subdomain_uncached(record: book_data.BookRecord) -> Optional[str]:
+    from tools.fandom import resolve_series_config_first, resolve_fandom_subdomain
+    series_config = resolve_series_config_first(record.title, record.categories)
+    if series_config:
+        return series_config.subdomain
+    return resolve_fandom_subdomain(record.title, categories=record.categories)
+
+
+def _resolve_chapters(record: book_data.BookRecord, memo: dict | None = None) -> list:
     """Fandom wiki first (web/light novels), Open Library's TOC second.
 
     Module-level rather than a closure inside _gather_extras because the
@@ -1898,21 +1934,8 @@ def _resolve_chapters(record: book_data.BookRecord) -> list:
     would be free to drift from this one.
     """
     try:
-        from tools.fandom import (
-            resolve_series_config_first,
-            resolve_fandom_subdomain,
-            extract_chapters_from_fandom,
-        )
-        # Try the structured catalog FIRST — it disambiguates books that
-        # share one Fandom subdomain (e.g. "Lord of the Mysteries" vs
-        # "Circle of Inevitability", same wiki, different series) via
-        # series_filter/exclude_series_patterns. The older
-        # resolve_fandom_subdomain has no way to express that distinction
-        # and would silently merge them, which is what caused wrong
-        # volumes/covers to show up for the wrong title.
-        series_config = resolve_series_config_first(record.title, record.categories)
-        subdomain = (series_config.subdomain if series_config
-                     else resolve_fandom_subdomain(record.title, categories=record.categories))
+        from tools.fandom import extract_chapters_from_fandom
+        subdomain = _fandom_subdomain_for(record, memo)
         if subdomain:
             chapters = extract_chapters_from_fandom(subdomain, record.title)
             if chapters:
@@ -1934,19 +1957,13 @@ def _resolve_chapters(record: book_data.BookRecord) -> list:
     return []
 
 
-def _resolve_characters(record: book_data.BookRecord) -> Optional[list]:
+def _resolve_characters(record: book_data.BookRecord, memo: dict | None = None) -> Optional[list]:
     """Fandom wiki first (web novels), Wikidata P674 fallback (classics) —
     the same source split as _resolve_chapters. Every entry carries name/slug/
     description/source; None when neither source knows this book."""
     try:
-        from tools.fandom import (
-            resolve_series_config_first,
-            resolve_fandom_subdomain,
-            extract_characters_from_fandom,
-        )
-        series_config = resolve_series_config_first(record.title, record.categories)
-        subdomain = (series_config.subdomain if series_config
-                     else resolve_fandom_subdomain(record.title, categories=record.categories))
+        from tools.fandom import extract_characters_from_fandom
+        subdomain = _fandom_subdomain_for(record, memo)
         if subdomain:
             chars = extract_characters_from_fandom(subdomain, record.title)
             if chars:
@@ -2018,12 +2035,20 @@ def _gather_extras(record: book_data.BookRecord) -> dict:
     route (which runs it while the text is streaming to the client).
     """
     import concurrent.futures
+    import threading
+
+    # Chapters and characters need the same Fandom subdomain and run at the
+    # same instant, so a cache underneath cannot help them — both miss, and a
+    # new book pays for two full cascades and two Brave calls to learn one
+    # fact. They share this holder instead: first one in resolves, the other
+    # waits on the lock and reads the answer.
+    fandom_memo: dict = {"lock": threading.Lock()}
 
     def get_chapters():
-        return _resolve_chapters(record)
+        return _resolve_chapters(record, fandom_memo)
 
     def get_characters():
-        return _resolve_characters(record)
+        return _resolve_characters(record, fandom_memo)
 
     def get_fandom_cover():
         """
