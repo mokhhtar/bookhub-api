@@ -582,6 +582,18 @@ def _query_open_library(title: str, author: str = "") -> Optional[BookRecord]:
     )
 
 
+# An entry that carries no title at all: a bare number or roman numeral (Open
+# Library editions that put PAGE numbers in the title field), or a volume note
+# standing alone ("Vols. 1-3.", "v. 2"). Used only to reject a TOC in which
+# EVERY entry looks like this — one such line among real chapter titles is
+# ordinary and stays.
+_TOC_NOT_A_TITLE = re.compile(
+    r"^(?:[\divxlc]+\.?"
+    r"|(?:vols?|volumes?|v|bks?|books?|parts?|pts?)\.?\s*[\divxlc]*\s*[-–—]?\s*[\divxlc]*\.?)$",
+    re.IGNORECASE,
+)
+
+
 def fetch_chapters_from_open_library(
     isbn_13: Optional[str] = None,
     isbn_10: Optional[str] = None,
@@ -610,6 +622,21 @@ def fetch_chapters_from_open_library(
                 out.append(title)
             if len(out) >= 150:
                 break
+        # A TOC where NOTHING is a title is not a chapter list. Open Library
+        # editions carry these routinely: some store page numbers in the title
+        # field, some store a volume note and nothing else. Measured over the
+        # 40 published pages that had chapters, three were this — A Wrinkle in
+        # Time offering "5, 28, 47, 68, 90…", The Picture of Dorian Gray
+        # twenty-one page numbers, The Portrait of a Lady the single entry
+        # "Vols. 1-3." — all live, all indexed, all shown to readers under a
+        # heading that says Chapters.
+        #
+        # Returning [] rather than the junk keeps the caller SCANNING: this
+        # runs per candidate edition, and a sibling edition of the same work
+        # often has the real table of contents. Rejecting here is what lets it
+        # be found. No data beats wrong data, and better data beats both.
+        if out and all(_TOC_NOT_A_TITLE.match(t) for t in out):
+            return []
         return out
 
     resolved_work_key = work_key
