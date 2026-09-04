@@ -2609,6 +2609,22 @@ def _heal_cached_summary(cached, req, cache_key, request, background_tasks):
         # page is current). Runs in the background; never blocks the read.
         if github_publisher.is_enabled() and req.language == "en" and _publish_quota_ok(request):
             background_tasks.add_task(github_publisher.publish_book, cached)
+            # The character pages have to go out with the book page, because
+            # _layouts/book.html renders every character as a LINK to
+            # /characters/<slug>/. Only the fresh-generation path used to
+            # publish them, which was consistent while a page could only ever
+            # be written from a fresh generation — and stopped being the
+            # moment a cache hit could refresh one. A Tale of Two Cities was
+            # republished carrying nine characters and not one of their pages
+            # existed: charles-darnay, sydney-carton, lucie-manette and the
+            # rest were nine broken links on a live page.
+            #
+            # Safe to fire on every refresh: publish_character is create-only
+            # and flag-deduped, so an existing page costs a Redis read.
+            for ch in (cached.get("characters") or [])[:12]:
+                background_tasks.add_task(github_publisher.publish_character,
+                                          ch, cached.get("title") or "",
+                                          cached.get("slug") or "")
     return cached
 
 
