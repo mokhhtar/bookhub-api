@@ -1403,13 +1403,30 @@ def extract_chapters_from_fandom(subdomain: str, book_title: str) -> list[str]:
     exceptions (COI filtering, "ignored_terms" sets, volume-header regexes)
     is exactly the kind of special-case dictionary that breaks on the next
     new title. Extraction with Gemini generalizes: it reads the page's
+    CACHED, which its character twin has been since it was written and this
+    was not. Every call costs up to nine wiki searches, three page fetches
+    and a Gemini extraction, and /summary reaches it on every cold read of
+    every web-novel book. Same key shape and same TTL split as
+    extract_characters_from_fandom: a real chapter list is stable and keeps
+    the default 30 days, an empty result expires in a day because a wiki
+    that has not written its chapter page yet may well write one.
+
     meaning regardless of its markup shape, and is explicitly instructed to
     return nothing rather than invent a plausible-looking fake list.
     """
+    cache_key = ("fandom_chapters_v1", subdomain, book_title)
+    cached = cache.get(*cache_key)
+    if cached is not None:
+        return cached
+
+    # The hand-verified catalog is consulted inside the cache, not in front of
+    # it: it is a local dict lookup either way, and keeping one exit point
+    # means every path through this function is cached exactly once.
     try:
         from tools.fandom_catalog import fetch_chapters_for_title
         catalog_chapters = fetch_chapters_for_title(subdomain, book_title)
         if catalog_chapters:
+            cache.set(catalog_chapters, *cache_key)
             return catalog_chapters
     except Exception as e:
         log.warning(f"Fandom catalog chapter fetch failed for '{book_title}': {e}")
@@ -1501,11 +1518,13 @@ def extract_chapters_from_fandom(subdomain: str, book_title: str) -> list[str]:
             log.warning(f"Failed fetching raw text for page '{page_title}' on wiki '{subdomain}': {e}")
 
     if not candidate_texts:
+        cache.set([], *cache_key, ttl=86400)  # short: the wiki may grow one
         return []
 
     combined = "\n\n".join(f"=== Wiki page: {t} ===\n{txt}" for t, txt in candidate_texts)
     if not _title_mentioned_in_text(book_title, combined):
         log.info(f"Rejected Fandom chapter extraction for '{book_title}' on wiki '{subdomain}' — fetched pages don't mention this title.")
+        cache.set([], *cache_key, ttl=86400)
         return []
     prompt = _build_chapter_extraction_prompt(book_title, req_vol, combined)
 
@@ -1514,10 +1533,13 @@ def extract_chapters_from_fandom(subdomain: str, book_title: str) -> list[str]:
         data = gemini_client.parse_json_response(raw)
         if data.get("confident") and isinstance(data.get("chapters"), list):
             chapters = [c.strip() for c in data["chapters"] if isinstance(c, str) and c.strip()]
-            return chapters[:150]
+            chapters = chapters[:150]
+            cache.set(chapters, *cache_key, ttl=None if chapters else 86400)
+            return chapters
     except Exception as e:
         log.warning(f"Chapter extraction via Gemini failed for '{book_title}' on wiki '{subdomain}': {e}")
 
+    cache.set([], *cache_key, ttl=86400)
     return []
 
 
