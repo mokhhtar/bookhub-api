@@ -78,7 +78,21 @@ sys.path.insert(0, os.path.join(HERE, "akinator"))
 import extract_traits  # noqa: E402
 
 DEFAULT_MODEL = "openai/gpt-oss-120b"
-PACE_SECONDS = 1.2
+# 1.2s was about 50 requests a minute and Groq's free tier answers far fewer,
+# so most of a run was spent generating 429s rather than answers.
+PACE_SECONDS = 3.0
+
+# A 429 IS NOT AN ANSWER, AND IT USED TO BE TREATED AS ONE. extract_traits'
+# _groq_call catches every exception, logs "Groq fallback failed" and returns
+# None -- a deliberate fail-open shape there, where a missing trait is simply
+# a trait not learned. Here it silently destroyed a RUN: a pair asked three
+# times could come back with one usable answer, and one run is a coin toss.
+# Two consecutive batches lost most of their measurements this way.
+#
+# Not fixed in _groq_call, which the trait pipeline shares and whose fail-open
+# behaviour is correct for its own caller. Retried here instead, where waiting
+# is free and the alternative is a number nobody should trust.
+RETRY_WAITS = (6, 18, 45)
 
 
 def build_prompt(first: str, second: str, author: str) -> str:
@@ -149,23 +163,31 @@ def ask(first: str, second: str, author: str, model: str) -> dict | None:
         max_output_tokens=1400,
         response_mime_type="application/json",
     )
-    try:
-        raw = extract_traits._groq_call(build_prompt(first, second, author), config)
-    except Exception as e:
-        print(f"      call failed: {type(e).__name__}")
-        return None
-    if not raw:
-        return None
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        m = re.search(r"\{.*\}", raw, re.S)          # fenced or prefaced output
-        if not m:
-            return None
+    prompt = build_prompt(first, second, author)
+    # An empty return is retried as readily as a rate-limited one: _groq_call
+    # flattens both to None, and neither is a reason to throw a run away.
+    for wait in (0,) + RETRY_WAITS:
+        if wait:
+            time.sleep(wait)
         try:
-            return json.loads(m.group(0))
+            raw = extract_traits._groq_call(prompt, config)
+        except Exception as e:
+            print(f"      call failed: {type(e).__name__}")
+            raw = None
+        if not raw:
+            continue
+        try:
+            return json.loads(raw)
         except json.JSONDecodeError:
-            return None
+            m = re.search(r"\{.*\}", raw, re.S)      # fenced or prefaced output
+            if m:
+                try:
+                    return json.loads(m.group(0))
+                except json.JSONDecodeError:
+                    pass
+        # Unparseable is a bad answer rather than no answer, and asking the
+        # same question again is the cheapest way to find out which.
+    return None
 
 
 def rate_pair(pair: dict, runs: int, model: str, rng: random.Random) -> dict:
@@ -261,6 +283,11 @@ def main() -> int:
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--limit", type=int, help="rate only the first N pairs (a trial)")
+    # A bank burns down a day at a time whether or not the game is live, and a
+    # day that has passed can never be played. Rating it spends the daily budget
+    # on the only pairs whose quality can no longer matter -- and spends it
+    # FIRST, since the batch runs in date order.
+    ap.add_argument("--from", dest="start", help="skip days before this date")
     args = ap.parse_args()
 
     from gemini_client import GROQ_API_KEY
@@ -272,6 +299,13 @@ def main() -> int:
                 else os.path.join(os.path.abspath(args.site), DATA_SUBPATH))
     days = read_bank(data_dir)
     flat = [(d["date"], d["n"], p) for d in days for p in d["pairs"]]
+    if args.start:
+        before = len(flat)
+        flat = [f for f in flat if f[0] >= args.start]
+        skipped = before - len(flat)
+        if skipped:
+            print("skipping " + str(skipped) + " pair(s) on days before "
+                  + args.start + " -- those days have passed and cannot be played\n")
     if args.limit:
         flat = flat[:args.limit]
 
