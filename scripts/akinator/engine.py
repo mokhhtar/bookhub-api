@@ -76,8 +76,6 @@ ANSWER_EXCLUDES = {
     ("form:fiction", "no"): NARRATIVE_DEPENDENT_QUESTIONS,
     ("form:nonfiction", "yes"): NARRATIVE_DEPENDENT_QUESTIONS,
 }
-ANSWER_EXCLUDE_TRIGGERS = {q for q, _answer in ANSWER_EXCLUDES}
-
 # Belief floor. No candidate's likelihood is ever allowed to reach zero, so
 # a book can always climb back after a player answers something wrong.
 MIN_LIKELIHOOD = 0.02
@@ -365,7 +363,8 @@ class Matrix:
                  excluded: set[str] | None = None,
                  overrides: dict[str, dict[str, float]] | None = None,
                  cold_questions: list[str] | None = None,
-                 exclusive_extra: list[list[str]] | None = None):
+                 exclusive_extra: list[list[str]] | None = None,
+                 question_dependencies: list[dict] | None = None):
         self.books = books
         # Series membership per book index, for guess-time pooling. Absent
         # is fine — the engine simply never guesses a series.
@@ -414,6 +413,24 @@ class Matrix:
             members = [q for q in group if isinstance(q, str)]
             for q in members:
                 self.excludes.setdefault(q, set()).update(x for x in members if x != q)
+
+        # Directional parent-answer -> child suppressions. None keeps the
+        # built-in rules for older callers; an explicit list is the shipped
+        # artifact and is authoritative for the browser/parity path.
+        if question_dependencies is None:
+            self.answer_excludes = {k: set(v) for k, v in ANSWER_EXCLUDES.items()}
+        else:
+            self.answer_excludes: dict[tuple[str, str], set[str]] = {}
+            for rule in question_dependencies:
+                if not isinstance(rule, dict):
+                    continue
+                parent, answer, child = (rule.get("parent"), rule.get("answer"),
+                                         rule.get("child"))
+                if (parent in self.question_set or parent in self.cold_question_set) \
+                        and answer in ("yes", "no") \
+                        and (child in self.question_set or child in self.cold_question_set):
+                    self.answer_excludes.setdefault((parent, answer), set()).add(child)
+        self.answer_exclude_parents = {q for q, _answer in self.answer_excludes}
 
         # token -> indices of books whose cast contains it. Lets the endgame
         # consider only names some live candidate actually has, instead of
@@ -617,7 +634,7 @@ class Engine:
         # non-fiction path, do not ask questions that assume a story world,
         # narrator, or protagonist.  Marking them asked preserves the same
         # go-back semantics as exclusive groups and ladders.
-        self.asked.update(ANSWER_EXCLUDES.get((question, answer), ()))
+        self.asked.update(self.m.answer_excludes.get((question, answer), ()))
 
         # LADDERS: several questions that are really one number. A firm
         # answer fixes an interval, and every rung the interval already
@@ -753,7 +770,7 @@ class Engine:
             # and features.py does not. The page's `excludes[h.q]` is built
             # from the same merged list.
             if (q in LADDER_OF or q in self.m.excludes
-                    or q in ANSWER_EXCLUDE_TRIGGERS):
+                    or q in self.m.answer_exclude_parents):
                 continue
             w = ANSWER_WEIGHTS[a]
             if w == 0.0:

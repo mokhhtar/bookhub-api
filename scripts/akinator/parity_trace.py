@@ -231,8 +231,22 @@ def main() -> None:
     if exclusive_extra:
         print(f"exclusive_overrides.json: {len(exclusive_extra)} declared group(s)")
 
+    dep_path = os.path.join(args.artifacts, "question_dependencies.json")
+    dependencies: list[dict] = []
+    if os.path.exists(dep_path):
+        try:
+            with open(dep_path, encoding="utf-8") as fh:
+                data = json.load(fh)
+            if isinstance(data, list):
+                dependencies = [r for r in data if isinstance(r, dict)]
+        except (OSError, json.JSONDecodeError):
+            dependencies = []
+    if dependencies:
+        print(f"question_dependencies.json: {len(dependencies)} directional edge(s)")
+
     matrix = Matrix(books, qids, excluded=excluded, overrides=overrides,
-                    cold_questions=cold, exclusive_extra=exclusive_extra)
+                    cold_questions=cold, exclusive_extra=exclusive_extra,
+                    question_dependencies=dependencies)
     engine = Engine(matrix)
 
     turns = []

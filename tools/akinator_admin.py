@@ -99,6 +99,7 @@ ADMIN_CORRECTIONS_PATH = f"{ARTIFACT_DIR}/admin_corrections.json"
 QUESTION_OVERRIDES_PATH = f"{ARTIFACT_DIR}/question_overrides.json"
 QUESTIONS_PATH = f"{ARTIFACT_DIR}/questions.json"
 DISPLAY_PATH = f"{ARTIFACT_DIR}/display_overrides.json"
+DEPENDENCIES_PATH = f"{ARTIFACT_DIR}/question_dependencies.json"
 
 # Broader than akinator_learn.py's _WORK_KEY (works|site only) — the admin
 # page routinely acts on /fandom/ rows too.
@@ -450,6 +451,117 @@ def exclusive(body: ExclusiveRequest):
     return {"ok": True, "pairs": len(groups),
             "effect": "live on the next deploy, no rebuild; a firm yes to "
                       "either now suppresses the other"}
+
+
+# ── directional question dependencies ──────────────────────────────────
+# A dependency is not mutual exclusion. It says that one firm answer closes
+# a whole semantic branch: e.g. form:fiction=no makes a protagonist question
+# inapplicable. Stored as individual edges so the admin can add/review them
+# without rewriting a nested tree, while the UI groups them by parent.
+
+class DependencyRequest(BaseModel):
+    parent: str = Field(..., max_length=42)
+    answer: str = Field(..., max_length=3)
+    child: str = Field(..., max_length=42)
+    action: str = Field(default="add", max_length=8)
+
+
+def _all_live_question_ids() -> set[str]:
+    live, _ = _get_json(QUESTIONS_PATH, None)
+    if not live:
+        raise HTTPException(status_code=502, detail="live questions.json unreadable")
+    ids = {q.get("id") for q in live if isinstance(q, dict)}
+    cold, _ = _get_json(f"{ARTIFACT_DIR}/cold_questions.json", [])
+    if isinstance(cold, list):
+        ids |= {q.get("id") for q in cold if isinstance(q, dict)}
+    return {q for q in ids if isinstance(q, str)}
+
+
+@router.post("/dependency")
+def dependency(body: DependencyRequest):
+    if body.answer not in ("yes", "no"):
+        raise HTTPException(status_code=400, detail="answer must be yes or no")
+    if body.parent == body.child:
+        raise HTTPException(status_code=400, detail="a question cannot depend on itself")
+    live_ids = _all_live_question_ids()
+    for qid in (body.parent, body.child):
+        if not _QUESTION_ID.match(qid) or qid not in live_ids:
+            raise HTTPException(status_code=404,
+                                detail=f"'{qid}' is not a question the game asks")
+
+    rules, _ = _get_json(DEPENDENCIES_PATH, [])
+    if not isinstance(rules, list):
+        rules = []
+    edge = {"parent": body.parent, "answer": body.answer, "child": body.child}
+    kept = [r for r in rules if not (isinstance(r, dict)
+            and r.get("parent") == body.parent
+            and r.get("answer") == body.answer
+            and r.get("child") == body.child)]
+    if body.action == "remove":
+        if len(kept) == len(rules):
+            raise HTTPException(status_code=404, detail="no such dependency")
+        rules, verb = kept, "remove"
+    else:
+        if len(kept) != len(rules):
+            return {"ok": True, "effect": "already declared; nothing to do"}
+        rules, verb = kept + [edge], "declare"
+
+    rules.sort(key=lambda r: (r.get("parent", ""), r.get("answer", ""),
+                              r.get("child", "")))
+    wrote = _commit_files(
+        {DEPENDENCIES_PATH: _dump(rules)},
+        f"mind reader admin: {verb} {body.parent}={body.answer} -> {body.child}")
+    if not wrote:
+        raise HTTPException(status_code=502, detail="commit failed")
+    return {"ok": True, "rules": len(rules),
+            "effect": "live on the next deploy, no matrix rebuild"}
+
+
+@router.post("/dependencies/audit")
+def audit_dependencies():
+    """Find matrix cells that contradict a declared semantic branch.
+
+    A child asserted YES while its parent closes the branch is a definite
+    contradiction. A child asserted NO is counted separately but not called
+    wrong: today the packed format cannot distinguish false from inapplicable,
+    and deciding that representation is deliberately deferred.
+    """
+    from tools.akinator_learn import _artifacts, _book_states
+
+    rules, _ = _get_json(DEPENDENCIES_PATH, [])
+    rules = [r for r in rules if isinstance(r, dict)] if isinstance(rules, list) else []
+    art = _artifacts()
+    if not art:
+        raise HTTPException(status_code=503, detail="shipped artifacts unreadable")
+
+    conflicts, represented_no = [], 0
+    books = art.get("books") or []
+    for book in books:
+        key = book.get("k")
+        if not key:
+            continue
+        states = _book_states(key)
+        for rule in rules:
+            parent, child, answer = (rule.get("parent"), rule.get("child"),
+                                     rule.get("answer"))
+            trigger = states.get(parent)
+            if trigger is None or trigger != (answer == "yes"):
+                continue
+            child_state = states.get(child)
+            if child_state is True:
+                conflicts.append({"work_key": key, "title": book.get("t") or key,
+                                  "author": book.get("a") or "",
+                                  "parent": parent, "answer": answer,
+                                  "child": child})
+            elif child_state is False:
+                represented_no += 1
+
+    return {"ok": True, "conflicts": conflicts[:500],
+            "conflict_count": len(conflicts),
+            "represented_as_no": represented_no,
+            "truncated": len(conflicts) > 500,
+            "note": "Only child=yes is a definite contradiction. child=no may "
+                    "mean false or not-applicable until the null design is decided."}
 
 
 # ── POST /akinator/admin/display ────────────────────────────────────────

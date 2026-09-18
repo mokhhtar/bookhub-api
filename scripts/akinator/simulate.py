@@ -592,7 +592,18 @@ def main() -> None:
         print(f"Cold questions: {len(cold)} — {sorted(cold)}, "
               f"asked on turns {list(COLD_TURNS)}\n")
 
-    matrix = Matrix(books, questions, char_questions, cold_questions=cold)
+    dependencies: list[dict] = []
+    dep_path = os.path.join(ARTIFACT_DIR, "question_dependencies.json")
+    try:
+        with open(dep_path, encoding="utf-8") as fh:
+            raw_dependencies = json.load(fh)
+        if isinstance(raw_dependencies, list):
+            dependencies = [r for r in raw_dependencies if isinstance(r, dict)]
+    except (OSError, json.JSONDecodeError):
+        dependencies = []
+
+    matrix = Matrix(books, questions, char_questions, cold_questions=cold,
+                    question_dependencies=dependencies)
     if args.target_rank:
         # The honest control for a supplement measured with
         # --target-prefix: how do books ALREADY in the corpus score at the

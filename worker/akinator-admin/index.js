@@ -108,6 +108,8 @@ const ROUTES = {
   // it is a shipped overlay rather than an edit to features.EXCLUSIVE_GROUPS
   // plus a matrix rebuild. See the endpoint in akinator_admin.py.
   "/api/exclusive": relay("/akinator/admin/exclusive"),
+  "/api/dependency": relay("/akinator/admin/dependency"),
+  "/api/dependencies/audit": relay("/akinator/admin/dependencies/audit"),
   "/api/book": relay("/akinator/admin/book"),
   // Was missing, and the Rename button had been posting into a 404 since the
   // display override shipped: the endpoint existed on the Python side and the
@@ -418,6 +420,29 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
     <p class="sub" style="margin-top:10px">The four built-in groups (author nationality,
     setting, fiction/non-fiction, children/YA) live in <code>features.py</code> and are
     not listed here — this file is merged on top of them and cannot remove one.</p>
+  </div>
+
+  <div class="card" style="margin-top:22px">
+    <h3 style="margin:0 0 6px">Parent and dependent questions</h3>
+    <p class="sub" style="margin:0 0 12px">When a firm answer closes a semantic
+    branch, its dependent questions are never asked. This is directional:
+    <code>fiction = no</code> can suppress “main character”, but the child does
+    not suppress its parent. “Probably” and “don’t know” never fire a rule.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <select id="depParent"></select>
+      <select id="depAnswer"><option value="yes">is Yes</option><option value="no">is No</option></select>
+      <span class="sub">hide</span>
+      <select id="depChild"></select>
+      <button class="act" id="depAdd">Add dependency</button>
+    </div>
+    <p class="status" id="depStatus"></p>
+    <div class="scroll" style="margin-top:10px"><table>
+      <thead><tr><th>Parent answer</th><th>Dependent question</th><th></th></tr></thead>
+      <tbody id="depRows"><tr><td colspan="3" class="sub">Loading…</td></tr></tbody>
+    </table></div>
+    <p class="row"><button class="act ghost" id="depAudit">Audit matrix answers</button></p>
+    <p class="status" id="depAuditStatus"></p>
+    <div id="depAuditRows"></div>
   </div>
 </section>
 
@@ -968,6 +993,73 @@ document.getElementById("exRows").addEventListener("click", async (e)=>{
     await loadExclusive();
   } catch (err) { setStatus("exStatus", String(err.message||err), false); }
   finally { e.target.disabled = false; }
+});
+
+// ── directional parent/dependent questions ─────────────────────────────
+let dependencyRules = [];
+
+function fillDependencyPickers(){
+  const opts = questions.map(q => \`<option value="\${esc(q.id)}">\${esc(q.id)} — \${esc(q.text)}</option>\`).join("");
+  document.getElementById("depParent").innerHTML = opts;
+  document.getElementById("depChild").innerHTML = opts;
+}
+
+function renderDependencies(){
+  const rows = document.getElementById("depRows");
+  if (!dependencyRules.length) {
+    rows.innerHTML = '<tr><td colspan="3" class="sub">Nothing declared.</td></tr>';
+    return;
+  }
+  rows.innerHTML = dependencyRules.map(r => \`<tr>
+    <td><code>\${esc(r.parent)}</code> = <strong>\${esc(r.answer)}</strong></td>
+    <td><code>\${esc(r.child)}</code></td>
+    <td><button class="act ghost depDel" data-parent="\${esc(r.parent)}" data-answer="\${esc(r.answer)}" data-child="\${esc(r.child)}">Remove</button></td>
+  </tr>\`).join("");
+}
+
+async function loadDependencies(){
+  try {
+    const [rules, cold] = await Promise.all([
+      fetch(DATA+"/question_dependencies.json").then(r=>r.ok?r.json():[]).catch(()=>[]),
+      fetch(DATA+"/cold_questions.json").then(r=>r.ok?r.json():[]).catch(()=>[]),
+    ]);
+    if (Array.isArray(cold)) {
+      const have = new Set(questions.map(q=>q.id));
+      cold.forEach(q=>{ if(q && q.id && !have.has(q.id)){ questions.push(q); have.add(q.id); } });
+    }
+    dependencyRules = Array.isArray(rules) ? rules.filter(r=>r&&r.parent&&r.answer&&r.child) : [];
+    fillDependencyPickers(); renderDependencies();
+  } catch (e) { setStatus("depStatus", String(e.message||e), false); }
+}
+
+document.getElementById("depAdd").addEventListener("click", async (e)=>{
+  const parent=document.getElementById("depParent").value;
+  const answer=document.getElementById("depAnswer").value;
+  const child=document.getElementById("depChild").value;
+  if(parent===child){setStatus("depStatus","parent and child must differ",false);return;}
+  e.target.disabled=true;
+  try{const r=await post("/api/dependency",{parent,answer,child,action:"add"});setStatus("depStatus",r.effect,true);await loadDependencies();}
+  catch(err){setStatus("depStatus",String(err.message||err),false);}
+  finally{e.target.disabled=false;}
+});
+
+document.getElementById("depRows").addEventListener("click", async (e)=>{
+  if(!e.target.classList.contains("depDel"))return;
+  const d=e.target.dataset;e.target.disabled=true;
+  try{await post("/api/dependency",{parent:d.parent,answer:d.answer,child:d.child,action:"remove"});await loadDependencies();}
+  catch(err){setStatus("depStatus",String(err.message||err),false);}
+  finally{e.target.disabled=false;}
+});
+
+document.getElementById("depAudit").addEventListener("click", async (e)=>{
+  e.target.disabled=true;
+  try{
+    const r=await post("/api/dependencies/audit",{});
+    setStatus("depAuditStatus",r.conflict_count+" definite conflict(s); "+r.represented_as_no+" dependent cells stored as No (left unchanged pending the null decision).",r.conflict_count===0);
+    const rows=r.conflicts||[];
+    document.getElementById("depAuditRows").innerHTML=rows.length?'<div class="scroll"><table><thead><tr><th>Book</th><th>Closing answer</th><th>Impossible Yes</th></tr></thead><tbody>'+rows.map(x=>\`<tr><td>\${esc(x.title)}<br><span class="sub">\${esc(x.author||x.work_key)}</span></td><td><code>\${esc(x.parent)}</code> = \${esc(x.answer)}</td><td><code>\${esc(x.child)}</code></td></tr>\`).join("")+'</tbody></table></div>':'';
+  }catch(err){setStatus("depAuditStatus",String(err.message||err),false);}
+  finally{e.target.disabled=false;}
 });
 
 // ── add a book: search first, review before it goes live ─────────────────
@@ -3853,6 +3945,7 @@ async function loadDrainAlert(){
     // first time and caught by node --check; check.mjs exists for the
     // subtler version that --check cannot see.
     loadExclusive();
+    loadDependencies();
   } catch (e) {
     setStatus("bookStatus", "failed to load live artifacts: "+e.message, false);
   }

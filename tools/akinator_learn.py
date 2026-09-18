@@ -383,6 +383,8 @@ def _artifacts() -> dict:
             "cold_ids": [q["id"] for q in cold
                          if isinstance(q, dict) and isinstance(q.get("id"), str)],
             "index": {b.get("k"): i for i, b in enumerate(books) if b.get("k")},
+            "books": [{"k": b.get("k"), "t": b.get("t"), "a": b.get("a")}
+                      for b in books],
             # Richness drives absence_confidence, which the drain needs to
             # anchor an absent cell's prior at the right strength: 0.45 for
             # a bare record, 0.15 for a rich one.
