@@ -157,14 +157,14 @@ def load_corpus(path: str) -> list[dict]:
     return docs
 
 
-def load_covers(path: str = COVERS_PATH) -> dict[str, int]:
+def load_covers(path: str = COVERS_PATH) -> dict[str, int | str]:
     """work key -> Open Library cover id, from fetch_covers.py.
 
     A separate file rather than a corpus field: `cover_i` was not in the
     original fetch, and a partial cover run must never be able to damage
     the corpus itself.
     """
-    covers: dict[str, int] = {}
+    covers: dict[str, int | str] = {}
     if os.path.exists(path):
         with open(path, encoding="utf-8") as fh:
             saved = json.load(fh)
@@ -178,6 +178,8 @@ def load_covers(path: str = COVERS_PATH) -> dict[str, int]:
             if isinstance(overrides, dict):
                 for key, cover_id in overrides.items():
                     if isinstance(cover_id, int) and cover_id > 0:
+                        covers[key] = cover_id
+                    elif isinstance(cover_id, str) and cover_id.startswith("https://"):
                         covers[key] = cover_id
                     elif cover_id is None:
                         covers.pop(key, None)
@@ -546,10 +548,10 @@ def main() -> None:
             "p": b["popularity"],
             "r": b["richness"],
             "w": b["wikidata"],
-            # Open Library cover id. The page builds the image URL from it;
-            # storing the id rather than the URL keeps books.json small and
-            # lets the size suffix be chosen at display time.
-            "c": covers.get(b["key"]),
+            # Open Library stays compact as an id; Google Books is already a
+            # provider URL and ships under `u`. Both are hotlinks only.
+            "c": covers.get(b["key"]) if isinstance(covers.get(b["key"]), int) else None,
+            "u": covers.get(b["key"]) if isinstance(covers.get(b["key"]), str) else None,
         }
         for b in books
     ]

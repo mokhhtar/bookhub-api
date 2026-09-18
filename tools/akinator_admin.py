@@ -49,6 +49,7 @@ import os
 import re
 import secrets
 import sys
+from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(
@@ -644,6 +645,29 @@ def display(body: DisplayRequest):
 class CoverRequest(BaseModel):
     work_key: str = Field(..., max_length=220)
     cover_id: int | None = Field(default=None, ge=1)
+    cover_url: str | None = Field(default=None, max_length=1000)
+
+
+def _validated_cover(value: str) -> int | str:
+    """Normalise an allowed hotlink to the compact shipped representation."""
+    value = value.strip()
+    parsed = urlparse(value)
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="cover URL must use http or https")
+    host = (parsed.hostname or "").lower()
+    if host == "covers.openlibrary.org":
+        match = re.fullmatch(r"/b/id/(\d+)(?:-[SML])?\.jpg", parsed.path,
+                             flags=re.IGNORECASE)
+        if not match:
+            raise HTTPException(status_code=400,
+                                detail="unsupported Open Library cover URL")
+        return int(match.group(1))
+    if host in {"books.google.com", "books.googleusercontent.com"} \
+            and parsed.path == "/books/content":
+        return parsed._replace(scheme="https").geturl()
+    raise HTTPException(
+        status_code=400,
+        detail="cover must come from Open Library or the Google Books image API")
 
 
 @router.post("/cover")
@@ -662,22 +686,33 @@ def cover(body: CoverRequest):
         overrides = {}
     # Null is an explicit removal and must survive a rebuild, so it remains
     # in the overlay instead of deleting the key.
-    overrides[body.work_key] = body.cover_id
-    if body.cover_id is None:
+    value: int | str | None = body.cover_id
+    if body.cover_url is not None and body.cover_url.strip():
+        value = _validated_cover(body.cover_url)
+    overrides[body.work_key] = value
+    if value is None:
         row.pop("c", None)
+        row.pop("u", None)
+    elif isinstance(value, int):
+        row["c"] = value
+        row.pop("u", None)
     else:
-        row["c"] = body.cover_id
+        row["u"] = value
+        row.pop("c", None)
 
     wrote = _commit_files({
         f"{ARTIFACT_DIR}/books.json": _dump_shipped(books),
         COVER_OVERRIDES_PATH: _dump(overrides),
-    }, f"mind reader admin: cover for {body.work_key} -> {body.cover_id}")
+    }, f"mind reader admin: cover for {body.work_key} -> {value}")
     if not wrote:
         raise HTTPException(status_code=502, detail="commit failed")
-    return {"ok": True, "cover_id": body.cover_id,
+    url = (f"https://covers.openlibrary.org/b/id/{value}-L.jpg"
+           if isinstance(value, int) else value)
+    return {"ok": True,
+            "cover_id": value if isinstance(value, int) else None,
+            "cover_url": url,
             "effect": "instant, and survives the next rebuild",
-            "url": (f"https://covers.openlibrary.org/b/id/{body.cover_id}-L.jpg"
-                    if body.cover_id else None)}
+            "url": url}
 
 
 # ── POST /akinator/admin/book ────────────────────────────────────────────

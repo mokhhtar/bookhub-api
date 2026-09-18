@@ -1949,6 +1949,11 @@ function edDirtyCount(){
 function edOpen(key){ edOpenKey = key; edDraft = edCommitted(key); edSheetNote = ""; }
 function edClose(){ edOpenKey = null; edDraft = null; edSheetNote = ""; }
 
+function edCoverUrl(book){
+  if (book.u) return book.u;
+  return book.c ? "https://covers.openlibrary.org/b/id/" + book.c + "-L.jpg" : "";
+}
+
 function editPanelHtml(i){
   const b = books[i], key = b.k;
   const rows = questions.map((q, qi) => {
@@ -1996,12 +2001,17 @@ function editPanelHtml(i){
     + '<button class="act ghost edSaveName">Save the title</button>'
     + '<p class="effect">Changes only what the reveal prints. No question and no '
     + "matrix bit reads it.</p>"
-    + '<div class="field" style="margin-top:16px"><label>Open Library cover ID or cover URL</label>'
-      + '<input type="text" class="edCover" inputmode="numeric" value="'
-      + esc(b.c == null ? "" : b.c) + '" placeholder="e.g. 123456 or covers.openlibrary.org/b/id/123456-L.jpg"></div>'
+    + '<div class="field" style="margin-top:16px"><label>Cover image URL</label>'
+      + '<div style="display:grid;grid-template-columns:100px minmax(0,1fr);gap:12px;align-items:start">'
+      + '<div class="edCoverBox" style="width:100px;aspect-ratio:2/3;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--work)">'
+      + (edCoverUrl(b) ? '<img class="edCoverPreview" src="' + esc(edCoverUrl(b)) + '" alt="Current cover" style="width:100%;height:100%;object-fit:cover">'
+                        : '<div class="edCoverEmpty sub" style="padding:12px;text-align:center">No cover</div>')
+      + '</div><div><input type="url" class="edCover" value="'
+      + esc(edCoverUrl(b)) + '" placeholder="https://covers.openlibrary.org/... or Google Books image URL">'
+      + '<p class="effect">Paste a link to preview it before saving.</p></div></div></div>'
     + '<div class="row"><button class="act ghost edSaveCover">Save cover</button>'
       + '<button class="act ghost edRemoveCover">Remove cover</button></div>'
-    + '<p class="effect">Stores only an Open Library Cover ID and hotlinks it. No image is copied; Fandom and arbitrary image hosts are not accepted. Instant and survives rebuilds.</p>'
+    + '<p class="effect">Hotlink only: no image is copied. Open Library and Google Books image links are accepted; Fandom and arbitrary hosts are refused. Instant and survives rebuilds.</p>'
     // THE AUTHOR IS NOT A TEXT FIELD ANY MORE. It used to be, next to the
     // title, saving through /api/display — which renamed what was PRINTED
     // and left the book attributed to whoever it was attributed to before.
@@ -2098,6 +2108,30 @@ const edRedraw = () => renderEdRows(edSearchBox().value);
 document.getElementById("edSearch").addEventListener("input", edRedraw);
 
 document.getElementById("edRows").addEventListener("input", (e) => {
+  if (e.target.classList.contains("edCover")) {
+    const box = e.target.closest(".card").querySelector(".edCoverBox");
+    const raw = e.target.value.trim();
+    let allowed = false, previewUrl = raw;
+    try {
+      const u = new URL(raw);
+      allowed = (u.protocol === "https:" || u.protocol === "http:") && (u.hostname === "covers.openlibrary.org"
+        || u.hostname === "books.google.com" || u.hostname === "books.googleusercontent.com");
+      if (allowed) { u.protocol = "https:"; previewUrl = u.href; }
+    } catch (_) {}
+    box.innerHTML = "";
+    if (allowed) {
+      const img = document.createElement("img");
+      img.className = "edCoverPreview"; img.alt = "Cover preview"; img.src = previewUrl;
+      img.style.cssText = "width:100%;height:100%;object-fit:cover";
+      box.appendChild(img);
+    } else {
+      const empty = document.createElement("div");
+      empty.className = "sub"; empty.style.cssText = "padding:12px;text-align:center";
+      empty.textContent = raw ? "Unsupported link" : "No cover";
+      box.appendChild(empty);
+    }
+    return;
+  }
   if (!e.target.classList.contains("edAuthor")) return;
   const card = e.target.closest(".card");
   const note = card.querySelector(".edAuthorNote");
@@ -2261,34 +2295,25 @@ document.getElementById("edRows").addEventListener("click", async (e) => {
 
   if (e.target.classList.contains("edSaveCover") ||
       e.target.classList.contains("edRemoveCover")) {
-    let coverId = null;
+    let coverUrl = null;
     if (e.target.classList.contains("edSaveCover")) {
-      const raw = card.querySelector(".edCover").value.trim();
-      coverId = [...raw].every(ch => ch >= "0" && ch <= "9") ? parseInt(raw, 10) : NaN;
-      if (!Number.isInteger(coverId)) {
-        try {
-          const u = new URL(raw);
-          const parts = u.pathname.split("/");
-          const file = parts.length === 4 && parts[1] === "b" && parts[2] === "id" ? parts[3] : "";
-          const head = file.split("-")[0].split(".")[0];
-          if (u.hostname === "covers.openlibrary.org" &&
-              [...head].every(ch => ch >= "0" && ch <= "9")) coverId = parseInt(head, 10);
-        } catch (_) {}
-      }
-      if (!Number.isInteger(coverId) || coverId < 1) {
-        setStatus("edStatus", "enter an Open Library Cover ID or its covers.openlibrary.org URL", false);
+      coverUrl = card.querySelector(".edCover").value.trim();
+      if (!coverUrl) {
+        setStatus("edStatus", "paste a cover image URL, or use Remove cover", false);
         return;
       }
     }
     e.target.disabled = true;
     try {
-      const r = await post("/api/cover", {work_key: key, cover_id: coverId});
+      const r = await post("/api/cover", {work_key: key, cover_url: coverUrl});
       if (books[i]) {
-        if (r.cover_id == null) delete books[i].c; else books[i].c = r.cover_id;
+        delete books[i].c; delete books[i].u;
+        if (r.cover_id != null) books[i].c = r.cover_id;
+        else if (r.cover_url) books[i].u = r.cover_url;
       }
       edRedraw();
-      setStatus("edStatus", r.cover_id == null ? "Cover removed — " + r.effect
-        : "Cover changed to Open Library ID " + r.cover_id + " — " + r.effect, true);
+      setStatus("edStatus", r.cover_url == null ? "Cover removed — " + r.effect
+        : "Cover changed — " + r.effect, true);
     } catch (err) { setStatus("edStatus", String(err.message || err), false); }
     finally { e.target.disabled = false; }
     return;
