@@ -46,6 +46,38 @@ ANSWER_WEIGHTS = {
     "no": -1.0,
 }
 
+# Questions whose wording presupposes a fictional narrative.  These are not
+# mutually exclusive facts: answering "no" to fiction is the direction that
+# closes the branch, while answering "yes" to non-fiction closes the same
+# branch.  Keep this table in lockstep with book-mind-reader.html.
+#
+# Only firm answers fire it.  A "probably" is deliberately left open for
+# hybrids, memoir-like fiction, and a player who is unsure about the form.
+NARRATIVE_DEPENDENT_QUESTIONS = {
+    "fact:namedchars",
+    "form:firstperson",
+    "form:webnovel",
+    "genre:adventure",
+    "genre:drama",
+    "genre:fantasy",
+    "genre:romance",
+    "genre:scifi",
+    "t:child",
+    "t:detective",
+    "t:otherworld",
+    "t:powersystem",
+    "t:romance",
+    "t:survival",
+    "t:travel",
+    "t:war",
+    "theme:magic",
+}
+ANSWER_EXCLUDES = {
+    ("form:fiction", "no"): NARRATIVE_DEPENDENT_QUESTIONS,
+    ("form:nonfiction", "yes"): NARRATIVE_DEPENDENT_QUESTIONS,
+}
+ANSWER_EXCLUDE_TRIGGERS = {q for q, _answer in ANSWER_EXCLUDES}
+
 # Belief floor. No candidate's likelihood is ever allowed to reach zero, so
 # a book can always climb back after a player answers something wrong.
 MIN_LIKELIHOOD = 0.02
@@ -580,6 +612,13 @@ class Engine:
             # phase 3 on unanswerable questions.
             self.asked.update(self.m.excludes.get(question, ()))
 
+        # Some questions depend on an earlier branch rather than merely
+        # contradicting one sibling.  Once the player firmly establishes a
+        # non-fiction path, do not ask questions that assume a story world,
+        # narrator, or protagonist.  Marking them asked preserves the same
+        # go-back semantics as exclusive groups and ladders.
+        self.asked.update(ANSWER_EXCLUDES.get((question, answer), ()))
+
         # LADDERS: several questions that are really one number. A firm
         # answer fixes an interval, and every rung the interval already
         # settles has exactly zero information left — so stop asking it.
@@ -713,7 +752,8 @@ class Engine:
             # revising it would un-suppress siblings this Matrix knows about
             # and features.py does not. The page's `excludes[h.q]` is built
             # from the same merged list.
-            if q in LADDER_OF or q in self.m.excludes:
+            if (q in LADDER_OF or q in self.m.excludes
+                    or q in ANSWER_EXCLUDE_TRIGGERS):
                 continue
             w = ANSWER_WEIGHTS[a]
             if w == 0.0:

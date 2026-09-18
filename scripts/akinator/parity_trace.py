@@ -58,7 +58,7 @@ DEFAULT_ARTIFACTS = os.path.join(REPO_ROOT, "..", "bookhub", "games", "data", "a
 # appear — and they also carry the trace past turn 23, which is the SECOND
 # cold question. The first 20 are unchanged so the diff stays readable.
 ANSWER_SCRIPT = [
-    "yes", "no", "probably_yes", "unknown", "no",
+    "yes", "no", "no", "unknown", "no",
     "yes", "probably_no", "yes", "unknown", "no",
     "probably_yes", "yes", "no", "no", "probably_no",
     "yes", "unknown", "no", "yes", "probably_yes",
