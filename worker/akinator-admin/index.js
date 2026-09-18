@@ -117,6 +117,7 @@ const ROUTES = {
   // other — never gained the row. Nothing logs a route that does not exist,
   // so it failed silently and only in the browser.
   "/api/display": relay("/akinator/admin/display"),
+  "/api/cover": relay("/akinator/admin/cover"),
   // "this book has no known author", set by hand on Add a book and Edit a
   // book. A fact for the next rebuild, not a live matrix clamp — see the
   // note above the endpoint in akinator_admin.py for why absence of an
@@ -1995,6 +1996,12 @@ function editPanelHtml(i){
     + '<button class="act ghost edSaveName">Save the title</button>'
     + '<p class="effect">Changes only what the reveal prints. No question and no '
     + "matrix bit reads it.</p>"
+    + '<div class="field" style="margin-top:16px"><label>Open Library cover ID or cover URL</label>'
+      + '<input type="text" class="edCover" inputmode="numeric" value="'
+      + esc(b.c == null ? "" : b.c) + '" placeholder="e.g. 123456 or covers.openlibrary.org/b/id/123456-L.jpg"></div>'
+    + '<div class="row"><button class="act ghost edSaveCover">Save cover</button>'
+      + '<button class="act ghost edRemoveCover">Remove cover</button></div>'
+    + '<p class="effect">Stores only an Open Library Cover ID and hotlinks it. No image is copied; Fandom and arbitrary image hosts are not accepted. Instant and survives rebuilds.</p>'
     // THE AUTHOR IS NOT A TEXT FIELD ANY MORE. It used to be, next to the
     // title, saving through /api/display — which renamed what was PRINTED
     // and left the book attributed to whoever it was attributed to before.
@@ -2249,6 +2256,41 @@ document.getElementById("edRows").addEventListener("click", async (e) => {
       edRedraw();
       setStatus("edStatus", "Renamed for display — " + r.effect, true);
     } catch (err) { setStatus("edStatus", String(err.message || err), false); }
+    return;
+  }
+
+  if (e.target.classList.contains("edSaveCover") ||
+      e.target.classList.contains("edRemoveCover")) {
+    let coverId = null;
+    if (e.target.classList.contains("edSaveCover")) {
+      const raw = card.querySelector(".edCover").value.trim();
+      coverId = [...raw].every(ch => ch >= "0" && ch <= "9") ? parseInt(raw, 10) : NaN;
+      if (!Number.isInteger(coverId)) {
+        try {
+          const u = new URL(raw);
+          const parts = u.pathname.split("/");
+          const file = parts.length === 4 && parts[1] === "b" && parts[2] === "id" ? parts[3] : "";
+          const head = file.split("-")[0].split(".")[0];
+          if (u.hostname === "covers.openlibrary.org" &&
+              [...head].every(ch => ch >= "0" && ch <= "9")) coverId = parseInt(head, 10);
+        } catch (_) {}
+      }
+      if (!Number.isInteger(coverId) || coverId < 1) {
+        setStatus("edStatus", "enter an Open Library Cover ID or its covers.openlibrary.org URL", false);
+        return;
+      }
+    }
+    e.target.disabled = true;
+    try {
+      const r = await post("/api/cover", {work_key: key, cover_id: coverId});
+      if (books[i]) {
+        if (r.cover_id == null) delete books[i].c; else books[i].c = r.cover_id;
+      }
+      edRedraw();
+      setStatus("edStatus", r.cover_id == null ? "Cover removed — " + r.effect
+        : "Cover changed to Open Library ID " + r.cover_id + " — " + r.effect, true);
+    } catch (err) { setStatus("edStatus", String(err.message || err), false); }
+    finally { e.target.disabled = false; }
     return;
   }
 

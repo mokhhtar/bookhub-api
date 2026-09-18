@@ -74,6 +74,8 @@ from features import MIN_FREQ as features_MIN_FREQ                   # noqa: E40
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CORPUS_PATH = os.path.join(REPO_ROOT, "data", "akinator_corpus.jsonl")
 COVERS_PATH = os.path.join(REPO_ROOT, "data", "akinator_covers.json")
+COVER_OVERRIDES_PATH = os.path.abspath(os.path.join(
+    REPO_ROOT, "..", "bookhub", "games", "data", "akinator", "cover_overrides.json"))
 DEFAULT_OUT = os.path.join(REPO_ROOT, "data", "akinator_build")
 
 # Same band as the Phase 0 gate: rarer than this splits nothing, commoner
@@ -162,11 +164,26 @@ def load_covers(path: str = COVERS_PATH) -> dict[str, int]:
     original fetch, and a partial cover run must never be able to damage
     the corpus itself.
     """
-    if not os.path.exists(path):
-        return {}
-    with open(path, encoding="utf-8") as fh:
-        saved = json.load(fh)
-    return saved.get("covers", saved)
+    covers: dict[str, int] = {}
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as fh:
+            saved = json.load(fh)
+        covers.update(saved.get("covers", saved))
+    # Admin decisions win over the harvest. Null means deliberately remove,
+    # not "no override", and therefore deletes the harvested id.
+    if os.path.exists(COVER_OVERRIDES_PATH):
+        try:
+            with open(COVER_OVERRIDES_PATH, encoding="utf-8") as fh:
+                overrides = json.load(fh)
+            if isinstance(overrides, dict):
+                for key, cover_id in overrides.items():
+                    if isinstance(cover_id, int) and cover_id > 0:
+                        covers[key] = cover_id
+                    elif cover_id is None:
+                        covers.pop(key, None)
+        except (OSError, json.JSONDecodeError):
+            pass
+    return covers
 
 
 def build_books(docs: list[dict],

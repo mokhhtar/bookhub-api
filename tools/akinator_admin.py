@@ -100,6 +100,7 @@ QUESTION_OVERRIDES_PATH = f"{ARTIFACT_DIR}/question_overrides.json"
 QUESTIONS_PATH = f"{ARTIFACT_DIR}/questions.json"
 DISPLAY_PATH = f"{ARTIFACT_DIR}/display_overrides.json"
 DEPENDENCIES_PATH = f"{ARTIFACT_DIR}/question_dependencies.json"
+COVER_OVERRIDES_PATH = f"{ARTIFACT_DIR}/cover_overrides.json"
 
 # Broader than akinator_learn.py's _WORK_KEY (works|site only) — the admin
 # page routinely acts on /fandom/ rows too.
@@ -636,6 +637,49 @@ def display(body: DisplayRequest):
                     "no answer and no matrix bit reads these fields"}
 
 
+# ── POST /akinator/admin/cover ──────────────────────────────────────────
+# Covers stay hotlinked. The artifact stores only Open Library's numeric
+# Cover ID, never image bytes and never a Fandom URL.
+
+class CoverRequest(BaseModel):
+    work_key: str = Field(..., max_length=220)
+    cover_id: int | None = Field(default=None, ge=1)
+
+
+@router.post("/cover")
+def cover(body: CoverRequest):
+    if not _WORK_KEY.match(body.work_key):
+        raise HTTPException(status_code=400, detail="malformed work key")
+    books, _ = _get_json(f"{ARTIFACT_DIR}/books.json", None)
+    if books is None:
+        raise HTTPException(status_code=502, detail="live books.json unreadable")
+    row = next((b for b in books if b.get("k") == body.work_key), None)
+    if row is None:
+        raise HTTPException(status_code=404, detail="no such book in the shipped game")
+
+    overrides, _ = _get_json(COVER_OVERRIDES_PATH, {})
+    if not isinstance(overrides, dict):
+        overrides = {}
+    # Null is an explicit removal and must survive a rebuild, so it remains
+    # in the overlay instead of deleting the key.
+    overrides[body.work_key] = body.cover_id
+    if body.cover_id is None:
+        row.pop("c", None)
+    else:
+        row["c"] = body.cover_id
+
+    wrote = _commit_files({
+        f"{ARTIFACT_DIR}/books.json": _dump_shipped(books),
+        COVER_OVERRIDES_PATH: _dump(overrides),
+    }, f"mind reader admin: cover for {body.work_key} -> {body.cover_id}")
+    if not wrote:
+        raise HTTPException(status_code=502, detail="commit failed")
+    return {"ok": True, "cover_id": body.cover_id,
+            "effect": "instant, and survives the next rebuild",
+            "url": (f"https://covers.openlibrary.org/b/id/{body.cover_id}-L.jpg"
+                    if body.cover_id else None)}
+
+
 # ── POST /akinator/admin/book ────────────────────────────────────────────
 
 class BookRequest(BaseModel):
@@ -810,7 +854,9 @@ def book(body: BookRequest):
     # to: an answer for a question the game does not ask would sit in the
     # row invisibly, never packed, never wrong-looking — and a typo would
     # be indistinguishable from a review that simply did nothing.
-    live_ids = {q.get("id") for q in live if isinstance(q, dict)}
+    # Includes cold questions. The Add form reviews them too, even though
+    # they have no packed column in questions.json yet.
+    live_ids = _all_live_question_ids()
     bad_ids = sorted(set(body.answers) - live_ids)
     if bad_ids:
         raise HTTPException(
