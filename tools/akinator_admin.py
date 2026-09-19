@@ -57,12 +57,17 @@ sys.path.insert(0, os.path.join(
 
 from fastapi import APIRouter, Depends, Header, HTTPException  # noqa: E402
 from pydantic import BaseModel, Field                           # noqa: E402
+from question_policy import (STATE_ABSENT, STATE_NOT_APPLICABLE,  # noqa: E402
+                             STATE_PRESENT, STATE_UNKNOWN,
+                             condition_value, encode_not_applicable_matrix,
+                             policy_digest)
 
 from tools.akinator_sync import (                       # noqa: E402
     ARTIFACT_DIR,
     _commit_files,
     _commit_with_retry,
     _get_file,
+    _load_live_artifacts,
     append_book_row,
 )
 
@@ -493,7 +498,15 @@ def dependency(body: DependencyRequest):
             raise HTTPException(status_code=404,
                                 detail=f"'{qid}' is not a question the game asks")
 
-    rules, _ = _get_json(DEPENDENCIES_PATH, [])
+    live = _load_live_artifacts()
+    if not live.get("ok"):
+        raise HTTPException(status_code=503,
+                            detail=live.get("reason") or "live artifacts unreadable")
+    rules_raw, _ = _get_file(DEPENDENCIES_PATH, live.get("head"))
+    try:
+        rules = json.loads(rules_raw) if rules_raw else []
+    except json.JSONDecodeError:
+        rules = []
     if not isinstance(rules, list):
         rules = []
     edge = {"parent": body.parent, "answer": body.answer, "child": body.child}
@@ -518,7 +531,7 @@ def dependency(body: DependencyRequest):
     # express the rule positively in policy: the opposite firm answer OPENS
     # the child. This distinction is what prevents fiction=no from deleting
     # a child before nonfiction has had a chance to resolve the branch.
-    policy, _ = _get_json(QUESTION_POLICY_PATH, None)
+    policy = live["question_policy"]
     if not isinstance(policy, dict) or not isinstance(policy.get("questions"), dict):
         raise HTTPException(status_code=502,
                             detail="live question_policy.json unreadable")
@@ -542,62 +555,124 @@ def dependency(body: DependencyRequest):
     else:
         entry.pop("applies_if", None)
 
+    # Policy and matrix are one semantic artifact now. Reset this child's old
+    # N/A cells to UNKNOWN (the original absent/unknown distinction cannot be
+    # recovered), then derive the cells still closed by the edited policy.
+    # This makes add/remove safe without a corpus rebuild and prevents a
+    # policy deploy from leaving stale state-3 cells behind.
+    meta = dict(live["meta"])
+    try:
+        matrix, migration = encode_not_applicable_matrix(
+            live["matrix"], meta, live["questions"], policy,
+            max_books=10_000, reset_questions={body.child})
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    meta["states"] = {"absent": STATE_ABSENT, "present": STATE_PRESENT,
+                      "unknown": STATE_UNKNOWN,
+                      "not_applicable": STATE_NOT_APPLICABLE}
+    meta["p_not_applicable"] = 0.5
+    meta["question_policy_digest"] = policy_digest(policy)
+
     wrote = _commit_files(
         {DEPENDENCIES_PATH: _dump(rules),
-         QUESTION_POLICY_PATH: _dump(policy)},
-        f"mind reader admin: {verb} {body.parent}={body.answer} -> {body.child}")
+         QUESTION_POLICY_PATH: _dump(policy),
+         f"{ARTIFACT_DIR}/matrix.bin": matrix,
+         f"{ARTIFACT_DIR}/meta.json": _dump_shipped(meta)},
+        f"mind reader admin: {verb} {body.parent}={body.answer} -> {body.child}",
+        expect_head=live.get("head"))
     if not wrote:
         raise HTTPException(status_code=502, detail="commit failed")
-    return {"ok": True, "rules": len(rules),
+    return {"ok": True, "rules": len(rules), "migration": migration,
             "effect": "live on the next deploy, no matrix rebuild; the child "
                       "waits for a firm parent answer that opens its branch"}
 
 
 @router.post("/dependencies/audit")
 def audit_dependencies():
-    """Find matrix cells that contradict a declared semantic branch.
+    """Audit policy applicability against the fourth packed cell state."""
+    from tools.akinator_learn import _artifacts
 
-    A child asserted YES while its parent closes the branch is a definite
-    contradiction. A child asserted NO is counted separately but not called
-    wrong: today the packed format cannot distinguish false from inapplicable,
-    and deciding that representation is deliberately deferred.
-    """
-    from tools.akinator_learn import _artifacts, _book_states
-
-    rules, _ = _get_json(DEPENDENCIES_PATH, [])
-    rules = [r for r in rules if isinstance(r, dict)] if isinstance(rules, list) else []
+    policy, _ = _get_json(QUESTION_POLICY_PATH, None)
+    entries = policy.get("questions") if isinstance(policy, dict) else None
+    if not isinstance(entries, dict):
+        raise HTTPException(status_code=502,
+                            detail="live question_policy.json unreadable")
     art = _artifacts()
     if not art:
         raise HTTPException(status_code=503, detail="shipped artifacts unreadable")
 
-    conflicts, represented_no = [], 0
+    qids = art["qids"]
+    qindex = {qid: i for i, qid in enumerate(qids)}
+    gated = [(qid, entry.get("applies_if"))
+             for qid, entry in entries.items()
+             if qid in qindex and isinstance(entry, dict)
+             and entry.get("applies_if") is not None]
+    matrix = art["matrix"]
+    bpr = art["meta"]["bytes_per_row"]
+    conflicts, encoding_gaps, stale_not_applicable = [], [], []
+    represented_no = represented_not_applicable = unresolved = 0
     books = art.get("books") or []
-    for book in books:
+    for book_index, book in enumerate(books):
         key = book.get("k")
         if not key:
             continue
-        states = _book_states(key)
-        for rule in rules:
-            parent, child, answer = (rule.get("parent"), rule.get("child"),
-                                     rule.get("answer"))
-            trigger = states.get(parent)
-            if trigger is None or trigger != (answer == "yes"):
-                continue
-            child_state = states.get(child)
-            if child_state is True:
-                conflicts.append({"work_key": key, "title": book.get("t") or key,
-                                  "author": book.get("a") or "",
-                                  "parent": parent, "answer": answer,
-                                  "child": child})
-            elif child_state is False:
-                represented_no += 1
+        offset = book_index * bpr
 
-    return {"ok": True, "conflicts": conflicts[:500],
+        def state_for(qid: str) -> int | None:
+            index = qindex.get(qid)
+            if index is None:
+                return None
+            return (matrix[offset + (index >> 2)] >> ((index & 3) * 2)) & 3
+
+        def answer_for(qid: str) -> bool | None:
+            state = state_for(qid)
+            if state == 1:
+                return True
+            if state == 0:
+                return False
+            return None
+
+        for child, condition in gated:
+            applies = condition_value(condition, answer_for)
+            child_state = state_for(child)
+            detail = {"work_key": key, "title": book.get("t") or key,
+                      "author": book.get("a") or "", "child": child}
+            if applies is None:
+                unresolved += 1
+                continue
+            if applies:
+                if child_state == 3:
+                    stale_not_applicable.append(detail)
+                continue
+            if child_state == 1:
+                conflicts.append(detail)
+            elif child_state == 3:
+                represented_not_applicable += 1
+            else:
+                # A definitely closed branch must carry state 3. State 0 is
+                # the old ambiguous encoding; state 2 is missing evidence,
+                # neither of which is allowed to masquerade as N/A now.
+                encoding_gaps.append({**detail, "state": child_state})
+                if child_state == 0:
+                    represented_no += 1
+
+    truncated = any(len(items) > 500 for items in
+                    (conflicts, encoding_gaps, stale_not_applicable))
+    return {"ok": True, "gated_questions": len(gated),
+            "conflicts": conflicts[:500],
             "conflict_count": len(conflicts),
+            "not_applicable_count": represented_not_applicable,
+            "encoding_gaps": encoding_gaps[:500],
+            "encoding_gap_count": len(encoding_gaps),
+            "stale_not_applicable": stale_not_applicable[:500],
+            "stale_not_applicable_count": len(stale_not_applicable),
+            "unresolved_conditions": unresolved,
+            # Kept for the existing admin UI while it learns the richer
+            # fields above.
             "represented_as_no": represented_no,
-            "truncated": len(conflicts) > 500,
-            "note": "Only child=yes is a definite contradiction. child=no may "
-                    "mean false or not-applicable until the null design is decided."}
+            "truncated": truncated,
+            "note": "child=yes under a closed branch is a data conflict; "
+                    "child=not_applicable is the expected encoding."}
 
 
 # ── POST /akinator/admin/display ────────────────────────────────────────

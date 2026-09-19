@@ -419,7 +419,8 @@ def _live_question_hash() -> str:
 def _book_states(work_key: str) -> dict:
     """{question_id: True/False} for one book — present vs. absent.
 
-    `unknown` cells are OMITTED rather than returned as a third value: the
+    `unknown` and `not_applicable` cells are OMITTED rather than returned as
+    negative values: the
     consistency check compares a player's answer against what the table
     ASSERTS, and a cell holding no assertion cannot be contradicted. That
     is the same distinction the engine draws everywhere, and getting it

@@ -33,6 +33,7 @@ import math
 from features import (EXCLUDES, LADDER_OF, LADDERS, PRESENCE_CONFIDENCE,
                       UNKNOWN_CONFIDENCE, absence_confidence,
                       ladder_determined, ladder_narrow)
+from question_policy import not_applicable_ids
 from series import VOLUME_DOMINANCE
 
 # The five answers a player can give, and how strongly each is trusted.
@@ -232,6 +233,7 @@ CHAR_STREAK_CAP = 2
 # early turns carry nearly all the discrimination, and 30 is the cap. Two
 # turns of thirty, both after the field has already collapsed.
 COLD_UNKNOWN_CONFIDENCE = 0.5
+NOT_APPLICABLE_CONFIDENCE = 0.5
 COLD_TURNS = (14, 22)
 
 # RE-ASKING ONE ANSWER, and why it can only help.
@@ -477,6 +479,10 @@ class Matrix:
         for book in books:
             present = set(book["present"])
             unknown = set(book["unknown"])
+            not_applicable = set(book.get("not_applicable") or ())
+            if self.question_policy:
+                not_applicable.update(not_applicable_ids(
+                    book, {"questions": self.question_policy}, questions))
             absent_p = absence_confidence(book["richness"])
             tokens = set(book.get("char_tokens") or ())
             has_char_data = bool(tokens)
@@ -485,6 +491,10 @@ class Matrix:
             for q in questions:
                 if q in present:
                     row[q] = PRESENCE_CONFIDENCE
+                elif q in not_applicable:
+                    # The question has no truth value for this candidate.
+                    # It must not behave like a negative fact.
+                    row[q] = NOT_APPLICABLE_CONFIDENCE
                 elif q in unknown:
                     # Value is a placeholder; unknown cells are handled by
                     # `unknown_at` during the update and never read here.

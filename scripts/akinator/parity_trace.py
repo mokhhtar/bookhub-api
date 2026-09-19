@@ -95,16 +95,19 @@ def books_from_artifacts(meta: dict, questions: list[dict],
     out = []
     for i, b in enumerate(books):
         off = i * bpr
-        present, unknown = [], []
+        present, unknown, not_applicable = [], [], []
         for q in range(nq):
             state = (raw[off + (q >> 2)] >> ((q & 3) * 2)) & 3
             if state == 1:
                 present.append(qids[q])
             elif state == 2:
                 unknown.append(qids[q])
+            elif state == 3:
+                not_applicable.append(qids[q])
         out.append({
             "present": present,
             "unknown": unknown,
+            "not_applicable": not_applicable,
             "richness": b.get("r") or 0,
             "popularity": b.get("p") or 0,
             # Character questions are excluded from the trace on purpose:
@@ -147,9 +150,15 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--artifacts", default=DEFAULT_ARTIFACTS)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--max-books", type=int, default=10_000,
+                    help="refuse unexpectedly large artifacts before "
+                         "allocating engine rows")
     args = ap.parse_args()
 
     meta, questions, books_json, raw = load_artifacts(args.artifacts)
+    if meta["books"] > args.max_books:
+        raise SystemExit(
+            f"refusing {meta['books']} books; --max-books is {args.max_books}")
     books = books_from_artifacts(meta, questions, books_json, raw)
     qids = [q["id"] for q in questions]
 

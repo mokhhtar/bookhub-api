@@ -49,6 +49,8 @@ import httpx
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "akinator"))
 
+from question_policy import not_applicable_ids, policy_digest  # noqa: E402
+
 log = logging.getLogger("bookhub-api.akinator_sync")
 
 GITHUB_API = "https://api.github.com"
@@ -65,7 +67,7 @@ _HEADERS = {
     "User-Agent": "Litheca/1.0 (https://litheca.com; hello@litheca.com)",
 }
 
-STATE_ABSENT, STATE_PRESENT, STATE_UNKNOWN = 0, 1, 2
+STATE_ABSENT, STATE_PRESENT, STATE_UNKNOWN, STATE_NOT_APPLICABLE = 0, 1, 2, 3
 
 
 # ── GitHub plumbing ────────────────────────────────────────────────────────
@@ -330,15 +332,19 @@ def _label_traits(book: dict, page: dict, question_ids: list[str]) -> None:
     log.info("traits for %s: %s", page.get("title"), ", ".join(hit))
 
 
-def _encode_row(book: dict, question_ids: list[str], bytes_per_row: int) -> bytes:
+def _encode_row(book: dict, question_ids: list[str], bytes_per_row: int,
+                question_policy: dict | None = None) -> bytes:
     """Pack one book's answers, exactly as build_matrix.pack_matrix does."""
     present = set(book["present"])
     unknown = set(book["unknown"])
+    not_applicable = not_applicable_ids(book, question_policy, question_ids)
     out = bytearray()
     acc, filled = 0, 0
     for q in question_ids:
         if q in present:
             state = STATE_PRESENT
+        elif q in not_applicable:
+            state = STATE_NOT_APPLICABLE
         elif q in unknown:
             state = STATE_UNKNOWN
         else:
@@ -373,12 +379,14 @@ def _load_live_artifacts() -> dict:
     q_raw, _ = _get_file(f"{ARTIFACT_DIR}/questions.json", at)
     books_raw, _ = _get_file(f"{ARTIFACT_DIR}/books.json", at)
     matrix, _ = _get_file(f"{ARTIFACT_DIR}/matrix.bin", at)
-    if not (meta_raw and q_raw and books_raw and matrix):
+    policy_raw, _ = _get_file(f"{ARTIFACT_DIR}/question_policy.json", at)
+    if not (meta_raw and q_raw and books_raw and matrix and policy_raw):
         return {"ok": False, "reason": "artifacts missing or unreadable"}
 
     meta = json.loads(meta_raw)
     questions = json.loads(q_raw)
     books = json.loads(books_raw)
+    question_policy = json.loads(policy_raw)
     bpr = meta["bytes_per_row"]
 
     # Guard 1: the artifacts must already be self-consistent. If they are
@@ -398,9 +406,16 @@ def _load_live_artifacts() -> dict:
         return {"ok": False, "reason":
                 "question_hash mismatch — artifacts were rebuilt; run a full build"}
 
+    stamped_policy = meta.get("question_policy_digest")
+    live_policy = policy_digest(question_policy)
+    if stamped_policy and stamped_policy != live_policy:
+        return {"ok": False, "reason":
+                "question policy changed since matrix build; run a full build"}
+
     return {"ok": True, "meta": meta, "questions": questions, "books": books,
             "matrix": matrix, "bpr": bpr,
-            "question_ids": [q["id"] for q in questions], "live_hash": live}
+            "question_ids": [q["id"] for q in questions], "live_hash": live,
+            "question_policy": question_policy, "head": at}
 
 
 def _apply_manual_answers(book: dict, answers: dict[str, bool | None] | None,
@@ -445,7 +460,8 @@ def _apply_manual_answers(book: dict, answers: dict[str, bool | None] | None,
 
 def _build_book_row(doc: dict, question_ids: list[str], bpr: int, rank: int,
                     prose: str = "",
-                    manual_answers: dict[str, bool | None] | None = None
+                    manual_answers: dict[str, bool | None] | None = None,
+                    question_policy: dict | None = None
                     ) -> tuple[dict, bytes]:
     """One OL-shaped doc -> (feature dict, packed row bytes).
 
@@ -474,7 +490,7 @@ def _build_book_row(doc: dict, question_ids: list[str], bpr: int, rank: int,
     # automatic pipeline that ran before them — the same ordering
     # apply_author_facts uses for the author overlay over Wikidata.
     _apply_manual_answers(book, manual_answers, question_ids)
-    row = _encode_row(book, question_ids, bpr)
+    row = _encode_row(book, question_ids, bpr, question_policy)
     return book, row
 
 
@@ -525,8 +541,9 @@ def append_book_row(doc: dict, prose: str = "", commit_message: str = "",
 
     rank = meta["books"]
     try:
-        book, row = _build_book_row(doc, question_ids, bpr, rank, prose,
-                                    manual_answers)
+        book, row = _build_book_row(
+            doc, question_ids, bpr, rank, prose, manual_answers,
+            live["question_policy"])
     except ValueError as exc:
         # A row that packs to the wrong width is exactly the corruption this
         # module exists to prevent. `sync()` already turns this into a
@@ -667,8 +684,10 @@ def sync(dry_run: bool = False) -> dict:
 
         rank = meta["books"] + len(added)
         try:
-            book, row = _build_book_row(doc, question_ids, bpr, rank,
-                                        prose=(page.get("prose") or ""))
+            book, row = _build_book_row(
+                doc, question_ids, bpr, rank,
+                prose=(page.get("prose") or ""),
+                question_policy=live["question_policy"])
         except ValueError as exc:
             return {"ok": False, "reason": f"encoding {page['title']}: {exc}"}
 

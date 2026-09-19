@@ -14,8 +14,8 @@ no API call at play time:
     authors.json     author entities, aliases, and their books
     meta.json        counts, versions, and how to read matrix.bin
 
-WHY 2 BITS AND NOT A PROBABILITY. Each cell is one of three states —
-present, absent, unknown — and the probability is *derived* from the state
+WHY 2 BITS AND NOT A PROBABILITY. Each cell is one of four states —
+present, absent, unknown, not-applicable — and the probability is *derived* from the state
 plus the book's richness, using the same `absence_confidence()` ladder the
 Python engine uses. Storing states rather than floats is what keeps 20k
 books x ~60 questions at ~300 KB instead of ~5 MB, and it means the client
@@ -26,7 +26,7 @@ STATE ENCODING (also written into meta.json so the client never guesses):
     0 = absent   -> P(yes) = absence_confidence(richness)
     1 = present  -> P(yes) = 0.90
     2 = unknown  -> P(yes) = 0.50
-    3 = reserved
+    3 = not applicable -> P(yes) = 0.50
 
 Four cells per byte, question-major within a book, books in popularity
 order — so the client can slice a book's row without an index.
@@ -70,12 +70,15 @@ from features import (EXCLUSIVE_GROUPS, FORCE_DROP, FORCE_KEEP,      # noqa: E40
                       keeps_question)
 from features import MAX_FREQ as features_MAX_FREQ                   # noqa: E402
 from features import MIN_FREQ as features_MIN_FREQ                   # noqa: E402
+from question_policy import not_applicable_ids, policy_digest        # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CORPUS_PATH = os.path.join(REPO_ROOT, "data", "akinator_corpus.jsonl")
 COVERS_PATH = os.path.join(REPO_ROOT, "data", "akinator_covers.json")
 COVER_OVERRIDES_PATH = os.path.abspath(os.path.join(
     REPO_ROOT, "..", "bookhub", "games", "data", "akinator", "cover_overrides.json"))
+QUESTION_POLICY_PATH = os.path.abspath(os.path.join(
+    REPO_ROOT, "..", "bookhub", "games", "data", "akinator", "question_policy.json"))
 DEFAULT_OUT = os.path.join(REPO_ROOT, "data", "akinator_build")
 
 # Same band as the Phase 0 gate: rarer than this splits nothing, commoner
@@ -112,7 +115,7 @@ MAX_CHAR_SHARE = 0.02
 # about that one book, which the reveal already handles.
 MIN_AUTHOR_BOOKS = 2
 
-STATE_ABSENT, STATE_PRESENT, STATE_UNKNOWN = 0, 1, 2
+STATE_ABSENT, STATE_PRESENT, STATE_UNKNOWN, STATE_NOT_APPLICABLE = 0, 1, 2, 3
 
 # Set from --no-traits in main(); read by build_books.
 NO_TRAITS = False
@@ -403,17 +406,21 @@ def select_features(books: list[dict]) -> list[str]:
     return _drop_duplicate_wordings(books, kept)
 
 
-def pack_matrix(books: list[dict], questions: list[str]) -> bytes:
+def pack_matrix(books: list[dict], questions: list[str],
+                question_policy: dict | None = None) -> bytes:
     """Two bits per cell, four cells per byte, row-major by book."""
     per_row = len(questions)
     out = bytearray()
     for book in books:
         present = set(book["present"])
         unknown = set(book["unknown"])
+        not_applicable = not_applicable_ids(book, question_policy, questions)
         acc, filled = 0, 0
         for q in questions:
             if q in present:
                 state = STATE_PRESENT
+            elif q in not_applicable:
+                state = STATE_NOT_APPLICABLE
             elif q in unknown:
                 state = STATE_UNKNOWN
             else:
@@ -433,6 +440,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--corpus", default=CORPUS_PATH)
     ap.add_argument("--out-dir", default=DEFAULT_OUT)
+    ap.add_argument("--question-policy", default=QUESTION_POLICY_PATH,
+                    help="semantic question registry used to encode "
+                         "not-applicable cells")
     ap.add_argument("--with-fandom", action="store_true",
                     help="include the census novels harvested from Fandom "
                          "wikis. OFF by default — build with and without, "
@@ -447,6 +457,12 @@ def main() -> None:
                     help=f"how many books to build ({SHIPPED_BOOKS} is what "
                          f"ships; 0 = the whole corpus, for analysis only)")
     args = ap.parse_args()
+
+    try:
+        with open(args.question_policy, encoding="utf-8") as fh:
+            question_policy = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"cannot load question policy {args.question_policy}: {exc}")
 
     global NO_TRAITS
     NO_TRAITS = args.no_traits
@@ -559,7 +575,8 @@ def main() -> None:
     if renamed:
         print(f"Display overrides: {renamed} field(s) renamed for the reveal")
     sizes["books.json"] = write("books.json", book_rows)
-    sizes["matrix.bin"] = write("matrix.bin", pack_matrix(books, questions))
+    sizes["matrix.bin"] = write(
+        "matrix.bin", pack_matrix(books, questions, question_policy))
     # Index lookup must be a dict: `list.index()` inside this loop is
     # O(tokens x mentions), which at 20k books is ~100k tokens scanned
     # tens of thousands of times.
@@ -599,10 +616,13 @@ def main() -> None:
         "questions": len(questions),
         "bytes_per_row": (len(questions) + 3) // 4,
         "states": {"absent": STATE_ABSENT, "present": STATE_PRESENT,
-                   "unknown": STATE_UNKNOWN},
+                   "unknown": STATE_UNKNOWN,
+                   "not_applicable": STATE_NOT_APPLICABLE},
+        "question_policy_digest": policy_digest(question_policy),
         # The client derives probabilities from these — one rule, both sides.
         "p_present": PRESENCE_CONFIDENCE,
         "p_unknown": UNKNOWN_CONFIDENCE,
+        "p_not_applicable": 0.5,
         # Published rather than duplicated in the page: one definition of
         # what contradicts what, read by both engines.
         "exclusive_groups": [[q for q in g if q in set(questions)]
