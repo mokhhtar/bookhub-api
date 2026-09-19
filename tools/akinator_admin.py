@@ -101,6 +101,7 @@ QUESTION_OVERRIDES_PATH = f"{ARTIFACT_DIR}/question_overrides.json"
 QUESTIONS_PATH = f"{ARTIFACT_DIR}/questions.json"
 DISPLAY_PATH = f"{ARTIFACT_DIR}/display_overrides.json"
 DEPENDENCIES_PATH = f"{ARTIFACT_DIR}/question_dependencies.json"
+QUESTION_POLICY_PATH = f"{ARTIFACT_DIR}/question_policy.json"
 COVER_OVERRIDES_PATH = f"{ARTIFACT_DIR}/cover_overrides.json"
 
 # Broader than akinator_learn.py's _WORK_KEY (works|site only) — the admin
@@ -511,8 +512,39 @@ def dependency(body: DependencyRequest):
 
     rules.sort(key=lambda r: (r.get("parent", ""), r.get("answer", ""),
                               r.get("child", "")))
+
+    # question_policy.json is the runtime source of truth. Keep the old edge
+    # artifact in the same commit for older open tabs and deployments, but
+    # express the rule positively in policy: the opposite firm answer OPENS
+    # the child. This distinction is what prevents fiction=no from deleting
+    # a child before nonfiction has had a chance to resolve the branch.
+    policy, _ = _get_json(QUESTION_POLICY_PATH, None)
+    if not isinstance(policy, dict) or not isinstance(policy.get("questions"), dict):
+        raise HTTPException(status_code=502,
+                            detail="live question_policy.json unreadable")
+    entry = policy["questions"].get(body.child)
+    if not isinstance(entry, dict):
+        raise HTTPException(status_code=409,
+                            detail="child has no question policy entry")
+    condition = entry.get("applies_if")
+    if condition is None:
+        condition = {"any": []}
+    if not isinstance(condition, dict) or not isinstance(condition.get("any"), list):
+        raise HTTPException(status_code=409,
+                            detail="admin edge editor only supports an any applicability rule")
+    opening = "no" if body.answer == "yes" else "yes"
+    leaf = {"question": body.parent, "answer": opening}
+    leaves = [row for row in condition["any"] if row != leaf]
+    if body.action != "remove":
+        leaves.append(leaf)
+    if leaves:
+        entry["applies_if"] = {"any": leaves}
+    else:
+        entry.pop("applies_if", None)
+
     wrote = _commit_files(
-        {DEPENDENCIES_PATH: _dump(rules)},
+        {DEPENDENCIES_PATH: _dump(rules),
+         QUESTION_POLICY_PATH: _dump(policy)},
         f"mind reader admin: {verb} {body.parent}={body.answer} -> {body.child}")
     if not wrote:
         raise HTTPException(status_code=502, detail="commit failed")

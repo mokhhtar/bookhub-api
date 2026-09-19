@@ -367,7 +367,8 @@ class Matrix:
                  overrides: dict[str, dict[str, float]] | None = None,
                  cold_questions: list[str] | None = None,
                  exclusive_extra: list[list[str]] | None = None,
-                 question_dependencies: list[dict] | None = None):
+                 question_dependencies: list[dict] | None = None,
+                 question_policy: dict | None = None):
         self.books = books
         # Series membership per book index, for guess-time pooling. Absent
         # is fine — the engine simply never guesses a series.
@@ -397,6 +398,21 @@ class Matrix:
                                if q not in self.question_set
                                and q not in self.char_question_set]
         self.cold_question_set = set(self.cold_questions)
+        all_question_ids = self.question_set | self.cold_question_set
+
+        # Semantic policy is deliberately separate from the packed matrix:
+        # adding or correcting a prerequisite changes when a question is
+        # meaningful, not what any book's answer is.  The shipped registry
+        # covers every live question and can therefore evolve without a
+        # matrix rebuild. Unknown or malformed entries fail closed only for
+        # their own condition; questions with no condition remain general.
+        raw_policy = question_policy if isinstance(question_policy, dict) else {}
+        raw_entries = raw_policy.get("questions")
+        self.question_policy: dict[str, dict] = {}
+        if isinstance(raw_entries, dict):
+            for qid, entry in raw_entries.items():
+                if qid in all_question_ids and isinstance(entry, dict):
+                    self.question_policy[qid] = entry
 
         # WHICH QUESTIONS A FIRM YES RULES OUT, per Matrix rather than the
         # module-level `EXCLUDES` this used to read straight out of
@@ -422,7 +438,13 @@ class Matrix:
         # closing answer suppresses them. None keeps the built-in rules for
         # older callers; an explicit list is the shipped artifact and is
         # authoritative for the browser/parity path.
-        if question_dependencies is None:
+        if self.question_policy:
+            # A policy condition is evaluated from the complete answer
+            # history. It must not also be converted into one-way permanent
+            # suppressions: fiction=no may leave a branch unresolved until
+            # nonfiction is answered, rather than proving the child false.
+            self.answer_excludes = {}
+        elif question_dependencies is None:
             self.answer_excludes = {k: set(v) for k, v in ANSWER_EXCLUDES.items()}
         else:
             self.answer_excludes: dict[tuple[str, str], set[str]] = {}
@@ -916,6 +938,11 @@ class Engine:
         alternatives: fiction=yes OR nonfiction=no may open narrative
         questions.  Hedges and "don't know" deliberately open nothing.
         """
+        policy = self.m.question_policy.get(question) or {}
+        condition = policy.get("applies_if")
+        if condition is not None:
+            return not self._condition_satisfied(condition, dict(self.answers))
+
         rules = self.m.dependency_rules_by_child.get(question)
         if not rules:
             return False
@@ -923,6 +950,28 @@ class Engine:
         return not any(actual.get(parent) in ("yes", "no")
                        and actual[parent] != closing_answer
                        for parent, closing_answer in rules)
+
+    @classmethod
+    def _condition_satisfied(cls, condition, actual: dict[str, str]) -> bool:
+        """Evaluate the small declarative applicability language.
+
+        Leaves are firm question/answer matches. ``any`` and ``all`` may be
+        nested, which is enough for alternative parents and multi-part gates
+        without embedding game-specific ids in either runtime.
+        """
+        if not isinstance(condition, dict):
+            return False
+        if "any" in condition:
+            rows = condition["any"]
+            return isinstance(rows, list) and bool(rows) and any(
+                cls._condition_satisfied(row, actual) for row in rows)
+        if "all" in condition:
+            rows = condition["all"]
+            return isinstance(rows, list) and bool(rows) and all(
+                cls._condition_satisfied(row, actual) for row in rows)
+        question, answer = condition.get("question"), condition.get("answer")
+        return (isinstance(question, str) and answer in ("yes", "no")
+                and actual.get(question) == answer)
 
     def next_question(self, exact: bool = False) -> str | None:
         """The most informative unasked question, by exact information gain.

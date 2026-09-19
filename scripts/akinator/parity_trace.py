@@ -244,9 +244,25 @@ def main() -> None:
     if dependencies:
         print(f"question_dependencies.json: {len(dependencies)} directional edge(s)")
 
+    policy_path = os.path.join(args.artifacts, "question_policy.json")
+    policy: dict = {}
+    policy_bytes = b""
+    if os.path.exists(policy_path):
+        try:
+            with open(policy_path, "rb") as fh:
+                policy_bytes = fh.read()
+            data = json.loads(policy_bytes.decode("utf-8"))
+            if isinstance(data, dict):
+                policy = data
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            policy, policy_bytes = {}, b""
+    if policy:
+        print(f"question_policy.json: {len(policy.get('questions') or {})} question(s)")
+
     matrix = Matrix(books, qids, excluded=excluded, overrides=overrides,
                     cold_questions=cold, exclusive_extra=exclusive_extra,
-                    question_dependencies=dependencies)
+                    question_dependencies=dependencies,
+                    question_policy=policy)
     engine = Engine(matrix)
 
     turns = []
@@ -331,6 +347,7 @@ def main() -> None:
             "questions": meta["questions"],
             "overrides_digest": overrides_digest,
             "overrides_cells": sum(len(v) for v in overrides.values()),
+            "policy_digest": hashlib.sha256(policy_bytes).hexdigest()[:16],
         },
         "answer_script": ANSWER_SCRIPT,
         "turns": turns,

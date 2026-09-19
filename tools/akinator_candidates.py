@@ -75,6 +75,23 @@ def decide(body: CandidateDecision):
     if match is None:
         raise HTTPException(status_code=404, detail="no such candidate")
 
+    if body.status == "accepted":
+        policy = match.get("policy")
+        if not isinstance(policy, dict):
+            raise HTTPException(status_code=409,
+                                detail="candidate has no semantic question policy")
+        if policy.get("level") not in ("general", "specific"):
+            raise HTTPException(status_code=409,
+                                detail="candidate policy has no valid level")
+        if not isinstance(policy.get("domain"), str):
+            raise HTTPException(status_code=409,
+                                detail="candidate policy has no valid domain")
+        cost = policy.get("answerability_cost")
+        if (isinstance(cost, bool) or not isinstance(cost, (int, float))
+                or not 0 <= cost <= 1):
+            raise HTTPException(status_code=409,
+                                detail="candidate policy has no valid answerability cost")
+
     match["status"] = body.status
     wrote = _commit_files(
         {CANDIDATES_PATH: _dump(current)},

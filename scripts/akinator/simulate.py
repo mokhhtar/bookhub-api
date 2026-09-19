@@ -602,8 +602,19 @@ def main() -> None:
     except (OSError, json.JSONDecodeError):
         dependencies = []
 
+    policy: dict = {}
+    policy_path = os.path.join(ARTIFACT_DIR, "question_policy.json")
+    try:
+        with open(policy_path, encoding="utf-8") as fh:
+            raw_policy = json.load(fh)
+        if isinstance(raw_policy, dict):
+            policy = raw_policy
+    except (OSError, json.JSONDecodeError):
+        policy = {}
+
     matrix = Matrix(books, questions, char_questions, cold_questions=cold,
-                    question_dependencies=dependencies)
+                    question_dependencies=dependencies,
+                    question_policy=policy)
     if args.target_rank:
         # The honest control for a supplement measured with
         # --target-prefix: how do books ALREADY in the corpus score at the

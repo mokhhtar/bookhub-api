@@ -163,17 +163,49 @@ def build_proposal_prompt(existing: dict[str, str], sample: list[dict],
         "impression).\n"
         "4. If you cannot think of a genuinely new, clean, answerable "
         "question, propose fewer than the maximum. Proposing nothing is "
-        "better than proposing a bad one.\n\n"
+        "better than proposing a bad one.\n"
+        "5. Every candidate needs semantic policy: level is general or "
+        "specific; domain is a short lowercase category; answerability_cost "
+        "is 0.0 (trivial from memory) to 1.0 (usually unanswerable). A "
+        "specific question that presupposes a story, narrator, character, "
+        "setting, or other branch must include applies_if. Conditions use "
+        "only existing question ids above and firm yes/no leaves, composed "
+        "with any/all. Use null only when the question is meaningful for "
+        "every kind of book.\n"
+        "6. Give up to three titles FROM THE PROVIDED SAMPLE for which the "
+        "question is not applicable at all. This is different from a valid "
+        "answer of no. Return an empty list if it is universally applicable.\n\n"
         "Reply with JSON only, in this exact shape:\n"
         '{"candidates": [\n'
         '  {"key": "genre:cooking", "type": "subject", '
         '"question": "Is it about cooking or recipes?", '
         '"keywords": ["cooking", "recipes", "culinary", "chef*"], '
-        '"rationale": "one sentence"},\n'
+        '"rationale": "one sentence", "level": "general", '
+        '"domain": "topic", "answerability_cost": 0.05, '
+        '"applies_if": null, "not_applicable_examples": []},\n'
         '  {"key": "t:example", "type": "prose", '
-        '"question": "...", "definition": "...", "rationale": "..."}\n'
+        '"question": "...", "definition": "...", "rationale": "...", '
+        '"level": "specific", "domain": "narrative", '
+        '"answerability_cost": 0.1, "applies_if": {"any": ['
+        '{"question": "form:fiction", "answer": "yes"}]}, '
+        '"not_applicable_examples": ["sample title"]}\n'
         "]}\n"
     )
+
+
+def _valid_policy_condition(value, existing_ids: set[str]) -> bool:
+    if not isinstance(value, dict):
+        return False
+    operators = [key for key in ("any", "all") if key in value]
+    if operators:
+        if len(operators) != 1 or len(value) != 1:
+            return False
+        rows = value[operators[0]]
+        return (isinstance(rows, list) and bool(rows)
+                and all(_valid_policy_condition(row, existing_ids) for row in rows))
+    return (set(value) == {"question", "answer"}
+            and value.get("question") in existing_ids
+            and value.get("answer") in ("yes", "no"))
 
 
 def parse_proposals(raw: str, existing_ids: set[str]) -> list[dict]:
@@ -214,24 +246,43 @@ def parse_proposals(raw: str, existing_ids: set[str]) -> list[dict]:
             continue
         if not isinstance(question, str) or not question.strip():
             continue
+        level, domain = row.get("level"), row.get("domain")
+        cost, applies_if = row.get("answerability_cost"), row.get("applies_if")
+        na_examples = row.get("not_applicable_examples")
+        if level not in ("general", "specific"):
+            continue
+        if not isinstance(domain, str) or not re.fullmatch(r"[a-z][a-z0-9_]{1,30}", domain):
+            continue
+        if isinstance(cost, bool) or not isinstance(cost, (int, float)) or not 0 <= cost <= 1:
+            continue
+        if applies_if is not None and not _valid_policy_condition(applies_if, existing_ids):
+            continue
+        if (not isinstance(na_examples, list)
+                or not all(isinstance(title, str) and title.strip()
+                           for title in na_examples[:3])):
+            continue
         rationale = str(row.get("rationale") or "")[:300]
+        policy = {"level": level, "domain": domain,
+                  "answerability_cost": round(float(cost), 2)}
+        if applies_if is not None:
+            policy["applies_if"] = applies_if
+        common = {"key": key, "type": rtype,
+                  "question": question.strip(), "rationale": rationale,
+                  "policy": policy,
+                  "not_applicable_examples": [title.strip()
+                                              for title in na_examples[:3]]}
 
         if rtype == "subject":
             kws = row.get("keywords")
             if (not isinstance(kws, list) or not kws
                     or not all(isinstance(k, str) and k.strip() for k in kws)):
                 continue
-            out.append({"key": key, "type": "subject",
-                       "question": question.strip(),
-                       "keywords": [k.strip() for k in kws],
-                       "rationale": rationale})
+            out.append({**common, "keywords": [k.strip() for k in kws]})
         else:
             defn = row.get("definition")
             if not isinstance(defn, str) or not defn.strip():
                 continue
-            out.append({"key": key, "type": "prose",
-                       "question": question.strip(),
-                       "definition": defn.strip(), "rationale": rationale})
+            out.append({**common, "definition": defn.strip()})
         seen.add(key)
     return out
 
@@ -583,6 +634,8 @@ def main() -> None:
             "collision": collision,
             "byte_cost": byte_cost,
             "rationale": cand["rationale"],
+            "policy": cand["policy"],
+            "not_applicable_examples": cand["not_applicable_examples"],
         }
         if cand["type"] == "subject":
             entry["keywords"] = cand["keywords"]

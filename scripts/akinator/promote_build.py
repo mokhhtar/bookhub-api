@@ -54,8 +54,8 @@ DEFAULT_SHIPPED = os.path.abspath(os.path.join(
 # Written by build_matrix.py. Everything else in the shipped directory is
 # owned by something else — overrides.json by the drain, excluded.json and
 # display_overrides.json and cover_overrides.json by the admin page,
-# cold_questions.json, exclusive_overrides.json and question_dependencies.json
-# by hand/admin — and promoting a build must never
+# cold_questions.json, exclusive_overrides.json, question_dependencies.json
+# and question_policy.json by hand/admin — and promoting a build must never
 # overwrite a file the build did not produce.
 BUILD_FILES = ("meta.json", "questions.json", "books.json", "matrix.bin",
                "characters.json", "authors.json", "series.json")
