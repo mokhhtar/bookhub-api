@@ -617,6 +617,16 @@ class Engine:
         rnd = _mulberry32(seed) if seed else None
         self._opening = (min(int(rnd() * OPENING_CHOICES), OPENING_CHOICES - 1)
                          if rnd else None)
+        self.cold_order = list(matrix.cold_questions)
+        if rnd:
+            # Player-data questions have no information gain until they have
+            # answers, so file order must not decide which two are collected
+            # forever. Fisher-Yates uses the same PRNG and draw order as the
+            # browser; seed 0 keeps deterministic file order for fixtures.
+            for i in range(len(self.cold_order) - 1, 0, -1):
+                j = min(int(rnd() * (i + 1)), i)
+                self.cold_order[i], self.cold_order[j] = (
+                    self.cold_order[j], self.cold_order[i])
         self.belief = list(matrix.prior)
         self.asked: set[str] = set()
         # Per-dimension interval implied by the firm answers so far, and how
@@ -936,10 +946,16 @@ class Engine:
         """
         if self.turns not in COLD_TURNS:
             return None
-        for q in self.m.cold_questions:
-            if q not in self.asked and not self._dependency_blocked(q):
+        eligible = [q for q in self.cold_order
+                    if q not in self.asked and not self._dependency_blocked(q)]
+        actual = dict(self.answers)
+        for q in eligible:
+            condition = (self.m.question_policy.get(q) or {}).get("priority_if")
+            if (condition is not None
+                    and self._condition_satisfied(
+                        condition, actual, allow_probable=False)):
                 return q
-        return None
+        return eligible[0] if eligible else None
 
     def _dependency_blocked(self, question: str) -> bool:
         """Keep a child hidden until a parent decisively opens its branch.

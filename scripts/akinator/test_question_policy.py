@@ -11,6 +11,14 @@ from question_policy import (STATE_NOT_APPLICABLE, STATE_UNKNOWN,
 
 
 class QuestionPolicyTests(unittest.TestCase):
+    def test_seed_rotates_cold_question_order_reproducibly(self) -> None:
+        matrix = SimpleNamespace(
+            prior=[1.0], cold_questions=["victorian", "firstperson", "memoir"])
+        first = Engine(matrix, seed=7).cold_order
+        self.assertEqual(first, Engine(matrix, seed=7).cold_order)
+        self.assertGreater(len({tuple(Engine(matrix, seed=s).cold_order)
+                                for s in range(1, 9)}), 1)
+
     def test_restore_columns_recovers_pre_policy_states(self) -> None:
         meta = {"books": 1, "questions": 3, "bytes_per_row": 1}
         questions = [{"id": "fiction"}, {"id": "child"}, {"id": "war"}]
@@ -42,6 +50,20 @@ class QuestionPolicyTests(unittest.TestCase):
         self.assertTrue(engine._dependency_blocked("alive"))
         engine.answers = [("veryold", "probably_yes")]
         self.assertFalse(engine._dependency_blocked("alive"))
+
+    def test_cold_priority_promotes_memoir_only_on_a_firm_branch(self) -> None:
+        engine = Engine.__new__(Engine)
+        branch = {"question": "nonfiction", "answer": "yes"}
+        engine.m = SimpleNamespace(
+            question_policy={"memoir": {"priority_if": branch}},
+            dependency_rules_by_child={})
+        engine.cold_order = ["firstperson", "memoir"]
+        engine.asked = set()
+        engine.turns = 14
+        engine.answers = [("nonfiction", "probably_yes")]
+        self.assertEqual(engine._due_cold_question(), "firstperson")
+        engine.answers = [("nonfiction", "yes")]
+        self.assertEqual(engine._due_cold_question(), "memoir")
 
     def test_three_valued_any_does_not_turn_unknown_into_false(self) -> None:
         condition = {"any": [

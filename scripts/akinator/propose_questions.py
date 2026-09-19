@@ -185,7 +185,8 @@ def build_proposal_prompt(existing: dict[str, str], sample: list[dict],
         '"keywords": ["cooking", "recipes", "culinary", "chef*"], '
         '"rationale": "one sentence", "level": "general", '
         '"domain": "topic", "answerability_cost": 0.05, '
-        '"applies_if": null, "skip_if": null, "not_applicable_examples": []},\n'
+        '"applies_if": null, "skip_if": null, "priority_if": null, '
+        '"not_applicable_examples": []},\n'
         '  {"key": "t:example", "type": "prose", '
         '"question": "...", "definition": "...", "rationale": "...", '
         '"level": "specific", "domain": "narrative", '
@@ -252,6 +253,7 @@ def parse_proposals(raw: str, existing_ids: set[str]) -> list[dict]:
         level, domain = row.get("level"), row.get("domain")
         cost, applies_if = row.get("answerability_cost"), row.get("applies_if")
         skip_if = row.get("skip_if")
+        priority_if = row.get("priority_if")
         na_examples = row.get("not_applicable_examples")
         if level not in ("general", "specific"):
             continue
@@ -262,6 +264,9 @@ def parse_proposals(raw: str, existing_ids: set[str]) -> list[dict]:
         if applies_if is not None and not _valid_policy_condition(applies_if, existing_ids):
             continue
         if skip_if is not None and not _valid_policy_condition(skip_if, existing_ids):
+            continue
+        if (priority_if is not None
+                and not _valid_policy_condition(priority_if, existing_ids)):
             continue
         if (not isinstance(na_examples, list)
                 or not all(isinstance(title, str) and title.strip()
@@ -274,6 +279,8 @@ def parse_proposals(raw: str, existing_ids: set[str]) -> list[dict]:
             policy["applies_if"] = applies_if
         if skip_if is not None:
             policy["skip_if"] = skip_if
+        if priority_if is not None:
+            policy["priority_if"] = priority_if
         common = {"key": key, "type": rtype,
                   "question": question.strip(), "rationale": rationale,
                   "policy": policy,

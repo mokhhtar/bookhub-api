@@ -155,6 +155,10 @@ def audit(path: str) -> tuple[list[str], list[str], dict]:
         if skip_condition is not None:
             edges.extend(_condition_edges(skip_condition, qid, live, errors,
                                           f"{where}.skip_if"))
+        priority_condition = entry.get("priority_if")
+        if priority_condition is not None:
+            edges.extend(_condition_edges(priority_condition, qid, live, errors,
+                                          f"{where}.priority_if"))
 
     cycle = _cycle(edges)
     if cycle:
