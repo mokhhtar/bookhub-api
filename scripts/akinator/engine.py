@@ -235,6 +235,7 @@ CHAR_STREAK_CAP = 2
 COLD_UNKNOWN_CONFIDENCE = 0.5
 NOT_APPLICABLE_CONFIDENCE = 0.5
 COLD_TURNS = (14, 22)
+CORE_QUESTION_TURN = 2
 
 # RE-ASKING ONE ANSWER, and why it can only help.
 #
@@ -965,9 +966,10 @@ class Engine:
     def _condition_satisfied(cls, condition, actual: dict[str, str]) -> bool:
         """Evaluate the small declarative applicability language.
 
-        Leaves are firm question/answer matches. ``any`` and ``all`` may be
-        nested, which is enough for alternative parents and multi-part gates
-        without embedding game-specific ids in either runtime.
+        Leaves accept the matching firm or probable answer. A player who says
+        "probably fiction" has resolved the branch enough to receive fiction
+        questions; only "unknown" keeps it closed. ``any`` and ``all`` may be
+        nested without embedding game-specific ids in either runtime.
         """
         if not isinstance(condition, dict):
             return False
@@ -980,8 +982,10 @@ class Engine:
             return isinstance(rows, list) and bool(rows) and all(
                 cls._condition_satisfied(row, actual) for row in rows)
         question, answer = condition.get("question"), condition.get("answer")
-        return (isinstance(question, str) and answer in ("yes", "no")
-                and actual.get(question) == answer)
+        if not isinstance(question, str) or answer not in ("yes", "no"):
+            return False
+        given = actual.get(question)
+        return given == answer or given == f"probably_{answer}"
 
     def next_question(self, exact: bool = False) -> str | None:
         """The most informative unasked question, by exact information gain.
@@ -1056,6 +1060,22 @@ class Engine:
             scored.append((gain, q))
             if gain > best_gain:
                 best, best_gain = q, gain
+
+        # A gate that only hides children can lower accuracy by replacing a
+        # whole useful branch with unrelated general questions. From turn 3,
+        # promote the most informative unresolved CORE question so the branch
+        # is classified promptly. The registry makes this scale when core
+        # questions are added; an unknown answer leaves another core eligible.
+        if self.turns >= CORE_QUESTION_TURN:
+            core = {q for q, entry in self.m.question_policy.items()
+                    if entry.get("level") == "core"}
+            resolved = any(q in core and answer != "unknown"
+                           for q, answer in self.answers)
+            if core and not resolved:
+                core_scored = [(gain, q) for gain, q in scored if q in core]
+                if core_scored:
+                    core_scored.sort(key=lambda t: (-t[0], t[1]))
+                    return core_scored[0][1]
 
         if (self._opening is not None and self.turns == 0
                 and len(scored) >= OPENING_CHOICES):

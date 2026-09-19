@@ -3,11 +3,19 @@ from __future__ import annotations
 
 import unittest
 
+from engine import Engine
 from question_policy import (STATE_NOT_APPLICABLE, STATE_UNKNOWN,
                              condition_value, encode_not_applicable_matrix)
 
 
 class QuestionPolicyTests(unittest.TestCase):
+    def test_probable_answer_opens_semantic_branch(self) -> None:
+        condition = {"question": "fiction", "answer": "yes"}
+        self.assertTrue(Engine._condition_satisfied(
+            condition, {"fiction": "probably_yes"}))
+        self.assertFalse(Engine._condition_satisfied(
+            condition, {"fiction": "unknown"}))
+
     def test_three_valued_any_does_not_turn_unknown_into_false(self) -> None:
         condition = {"any": [
             {"question": "fiction", "answer": "yes"},

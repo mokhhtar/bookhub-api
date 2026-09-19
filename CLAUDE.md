@@ -4,6 +4,15 @@ Persistent instructions for AI coding agents working in this repo. Read
 this before making changes — it encodes conventions and hard-won fixes
 from real incidents, not aspirations.
 
+## Read the vault before Mind Reader work
+
+Before analysing, changing, or measuring the Book Mind Reader/Akinator,
+read `E:\GitHub\litheca vault\handoff\START-HERE.md` and the relevant
+Mind Reader notes/memories in that vault. In particular, measurements must
+be paired, must use shipped artifacts, and heavy Akinator jobs must run one
+at a time with explicit book/game/question/memory limits. This is an owner
+requirement, not an optional research step.
+
 ## What this is
 
 FastAPI backend powering **BookHub**, a set of AI-grounded book tools
