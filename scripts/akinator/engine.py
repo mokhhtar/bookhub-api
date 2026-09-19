@@ -64,12 +64,15 @@ NARRATIVE_DEPENDENT_QUESTIONS = {
     "genre:scifi",
     "t:child",
     "t:detective",
+    "t:family",
     "t:otherworld",
     "t:powersystem",
     "t:romance",
     "t:survival",
     "t:travel",
     "t:war",
+    "theme:family",
+    "theme:friendship",
     "theme:magic",
 }
 ANSWER_EXCLUDES = {
@@ -414,9 +417,11 @@ class Matrix:
             for q in members:
                 self.excludes.setdefault(q, set()).update(x for x in members if x != q)
 
-        # Directional parent-answer -> child suppressions. None keeps the
-        # built-in rules for older callers; an explicit list is the shipped
-        # artifact and is authoritative for the browser/parity path.
+        # Directional parent-answer -> child branch rules. Children stay
+        # gated until a parent firmly opens the branch, and the recorded
+        # closing answer suppresses them. None keeps the built-in rules for
+        # older callers; an explicit list is the shipped artifact and is
+        # authoritative for the browser/parity path.
         if question_dependencies is None:
             self.answer_excludes = {k: set(v) for k, v in ANSWER_EXCLUDES.items()}
         else:
@@ -431,6 +436,11 @@ class Matrix:
                         and (child in self.question_set or child in self.cold_question_set):
                     self.answer_excludes.setdefault((parent, answer), set()).add(child)
         self.answer_exclude_parents = {q for q, _answer in self.answer_excludes}
+        self.dependency_rules_by_child: dict[str, list[tuple[str, str]]] = {}
+        for (parent, answer), children in self.answer_excludes.items():
+            for child in children:
+                self.dependency_rules_by_child.setdefault(child, []).append(
+                    (parent, answer))
 
         # token -> indices of books whose cast contains it. Lets the endgame
         # consider only names some live candidate actually has, instead of
@@ -894,9 +904,25 @@ class Engine:
         if self.turns not in COLD_TURNS:
             return None
         for q in self.m.cold_questions:
-            if q not in self.asked:
+            if q not in self.asked and not self._dependency_blocked(q):
                 return q
         return None
+
+    def _dependency_blocked(self, question: str) -> bool:
+        """Keep a child hidden until a parent decisively opens its branch.
+
+        A dependency rule records the answer that closes the child.  The
+        opposite firm answer therefore opens it.  Several parents are
+        alternatives: fiction=yes OR nonfiction=no may open narrative
+        questions.  Hedges and "don't know" deliberately open nothing.
+        """
+        rules = self.m.dependency_rules_by_child.get(question)
+        if not rules:
+            return False
+        actual = dict(self.answers)
+        return not any(actual.get(parent) in ("yes", "no")
+                       and actual[parent] != closing_answer
+                       for parent, closing_answer in rules)
 
     def next_question(self, exact: bool = False) -> str | None:
         """The most informative unasked question, by exact information gain.
@@ -943,7 +969,8 @@ class Engine:
         if cold is not None:
             return cold
 
-        pool = [q for q in self._pool() if q not in self.asked]
+        pool = [q for q in self._pool()
+                if q not in self.asked and not self._dependency_blocked(q)]
         if not pool:
             return None
 

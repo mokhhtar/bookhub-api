@@ -456,10 +456,11 @@ def exclusive(body: ExclusiveRequest):
 
 
 # ── directional question dependencies ──────────────────────────────────
-# A dependency is not mutual exclusion. It says that one firm answer closes
-# a whole semantic branch: e.g. form:fiction=no makes a protagonist question
-# inapplicable. Stored as individual edges so the admin can add/review them
-# without rewriting a nested tree, while the UI groups them by parent.
+# A dependency is not mutual exclusion. It keeps a child behind its parent
+# until the opposite firm answer opens the branch, while the recorded answer
+# closes it: e.g. form:fiction=no makes a protagonist question inapplicable.
+# Stored as individual edges so the admin can add/review them without
+# rewriting a nested tree, while the UI groups them by parent.
 
 class DependencyRequest(BaseModel):
     parent: str = Field(..., max_length=42)
@@ -516,7 +517,8 @@ def dependency(body: DependencyRequest):
     if not wrote:
         raise HTTPException(status_code=502, detail="commit failed")
     return {"ok": True, "rules": len(rules),
-            "effect": "live on the next deploy, no matrix rebuild"}
+            "effect": "live on the next deploy, no matrix rebuild; the child "
+                      "waits for a firm parent answer that opens its branch"}
 
 
 @router.post("/dependencies/audit")
