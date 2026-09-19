@@ -950,6 +950,11 @@ class Engine:
         questions.  Hedges and "don't know" deliberately open nothing.
         """
         policy = self.m.question_policy.get(question) or {}
+        skip_condition = policy.get("skip_if")
+        if (skip_condition is not None
+                and self._condition_satisfied(
+                    skip_condition, dict(self.answers), allow_probable=False)):
+            return True
         condition = policy.get("applies_if")
         if condition is not None:
             return not self._condition_satisfied(condition, dict(self.answers))
@@ -963,29 +968,34 @@ class Engine:
                        for parent, closing_answer in rules)
 
     @classmethod
-    def _condition_satisfied(cls, condition, actual: dict[str, str]) -> bool:
+    def _condition_satisfied(cls, condition, actual: dict[str, str],
+                             allow_probable: bool = True) -> bool:
         """Evaluate the small declarative applicability language.
 
-        Leaves accept the matching firm or probable answer. A player who says
-        "probably fiction" has resolved the branch enough to receive fiction
-        questions; only "unknown" keeps it closed. ``any`` and ``all`` may be
-        nested without embedding game-specific ids in either runtime.
+        Applicability leaves accept a matching firm or probable answer: a
+        player who says "probably fiction" has resolved that branch enough.
+        Logical ``skip_if`` callers pass ``allow_probable=False`` because a
+        hedge must not silently erase another valid question. ``any`` and
+        ``all`` may be nested without embedding game-specific ids here.
         """
         if not isinstance(condition, dict):
             return False
         if "any" in condition:
             rows = condition["any"]
             return isinstance(rows, list) and bool(rows) and any(
-                cls._condition_satisfied(row, actual) for row in rows)
+                cls._condition_satisfied(row, actual, allow_probable)
+                for row in rows)
         if "all" in condition:
             rows = condition["all"]
             return isinstance(rows, list) and bool(rows) and all(
-                cls._condition_satisfied(row, actual) for row in rows)
+                cls._condition_satisfied(row, actual, allow_probable)
+                for row in rows)
         question, answer = condition.get("question"), condition.get("answer")
         if not isinstance(question, str) or answer not in ("yes", "no"):
             return False
         given = actual.get(question)
-        return given == answer or given == f"probably_{answer}"
+        return (given == answer
+                or (allow_probable and given == f"probably_{answer}"))
 
     def next_question(self, exact: bool = False) -> str | None:
         """The most informative unasked question, by exact information gain.

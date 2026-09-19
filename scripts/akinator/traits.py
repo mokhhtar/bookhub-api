@@ -164,22 +164,22 @@ TRAITS: dict[str, tuple[str, str]] = {
         "The setting is a world other than the real Earth — a secondary "
         "world, another planet, or a fantasy realm."),
     "t:detective": (
-        "Is someone investigating a mystery?",
+        "Does it involve investigating a mystery or crime?",
         "A character is investigating a crime, a disappearance or an "
         "unexplained event as a central thread."),
     "t:war": (
-        "Does a war happen in it?",
+        "Does it substantially concern war?",
         "A war, battle or armed conflict is part of the story, not merely "
         "mentioned as background."),
     "t:romance": (
-        "Is there a central love story?",
+        "Is a love relationship central to the book?",
         "A romantic relationship is one of the main threads, not a "
         "background detail."),
     "t:animals": (
         "Are animals important characters?",
         "Animals are significant characters, whether they speak or not."),
     "t:child": (
-        "Is the main character a child or teenager?",
+        "Is the central person or main character a child or teenager?",
         "The protagonist is under about eighteen for most of the story."),
     "t:realevents": (
         "Is it based on real events or real people?",
@@ -189,17 +189,17 @@ TRAITS: dict[str, tuple[str, str]] = {
         "Is it set in the future?",
         "The story takes place later than the time it was written."),
     "t:travel": (
-        "Is it a journey across many places?",
+        "Does it involve a journey across many places?",
         "The story follows a journey, voyage or quest across several "
         "distinct places."),
     "t:family": (
-        "Is it about a family?",
+        "Is it substantially about a family?",
         "The relationships within one family are a central subject."),
     "t:school": (
-        "Does it take place at a school?",
+        "Is a school central to the book?",
         "A school, academy or university is a main setting."),
     "t:survival": (
-        "Is it about surviving danger?",
+        "Is surviving danger central to the book?",
         "Characters must survive a hostile environment, disaster or "
         "sustained threat."),
     "t:funny": (

@@ -167,8 +167,11 @@ def build_proposal_prompt(existing: dict[str, str], sample: list[dict],
         "5. Every candidate needs semantic policy: level is general or "
         "specific; domain is a short lowercase category; answerability_cost "
         "is 0.0 (trivial from memory) to 1.0 (usually unanswerable). A "
-        "specific question that presupposes a story, narrator, character, "
-        "setting, or other branch must include applies_if. Conditions use "
+        "specific question that is genuinely impossible for an entire "
+        "branch must include applies_if; narration, named people, family, "
+        "travel, war, and investigation can all occur in nonfiction. Use "
+        "skip_if only when another firm answer makes a valid question "
+        "logically redundant. Conditions use "
         "only existing question ids above and firm yes/no leaves, composed "
         "with any/all. Use null only when the question is meaningful for "
         "every kind of book.\n"
@@ -182,7 +185,7 @@ def build_proposal_prompt(existing: dict[str, str], sample: list[dict],
         '"keywords": ["cooking", "recipes", "culinary", "chef*"], '
         '"rationale": "one sentence", "level": "general", '
         '"domain": "topic", "answerability_cost": 0.05, '
-        '"applies_if": null, "not_applicable_examples": []},\n'
+        '"applies_if": null, "skip_if": null, "not_applicable_examples": []},\n'
         '  {"key": "t:example", "type": "prose", '
         '"question": "...", "definition": "...", "rationale": "...", '
         '"level": "specific", "domain": "narrative", '
@@ -248,6 +251,7 @@ def parse_proposals(raw: str, existing_ids: set[str]) -> list[dict]:
             continue
         level, domain = row.get("level"), row.get("domain")
         cost, applies_if = row.get("answerability_cost"), row.get("applies_if")
+        skip_if = row.get("skip_if")
         na_examples = row.get("not_applicable_examples")
         if level not in ("general", "specific"):
             continue
@@ -256,6 +260,8 @@ def parse_proposals(raw: str, existing_ids: set[str]) -> list[dict]:
         if isinstance(cost, bool) or not isinstance(cost, (int, float)) or not 0 <= cost <= 1:
             continue
         if applies_if is not None and not _valid_policy_condition(applies_if, existing_ids):
+            continue
+        if skip_if is not None and not _valid_policy_condition(skip_if, existing_ids):
             continue
         if (not isinstance(na_examples, list)
                 or not all(isinstance(title, str) and title.strip()
@@ -266,6 +272,8 @@ def parse_proposals(raw: str, existing_ids: set[str]) -> list[dict]:
                   "answerability_cost": round(float(cost), 2)}
         if applies_if is not None:
             policy["applies_if"] = applies_if
+        if skip_if is not None:
+            policy["skip_if"] = skip_if
         common = {"key": key, "type": rtype,
                   "question": question.strip(), "rationale": rationale,
                   "policy": policy,

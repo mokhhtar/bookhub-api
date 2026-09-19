@@ -260,7 +260,7 @@ SUBJECT_RULES: list[tuple[str, str, list[str]]] = [
       "forbidden love", "first love"]),
     ("genre:historicalfic", "Is it historical fiction?",
      ["historical fiction", "fiction historical", "historical romance"]),
-    ("genre:adventure", "Is it an adventure story?",
+    ("genre:adventure", "Is it about an adventure or exploration?",
      ["adventure", "quest", "treasure", "exploration", "survival"]),
     ("genre:war", "Does it involve war?",
      ["war", "world war", "military", "soldiers", "battle", "holocaust"]),
@@ -329,7 +329,7 @@ SUBJECT_RULES: list[tuple[str, str, list[str]]] = [
      ["young adult", "teenage", "teen*", "adolescen*", "high school stories"]),
 
     # --- setting ---
-    ("setting:school", "Does it take place at a school?",
+    ("setting:school", "Is a school central to the book?",
      ["school stories", "boarding school", "college", "university", "campus",
       "students life", "school life"]),
     ("setting:sea", "Does it take place at sea?",
@@ -428,10 +428,10 @@ SUBJECT_RULES: list[tuple[str, str, list[str]]] = [
       "vampire*", "paranormal", "dragon*", "monster*", "wizard*", "ghosts",
       "demon*", "magician*", "psychic*", "mythical", "elves", "undead",
       "necromanc*", "werewol*", "shapeshift*"]),
-    ("theme:family", "Is family central to the story?",
+    ("theme:family", "Is family central to the book?",
      ["family", "mothers", "fathers", "brothers", "sisters", "siblings",
       "parent", "marriage", "married people", "domestic fiction"]),
-    ("theme:friendship", "Is friendship central to the story?",
+    ("theme:friendship", "Is friendship central to the book?",
      ["friendship", "friends"]),
     ("theme:comingofage", "Is it a coming-of-age story?",
      ["coming of age", "bildungsroman", "growing up", "adolescence"]),
@@ -626,7 +626,7 @@ STRUCTURAL_QUESTIONS = {
     # 55.0%, WORSE than removing them. A question the player cannot answer
     # is not neutral: it spends one turn of thirty and multiplies every
     # book by 0.5.
-    "fact:namedchars": "Does it have well-known named characters?",
+    "fact:namedchars": "Does it feature well-known named people or characters?",
     # REMOVED with the page questions and for the same reason: it asks
     # about an AGGREGATE the player has no access to. A reader knows
     # whether THEY liked a book; "is it rated 4.2+ by twenty or more

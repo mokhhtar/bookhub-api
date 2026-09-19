@@ -22,9 +22,9 @@ DEFAULT_ARTIFACTS = os.path.abspath(os.path.join(
     REPO_ROOT, "..", "bookhub", "games", "data", "akinator"))
 LEVELS = {"core", "general", "specific", "endgame", "experimental"}
 NARRATIVE_PATTERNS = (
-    r"\bstory\b", r"\bcharacters?\b", r"\bnarrat", r"\btake place\b",
-    r"\bset in\b", r"\binvented world\b", r"\bpower system\b",
-    r"\blove story\b", r"\bsupernatural\b",
+    r"\binvented world\b", r"\bpower system\b", r"\bsupernatural\b",
+    r"\bfantasy\b", r"\bscience fiction\b", r"\bweb novel\b",
+    r"\blight novel\b",
 )
 
 
@@ -151,6 +151,10 @@ def audit(path: str) -> tuple[list[str], list[str], dict]:
                 re.search(pattern, wording.get(qid, "").lower())
                 for pattern in NARRATIVE_PATTERNS):
             warnings.append(f"{qid}: narrative wording has no applies_if gate")
+        skip_condition = entry.get("skip_if")
+        if skip_condition is not None:
+            edges.extend(_condition_edges(skip_condition, qid, live, errors,
+                                          f"{where}.skip_if"))
 
     cycle = _cycle(edges)
     if cycle:
