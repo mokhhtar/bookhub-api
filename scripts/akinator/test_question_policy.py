@@ -1,16 +1,46 @@
 """Small regression tests for semantic applicability and packed state 3."""
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 
+from audit_question_policy import audit
 from engine import Engine
 from migrate_not_applicable import _restore_columns
 from question_policy import (STATE_NOT_APPLICABLE, STATE_UNKNOWN,
-                             condition_value, encode_not_applicable_matrix)
+                             condition_value, encode_not_applicable_matrix,
+                             policy_digest)
 
 
 class QuestionPolicyTests(unittest.TestCase):
+    def test_audit_rejects_stale_policy_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw)
+            policy = {"version": 1, "questions": {"general": {
+                "level": "general", "domain": "general",
+                "answerability_cost": 0.1}}}
+            artifacts = {
+                "questions.json": [{"id": "general", "text": "General?"}],
+                "cold_questions.json": [],
+                "question_policy.json": policy,
+                "meta.json": {"question_policy_digest": "stale"},
+            }
+            for name, value in artifacts.items():
+                (path / name).write_text(json.dumps(value), encoding="utf-8")
+            errors, _, _ = audit(raw)
+            self.assertTrue(any("question_policy_digest mismatch" in error
+                                for error in errors))
+
+            artifacts["meta.json"]["question_policy_digest"] = policy_digest(policy)
+            (path / "meta.json").write_text(
+                json.dumps(artifacts["meta.json"]), encoding="utf-8")
+            errors, _, _ = audit(raw)
+            self.assertFalse(any("question_policy_digest mismatch" in error
+                                 for error in errors))
+
     def test_seed_rotates_cold_question_order_reproducibly(self) -> None:
         matrix = SimpleNamespace(
             prior=[1.0], cold_questions=["victorian", "firstperson", "memoir"])

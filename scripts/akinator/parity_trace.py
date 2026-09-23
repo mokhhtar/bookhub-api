@@ -42,6 +42,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from engine import Engine, Matrix  # noqa: E402
+from question_policy import policy_digest  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEFAULT_ARTIFACTS = os.path.join(REPO_ROOT, "..", "bookhub", "games", "data", "akinator")
@@ -267,6 +268,13 @@ def main() -> None:
             policy, policy_bytes = {}, b""
     if policy:
         print(f"question_policy.json: {len(policy.get('questions') or {})} question(s)")
+    actual_policy_digest = policy_digest(policy)
+    if meta.get("question_policy_digest") != actual_policy_digest:
+        raise SystemExit(
+            "question policy changed since the artifacts were stamped: "
+            f"meta has {meta.get('question_policy_digest')!r}, actual is "
+            f"{actual_policy_digest!r}. Run migrate_not_applicable.py with "
+            "an explicit --max-books bound before generating a parity trace.")
 
     matrix = Matrix(books, qids, excluded=excluded, overrides=overrides,
                     cold_questions=cold, exclusive_extra=exclusive_extra,

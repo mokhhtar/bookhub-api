@@ -16,6 +16,8 @@ import os
 import re
 import sys
 
+from question_policy import policy_digest
+
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEFAULT_ARTIFACTS = os.path.abspath(os.path.join(
@@ -106,6 +108,7 @@ def audit(path: str) -> tuple[list[str], list[str], dict]:
         questions = _load(path, "questions.json")
         cold = _load(path, "cold_questions.json")
         policy = _load(path, "question_policy.json")
+        meta = _load(path, "meta.json")
     except (OSError, json.JSONDecodeError) as exc:
         return [f"cannot read shipped artifacts: {exc}"], [], {}
 
@@ -120,6 +123,15 @@ def audit(path: str) -> tuple[list[str], list[str], dict]:
     if not isinstance(entries, dict):
         errors.append("question_policy.json.questions must be an object")
         return errors, warnings, {}
+
+    actual_digest = policy_digest(policy)
+    stamped_digest = (meta.get("question_policy_digest")
+                      if isinstance(meta, dict) else None)
+    if stamped_digest != actual_digest:
+        errors.append(
+            "meta.json question_policy_digest mismatch: "
+            f"stored {stamped_digest!r}, actual {actual_digest!r}; run "
+            "migrate_not_applicable.py with an explicit --max-books bound")
 
     missing = sorted(live - set(entries))
     extra = sorted(set(entries) - live)

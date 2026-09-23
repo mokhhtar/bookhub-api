@@ -3,6 +3,8 @@
 This is intentionally a tiny artifact migration, not a corpus rebuild.  It
 reads one packed row at a time, derives applicability only from that row's
 grounded parent states, and updates matrix.bin plus its decoding metadata.
+Run it after every question_policy.json edit, including policy for cold
+questions, because the live append path verifies the policy digest.
 
 Example (the explicit bound prevents accidentally processing an unexpected
 artifact set)::
