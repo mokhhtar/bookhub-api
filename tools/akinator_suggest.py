@@ -94,6 +94,12 @@ log = logging.getLogger("bookhub-api.akinator_suggest")
 
 SUGGEST_PREFIX = "akin:sg:"
 PENDING_SET = "akin:sg:pending"
+# A resolved queue entry is deleted, but a reader who filed it still needs a
+# small answer to "what happened to my report?".  This tombstone contains no
+# title, author, uid, or free text — only the verdict — and expires with the
+# same horizon as the queue.  The id is already returned to the submitting
+# client and is the content hash used by the queue itself.
+RESULT_PREFIX = "akin:sg:result:"
 
 # Tick counts, kept SEPARATELY from the queue and deliberately outliving it.
 #
@@ -198,6 +204,11 @@ class SuggestRequest(BaseModel):
     # canonical subject name it matched, never as the words that were typed.
     # See `_resolve_subject`.
     new_theme: str = Field(default="", max_length=60)
+
+
+class SuggestStatusRequest(BaseModel):
+    """A bounded batch of opaque ids previously returned by /suggest."""
+    ids: list[str] = Field(default_factory=list, max_length=50)
 
 
 def _client_id(request: Request) -> str:
@@ -659,6 +670,38 @@ def suggest(body: SuggestRequest, request: Request):
 
     log.info("queued suggestion %s (%s)", entry_id, body.reason)
     return {"ok": True, "id": entry_id, "reason": body.reason}
+
+
+@router.post("/suggest/status")
+def suggestion_status(body: SuggestStatusRequest):
+    """Return pending/accepted/rejected for reports this browser remembers.
+
+    There is deliberately no account lookup here.  The queue predates account
+    integration and remains usable while signed out; the client keeps only
+    the ids returned to it.  Status records contain no book or reader data,
+    so learning an id reveals only a verdict on that content-hash entry.
+    """
+    out: dict[str, dict] = {}
+    for entry_id in dict.fromkeys(body.ids):
+        if not _ID.match(entry_id):
+            continue
+        result = cache.get_key(RESULT_PREFIX + entry_id)
+        if isinstance(result, dict) and result.get("status") in {
+                "accepted", "rejected"}:
+            out[entry_id] = {
+                "status": result["status"],
+                "action": result.get("action") or "",
+                "resolved_at": result.get("resolved_at"),
+            }
+            continue
+        pending = cache.hgetall(SUGGEST_PREFIX + entry_id)
+        if pending:
+            out[entry_id] = {"status": "pending"}
+        else:
+            # Redis is intentionally temporary.  Unknown means exactly that,
+            # never "rejected": the queue or its tombstone may have expired.
+            out[entry_id] = {"status": "unknown"}
+    return {"statuses": out}
 
 
 def queue_resolved_book(record: "BookRecord") -> None:
@@ -1133,6 +1176,19 @@ def resolve(body: ResolveRequest):
         result = admin_exclude(ExcludeRequest(work_key=work_key, excluded=True,
                                               reason="reader suggestion"))
 
+    status = "rejected" if body.action == "reject" else "accepted"
+    status_saved = cache.set_key_strict(
+        RESULT_PREFIX + body.id,
+        {"status": status, "action": body.action,
+         "resolved_at": int(time.time())},
+        ttl=SUGGEST_TTL,
+    )
+    if not status_saved:
+        # The admin action already landed (or the rejection was decided), so
+        # never replay it merely to repair a courtesy status.  The reader will
+        # see "unknown" rather than a fabricated verdict.
+        log.warning("resolved %s but could not store its status", body.id)
+
     removed = cache.pipeline([
         ["SREM", PENDING_SET, body.id],
         ["DEL", SUGGEST_PREFIX + body.id],
@@ -1145,4 +1201,5 @@ def resolve(body: ResolveRequest):
 
     log.info("resolved suggestion %s as %s", body.id, body.action)
     return {"ok": True, "action": body.action, "removed": removed,
+            "status_saved": status_saved,
             "result": result or None}
