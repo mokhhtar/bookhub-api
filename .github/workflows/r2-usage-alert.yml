@@ -25,6 +25,9 @@
 #     narrowest rights that do its work.
 name: R2 usage alert
 
+permissions:
+  contents: read
+
 on:
   schedule:
     # 07:41 UTC on Mondays. Not :00 — every scheduled job in the world fires

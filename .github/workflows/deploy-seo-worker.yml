@@ -14,6 +14,9 @@
 # assertion header and fails closed without it.
 name: Deploy SEO status Worker
 
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
   push:

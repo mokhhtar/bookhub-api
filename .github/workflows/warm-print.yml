@@ -24,6 +24,9 @@
 #   CLOUDFLARE_ACCOUNT_ID
 name: Warm printable editions to R2
 
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
     inputs:

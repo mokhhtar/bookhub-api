@@ -11,6 +11,9 @@ name: Promote earned pages to indexing
 # Requires the PROMOTE_SECRET repo secret to equal the PROMOTE_SECRET env
 # var on Render.
 
+permissions:
+  contents: read
+
 on:
   schedule:
     - cron: "25 1 * * *"  # 01:25 UTC daily — after warm-daily, off the hour

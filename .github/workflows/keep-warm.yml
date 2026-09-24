@@ -15,6 +15,9 @@ name: Keep Render instance awake
 # GitHub cron can lag a few minutes under load; a 10-min cadence still stays
 # safely inside the ~15-min sleep threshold even with typical delay.
 
+permissions:
+  contents: read
+
 on:
   schedule:
     - cron: "*/10 * * * *"

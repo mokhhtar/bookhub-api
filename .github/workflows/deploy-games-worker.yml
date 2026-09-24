@@ -18,6 +18,9 @@
 # { enough: false } until there are enough solvers to report.
 name: Deploy games stats Worker
 
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
   push:

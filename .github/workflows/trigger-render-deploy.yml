@@ -10,6 +10,9 @@ name: Trigger Render deploy
 # New repository secret named RENDER_DEPLOY_HOOK with that URL as the value.
 # Until the secret exists this workflow no-ops harmlessly.
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: ["main"]

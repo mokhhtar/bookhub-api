@@ -27,6 +27,9 @@ name: Drain mind reader play counts into overrides
 # it the endpoint is closed (403), and this fails loudly rather than
 # quietly doing nothing.
 
+permissions:
+  contents: read
+
 on:
   schedule:
     - cron: "10 3 * * *"  # 03:10 UTC daily — 30 min after akinator-sync

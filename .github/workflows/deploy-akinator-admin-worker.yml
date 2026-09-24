@@ -16,6 +16,9 @@
 # assertion header and fails closed without it.
 name: Deploy Book Mind Reader admin Worker
 
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
   push:

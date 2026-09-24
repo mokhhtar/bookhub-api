@@ -18,6 +18,9 @@ name: Refresh published book pages
 # that is too slow, raise SUMMARY_PUBLISH_DAILY on Render — not the batch
 # here, which would just spend requests to no effect.
 
+permissions:
+  contents: read
+
 on:
   schedule:
     - cron: "40 3 * * *"   # 03:40 UTC — clear of warm-daily's 00:05
