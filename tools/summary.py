@@ -19,6 +19,7 @@ Pipeline:
 """
 
 import logging
+import hashlib
 import os
 import re
 import unicodedata
@@ -2348,6 +2349,46 @@ def resolve_share_slug(share_slug: str):
 # NEVER gated by this — only whether publish tasks get scheduled.
 LIMIT_SUMMARY_PUBLISH_DAILY = int(os.environ.get("SUMMARY_PUBLISH_DAILY", 8))
 
+# A cache miss is also a billable Gemini generation. The publish quota above
+# deliberately protects GitHub writes only; it must not be mistaken for a
+# generation quota. Keep cached reads free so revisiting an existing guide is
+# harmless, while bounding a caller that submits many distinct books.
+LIMIT_SUMMARY_GENERATE_DAILY = int(os.environ.get("SUMMARY_GENERATE_DAILY", 20))
+
+
+def _summary_generation_quota(request: Request) -> None:
+    """Cap fresh summary generations per real client IP.
+
+    This runs only on cache misses in both summary routes. Cached summaries
+    remain available without consuming the expensive-generation allowance.
+    The shared limiter degrades closed (to a bounded local counter) if Redis
+    is unavailable, so an outage cannot turn this cost control into fail-open.
+    """
+    from tools.quiz_core import _rate_limit, _client_ip
+    _rate_limit("summarygenerate", LIMIT_SUMMARY_GENERATE_DAILY,
+                _client_ip(request), namespace="sum")
+
+
+def _summary_lock_key(cache_key: tuple) -> str:
+    """Stable, bounded Redis key for one in-flight summary generation."""
+    raw = "|".join("" if v is None else str(v) for v in cache_key)
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+    return f"summary:generate:lock:{digest}"
+
+
+def _acquire_summary_lock(cache_key: tuple) -> str:
+    """Prevent duplicate Gemini work for the same cache miss across workers."""
+    lock_key = _summary_lock_key(cache_key)
+    if not cache.acquire_lock(lock_key, ttl=180):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "summary_in_progress",
+                "message": "This summary is already being generated. Please retry shortly.",
+            },
+        )
+    return lock_key
+
 
 def _publish_quota_ok(request: Request) -> bool:
     """True if this request's IP still has publish quota today; False (and
@@ -2678,6 +2719,11 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks, request: Req
     if cached:
         return _heal_cached_summary(cached, req, cache_key, request, background_tasks)
 
+    # Only a cache miss can trigger Gemini and the expensive enrichment work.
+    # Cached reads stay free for normal repeat visitors.
+    _summary_generation_quota(request)
+    summary_lock = _acquire_summary_lock(cache_key)
+
     record = book_data.resolve_book(req.title, req.author, req.isbn, req.google_id, req.openlibrary_id, req.bookwyrm_id)
 
     if not record.found:
@@ -2691,6 +2737,7 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks, request: Req
             ),
         }
         cache.set(result, *cache_key, ttl=3600)
+        cache.delete_key(summary_lock)
         return result
 
     import concurrent.futures
@@ -2706,6 +2753,7 @@ def summary(req: SummaryRequest, background_tasks: BackgroundTasks, request: Req
 
     result = _assemble_result(record, req.depth, summary_text, extras)
     cache.set(result, *cache_key)
+    cache.delete_key(summary_lock)
 
     # Publish the static SEO pages in the background — commit failures are
     # logged inside the publisher and never affect this response. English
@@ -2742,6 +2790,19 @@ def summary_stream(req: SummaryRequest, background_tasks: BackgroundTasks, reque
     import json as _json
     import concurrent.futures
     from fastapi.responses import StreamingResponse
+
+    # Check before returning StreamingResponse: an HTTPException here becomes
+    # a normal 429 response instead of an in-band SSE failure after headers
+    # have already been sent. The generator repeats the cache lookup but does
+    # not charge cached results because this check is only for a miss.
+    stream_cache_key = ("summary_v13", req.title, req.author, req.depth,
+                        req.isbn, req.google_id, req.openlibrary_id,
+                        req.bookwyrm_id, req.language)
+    if cache.get(*stream_cache_key) is None:
+        _summary_generation_quota(request)
+        stream_lock = _acquire_summary_lock(stream_cache_key)
+    else:
+        stream_lock = None
 
     def sse(obj) -> str:
         return f"data: {_json.dumps(obj, ensure_ascii=False)}\n\n"
@@ -2804,6 +2865,8 @@ def summary_stream(req: SummaryRequest, background_tasks: BackgroundTasks, reque
                 background_tasks.add_task(akinator_suggest.queue_resolved_book, record)
             yield sse({"done": result})
         finally:
+            if stream_lock:
+                cache.delete_key(stream_lock)
             executor.shutdown(wait=False)
 
     return StreamingResponse(gen(), media_type="text/event-stream", headers={

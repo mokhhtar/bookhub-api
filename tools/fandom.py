@@ -2188,7 +2188,7 @@ def get_universe(title: str = Query(..., min_length=1), subdomain: Optional[str]
         }
     except Exception as e:
         log.error(f"Fandom Gemini synthesis failed: {e}")
-        raise HTTPException(status_code=502, detail=f"Failed to synthesize lore guide: {str(e)}")
+        raise HTTPException(status_code=502, detail="Failed to synthesize lore guide")
 
     cache.set(result, *cache_key)
     return result

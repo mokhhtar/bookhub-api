@@ -115,6 +115,20 @@ class _NoGzipForStream:
 
 app.add_middleware(_NoGzipForStream)
 
+
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    """Add defensive browser headers to every API response.
+
+    HSTS is intentionally managed at the edge rather than here because the
+    public site is GitHub Pages and several subdomains have different owners.
+    """
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    return response
+
 # Browser/CDN cache windows for cacheable GET endpoints (first matching
 # prefix wins). These mirror how volatile each payload actually is; the
 # server-side Redis cache stays the source of truth — this just stops the
@@ -224,8 +238,9 @@ def list_models():
     result = {}
     try:
         result["models"] = gemini_client.list_gemini_models()
-    except Exception as e:
-        result["gemini_error"] = str(e)
+    except Exception:
+        log.exception("Gemini model listing failed")
+        result["gemini_error"] = "temporary upstream model service failure"
     result["groq"] = gemini_client.check_groq()
     return result
 

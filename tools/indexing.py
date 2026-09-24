@@ -250,8 +250,9 @@ def promote(x_promote_secret: str = Header(default=""),
                       params={"ref": github_publisher.GITHUB_BRANCH}, timeout=15.0)
         r.raise_for_status()
         pages = [it["name"] for it in r.json() if it.get("name", "").endswith(".md")]
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"could not list _books: {e}")
+    except Exception:
+        log.exception("Could not list _books from GitHub")
+        raise HTTPException(status_code=502, detail="temporary indexing service failure")
 
     report = {"scanned": 0, "promoted": [], "eligible_dry": [], "skipped_indexed": 0,
               "below_threshold": {}, "dry": dry}
