@@ -88,6 +88,14 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual(raw[0]&3,0)
         self.assertEqual((raw[0]>>2)&3,1)
 
+    def test_unknown_research_does_not_erase_existing_cell(self):
+        books=[{'k':'/works/test','t':'Test','a':'Writer','y':2018}]
+        qs=[{'id':'form:fiction','text':'Fiction?','base':1}]
+        meta={'bytes_per_row':1,'books':1,'questions':1}
+        # The packed row already says yes; an unresolved sheet leaves it intact.
+        out=refresh(books,qs,meta,bytes([1]),{},vectors={'/works/test':{'form:fiction':None}})
+        self.assertEqual(out[3][0]&3,1)
+
     def test_new_question_without_book_changes(self):
         future={'id':'fact:firstpub_le_2025','op':'<=','year':2025,'text':'First published in 2025 or earlier?'}
         with patch('publication.DEFINITIONS',DEFINITIONS+[future]):

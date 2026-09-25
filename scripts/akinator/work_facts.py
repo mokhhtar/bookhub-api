@@ -75,7 +75,7 @@ def refresh(books, questions, meta, raw, facts, corrections=None, vectors=None):
             if q['id'] in values:
                 value = values[q['id']]
                 state = 2 if value is None else 1 if value else 0
-            elif q['id'] in research:
+            elif q['id'] in research and research[q['id']] is not None:
                 value = research[q['id']]
                 state = 2 if value is None else 1 if value else 0
             else:
@@ -227,7 +227,14 @@ def main():
                     # Keep cold/future ids in the research record too.  The
                     # current matrix consumes the intersection; retaining the
                     # rest means promotion does not discard completed work.
-                    vectors[key]={q:allowed[v] for q,v in sheet_answers.items()}
+                    # An unresolved answer is not an instruction to erase an
+                    # existing shipped fact.  Research sheets always contain
+                    # all question ids, so importing their `unknown` values
+                    # used to wipe thousands of older cells.  Keep only
+                    # explicit evidence; unresolved questions remain absent
+                    # from the overlay and therefore preserve the prior row.
+                    vectors[key]={q:allowed[v] for q,v in sheet_answers.items()
+                                 if v != 'unknown'}
             save(args.data,'work_facts.json',records)
             save(args.data,'research_vectors.json',vectors)
         print(json.dumps(migrate(args.data)))
