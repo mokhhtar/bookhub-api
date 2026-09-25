@@ -14,7 +14,7 @@ from publication import (DATA, DEFINITIONS, LADDER, LEGACY_IDS, QUESTIONS,
                          answers, author_status, valid_year, validate_fact, derive_vector)
 
 
-def refresh(books, questions, meta, raw, facts, corrections=None):
+def refresh(books, questions, meta, raw, facts, corrections=None, vectors=None):
     """Pure transformation, usable by the local importer and admin API."""
     books, questions, meta = copy.deepcopy((books, questions, meta))
     old_n, old_bpr = len(questions), meta['bytes_per_row']
@@ -32,6 +32,7 @@ def refresh(books, questions, meta, raw, facts, corrections=None):
     yes_counts = [0] * len(questions)
     changed = 0
     for i, book in enumerate(books):
+        research = (vectors or {}).get(book['k'], {})
         fact = facts.get(book['k'], {})
         doc = {'first_publish_year': book.get('y'),
                **{k: book[k] for k in ('publication','publication_answers','authorship') if k in book}, **fact}
@@ -71,8 +72,14 @@ def refresh(books, questions, meta, raw, facts, corrections=None):
             book['v'] = derive_vector(book['v'], doc)
         for j, q in enumerate(questions):
             old = (raw[i * old_bpr + j // 4] >> (2 * (j % 4))) & 3 if j < old_n else 2
-            value = values.get(q['id'])
-            state = (2 if value is None else 1 if value else 0) if q['id'] in values else old
+            if q['id'] in values:
+                value = values[q['id']]
+                state = 2 if value is None else 1 if value else 0
+            elif q['id'] in research:
+                value = research[q['id']]
+                state = 2 if value is None else 1 if value else 0
+            else:
+                state = old
             changed += state != old
             yes_counts[j] += state == 1
             packed[i*bpr+j//4] |= state << (2*(j%4))
@@ -110,7 +117,7 @@ def migrate(root):
     for b in books:
         if 'v' in b: vectors.setdefault(b['k'], b['v'])
     result = refresh(books, qs, meta, (root/'matrix.bin').read_bytes(), facts,
-                     load(root, 'admin_corrections.json', {}))
+                     load(root, 'admin_corrections.json', {}), vectors)
     new_books, new_qs, new_meta, packed, count = result
     quarantine = load(root, 'publication_legacy_answers.json', {})
     for name in ('overrides.json', 'overrides_locked.json', 'question_overrides.json'):
@@ -202,12 +209,27 @@ def main():
             elif 'key' in incoming:
                 raise ValueError('Research sheet is not linked to a shipped book key')
             records=load(args.data,'work_facts.json',{})
+            vectors=load(args.data,'research_vectors.json',{})
             keys={b['k'] for b in load(args.data,'books.json',[])}
+            allowed={'yes':True,'no':False,'unknown':None,
+                     'probably_yes':True,'probably_no':False}
             for key, fact in incoming.items():
                 if key not in keys: raise ValueError('Book not in shipped catalogue: '+key)
                 merged={**records.get(key,{}),**{k:v for k,v in fact.items() if k in ('publication','publication_answers','authorship')}}
                 records[key]=validate_fact(merged)
+                sheet_answers=fact.get('answers')
+                if sheet_answers is not None:
+                    if not isinstance(sheet_answers,dict):
+                        raise ValueError('Research sheet answers must be an object: '+key)
+                    bad={q:v for q,v in sheet_answers.items()
+                         if not isinstance(v,str) or v not in allowed}
+                    if bad: raise ValueError('Invalid research answers for '+key+': '+repr(bad))
+                    # Keep cold/future ids in the research record too.  The
+                    # current matrix consumes the intersection; retaining the
+                    # rest means promotion does not discard completed work.
+                    vectors[key]={q:allowed[v] for q,v in sheet_answers.items()}
             save(args.data,'work_facts.json',records)
+            save(args.data,'research_vectors.json',vectors)
         print(json.dumps(migrate(args.data)))
 
 

@@ -77,6 +77,17 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual((corrected[3][0]>>2)&3,0)
         self.assertEqual(corrected[0][0]['y'],1990)
 
+    def test_refresh_applies_research_vectors_but_date_wins(self):
+        books=[{'k':'/works/test','t':'Test','a':'Writer','y':2018}]
+        qs=[{'id':'form:fiction','text':'Fiction?','base':1},
+            {'id':'fact:firstpub_ge_2016','text':'Published in 2016 or later?','base':0}]
+        meta={'bytes_per_row':1,'books':1,'questions':2}
+        vectors={'/works/test':{'form:fiction':False,'fact:firstpub_ge_2016':False}}
+        out=refresh(books,qs,meta,bytes([2 | (2 << 2)]),{},vectors=vectors)
+        raw=out[3]
+        self.assertEqual(raw[0]&3,0)
+        self.assertEqual((raw[0]>>2)&3,1)
+
     def test_new_question_without_book_changes(self):
         future={'id':'fact:firstpub_le_2025','op':'<=','year':2025,'text':'First published in 2025 or earlier?'}
         with patch('publication.DEFINITIONS',DEFINITIONS+[future]):
