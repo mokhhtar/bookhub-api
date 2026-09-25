@@ -42,6 +42,8 @@ correct book, which is the worst failure this game can have.
 """
 from __future__ import annotations
 
+from publication import QUESTIONS as PUBLICATION_QUESTIONS, LADDER as PUBLICATION_LADDER, answers as publication_answers, author_status
+
 import re
 import unicodedata
 
@@ -601,12 +603,8 @@ def map_subject(normalized: str) -> list[str]:
 # the story. Coverage made them good features; it never made them good
 # questions.
 STRUCTURAL_QUESTIONS = {
-    "fact:veryold": "Was it written before 1900?",
-    "fact:old": "Was it written before 1950?",
-    "fact:pre1970": "Was it written before 1970?",
-    "fact:pre2000": "Was it written before 2000?",
-    "fact:recent": "Was it published in the last 25 years?",
-    "fact:verrecent": "Was it published in the last 10 years?",
+    **PUBLICATION_QUESTIONS,
+    "fact:anonymous": "Is the identity of this work’s author unknown?",
     # PAGE QUESTIONS REMOVED, 2026-08-18, on the owner's argument and the
     # project's own rule. `published_year` in a published page is the
     # EDITION year and the build plan already forbids it becoming a clue.
@@ -648,55 +646,10 @@ def structural_features(doc: dict, popularity_rank: int, corpus_size: int,
     languages = doc.get("language") or []
 
     feats: dict[str, bool | None] = {}
-    feats["fact:veryold"] = (year < 1900) if year else None
-    feats["fact:old"] = (year < 1950) if year else None
-    feats["fact:pre1970"] = (year < 1970) if year else None
-    feats["fact:pre2000"] = (year < 2000) if year else None
-    feats["fact:recent"] = (year >= 2001) if year else None
-    feats["fact:verrecent"] = (year >= 2016) if year else None
-
-    # A WEB NOVEL DATES ITSELF, mostly, without anyone finding its year.
-    #
-    # 33 of the 39 web novels ship with no `first_publish_year` — the wikis
-    # record chapters and characters, not publication dates, and a harvest
-    # plus a model plus a keyword rule between them recovered 4. So all six
-    # of the questions above answered `unknown`, which is not merely a gap:
-    # a reader answering "no, not before 2000" gives those books 0.5 where a
-    # properly dated book gets 0.85, so being undated actively pushed them
-    # DOWN against books that carry a date.
-    #
-    # THREE of the six need no date at all, and the count used to be five.
-    # The owner corrected it: web novels written in the 1990s do exist — the
-    # web is older than this corpus's habits, and obscurity is not absence.
-    # So the line is drawn where physics draws it. Nothing serialised on the
-    # web predates 1900, 1950 or 1970, and saying so is the same kind of
-    # claim as "a play has no chapters".
-    #
-    # `fact:pre2000` and `fact:recent` are NOT on that footing and are left
-    # alone. They were the valuable pair — the corpus splits near half on
-    # them — and asserting them cost nothing visible, because no undated web
-    # novel in the corpus today is from the 1990s. That is exactly the shape
-    # of claim this codebase refuses: it happened to be true of the data we
-    # hold, not true of the category. And the cost of being wrong is not
-    # small, because a computed False becomes `known_false` at 0.03 — the
-    # strongest "no" the engine can say. One 1990s web serial arriving
-    # without a year would be eliminated with confidence by a rule that
-    # never looked at it.
-    #
-    # THE SIXTH IS DIFFERENT AND IS LEFT ALONE unless something dates it,
-    # because "in the last 10 years" is exactly what varies across this
-    # group. `wiki_created` is the honest source: a wiki is made after the
-    # book it is about, so a wiki that predates 2016 proves the book does
-    # too. The converse proves nothing — Solo Leveling's wiki is from 2018
-    # and the novel from 2014 — so a later wiki leaves the question unknown
-    # rather than answering it wrongly. Verified against the three of these
-    # whose year we do know: the wiki was never older than the book.
-    if webnovel and not year:
-        for q in ("fact:veryold", "fact:old", "fact:pre1970"):
-            feats[q] = False
-        wiki = doc.get("wiki_created")
-        if isinstance(wiki, int) and wiki < 2016:
-            feats["fact:verrecent"] = False
+    feats.update(publication_answers(doc))
+    status = author_status(doc)
+    feats["fact:anonymous"] = True if status == "anonymous" else False if status == "known" else None
+    # Missing dates stay unknown; category and wiki age are not publication evidence.
 
     # See STRUCTURAL_QUESTIONS: page count is an edition fact, not a fact
     # about the work, and is no longer asked.
@@ -834,6 +787,10 @@ def extract(doc: dict, popularity_rank: int, corpus_size: int) -> dict:
         "title": doc.get("title") or "",
         "author": (doc.get("author_name") or [""])[0],
         "year": doc.get("first_publish_year"),
+        "publication": doc.get("publication", {}),
+        "publication_answers": doc.get("publication_answers", {}),
+        "authorship": doc.get("authorship", {"status": author_status(doc)}),
+        "protected_questions": list(PUBLICATION_QUESTIONS) + ["fact:anonymous"],
         "popularity": doc.get("readinglog_count") or 0,
         "wikidata": (doc.get("id_wikidata") or [None])[0],
         "persons": doc.get("person") or [],
@@ -885,9 +842,9 @@ for _group in EXCLUSIVE_GROUPS:
 #
 # The owner played the game and was asked, in one session:
 #
-#     "Was it published in the last 25 years?"  yes      (so year >= 2001)
-#     "Was it published in the last 10 years?"  no       (so year <= 2015)
-#     "Was it written before 2000?"                      <- already answered
+#     "First published in 2001 or later?"  yes
+#     "First published in 2016 or later?"  no
+#     "First published before 2000?"        <- already answered
 #
 # The third question's answer was determined two turns earlier. The engine
 # could not know that: to the matrix these are three unrelated columns, and
@@ -901,19 +858,10 @@ for _group in EXCLUSIVE_GROUPS:
 # skip any question whose answer is already implied by it. Not a heuristic —
 # the skipped questions have exactly zero information left to give.
 #
-# The same table is duplicated in the JavaScript engine. That duplication is
-# a known hazard here (it has bitten this project twice), so it is covered by
-# the golden-trace parity test: change one side and `node
-# games/parity-check.js` fails on the turn where the sequences part.
+# The build exports this table in meta.json for the JavaScript engine. The
+# golden-trace parity test still verifies that both engines interpret it alike.
 LADDERS: dict[str, list[tuple[str, str, float]]] = {
-    "year": [
-        ("fact:veryold", "<", 1900),
-        ("fact:old", "<", 1950),
-        ("fact:pre1970", "<", 1970),
-        ("fact:pre2000", "<", 2000),
-        ("fact:recent", ">=", 2001),
-        ("fact:verrecent", ">=", 2016),
-    ],
+    "year": PUBLICATION_LADDER,
     # "pages" ladder removed with the questions it ordered.
 }
 
@@ -931,6 +879,8 @@ def ladder_narrow(lo: float, hi: float, op: str, thr: float,
     if op == "<":
         # "is it < thr?"  yes -> value <= thr-1 ; no -> value >= thr
         return (lo, min(hi, thr - 1)) if answer_is_yes else (max(lo, thr), hi)
+    if op == "<=":
+        return (lo, min(hi, thr)) if answer_is_yes else (max(lo, thr + 1), hi)
     if op == ">":
         return (max(lo, thr + 1), hi) if answer_is_yes else (lo, min(hi, thr))
     # ">="
@@ -942,8 +892,8 @@ def ladder_narrow(lo: float, hi: float, op: str, thr: float,
 # 0.0 disables it — the strict behaviour.
 #
 # WHY A THRESHOLD AND NOT JUST THE STRICT TEST. The owner played a game
-# that went: "before 2000?" no, "in the last 10 years?" no — leaving the
-# interval [2000, 2015] — and was then asked "in the last 25 years?"
+# that went: "before 2000?" no, "in 2016 or later?" no — leaving the
+# interval [2000, 2015] — and was then asked "in 2001 or later?"
 # (>= 2001). Strictly that is undetermined, because the single year 2000
 # still answers it "no". Practically it can separate 98 books out of the
 # 1,344 in that range, 7.3%, and it cost one of the thirty questions a
@@ -968,6 +918,8 @@ def _rung_split(op: str, thr: float, lo: float, hi: float) -> tuple[float, float
     """Widths of the (yes, no) sides this rung would cut [lo, hi] into."""
     if op == "<":
         yes, no = (lo, thr - 1), (thr, hi)
+    elif op == "<=":
+        yes, no = (lo, thr), (thr + 1, hi)
     elif op == ">":
         yes, no = (thr + 1, hi), (lo, thr)
     else:                                                        # ">="
@@ -985,6 +937,8 @@ def ladder_determined(op: str, thr: float, lo: float, hi: float) -> bool:
         return True                      # contradictory answers; stop asking
     if op == "<":
         strict = hi < thr or lo >= thr
+    elif op == "<=":
+        strict = hi <= thr or lo > thr
     elif op == ">":
         strict = lo > thr or hi <= thr
     else:
@@ -1016,6 +970,7 @@ def ladder_determined(op: str, thr: float, lo: float, hi: float) -> bool:
 # tracked separately; keeping the question meanwhile costs nothing, because
 # a book with no series data answers `unknown` rather than "no".
 FORCE_KEEP = {
+    *PUBLICATION_QUESTIONS, "fact:anonymous",
     "form:series",
     "setting:school",
     "genre:drama",
@@ -1095,7 +1050,7 @@ def keeps_question(key: str, freq: float) -> bool:
     """
     if key in FORCE_DROP:
         return False
-    return (MIN_FREQ <= freq <= MAX_FREQ) or (key in FORCE_KEEP and freq > 0)
+    return key in PUBLICATION_QUESTIONS or key == 'fact:anonymous' or (MIN_FREQ <= freq <= MAX_FREQ) or (key in FORCE_KEEP and freq > 0)
 
 
 def absence_confidence(richness: int) -> float:

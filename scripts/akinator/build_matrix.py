@@ -287,7 +287,9 @@ def build_books(docs: list[dict],
             if aid:
                 ids.append(aid)
                 authors.note_book(aid)
+        from publication import apply_facts
         book["author_ids"] = ids
+        apply_facts(book, doc)
         books.append(book)
     return books, authors
 
@@ -327,6 +329,8 @@ def question_text(q: str) -> str:
     The admin overlay is checked FIRST, ahead of every source module, so
     a rebuild does not quietly undo a wording fix nobody pushed to source.
     """
+    if q in STRUCTURAL_QUESTIONS and q.startswith("fact:firstpub_"):
+        return STRUCTURAL_QUESTIONS[q]
     return (_load_question_overrides().get(q)
             or QUESTION_TEXT.get(q) or STRUCTURAL_QUESTIONS.get(q)
             or AUTHOR_QUESTIONS.get(q) or WORK_QUESTIONS.get(q)
@@ -517,7 +521,9 @@ def main() -> None:
                 json.dump(payload, fh, ensure_ascii=False, separators=(",", ":"))
         return os.path.getsize(path)
 
+    from publication import DEFINITIONS, LADDER
     sizes = {}
+    sizes["publication_questions.json"] = write("publication_questions.json", DEFINITIONS)
     # PER-QUESTION BASE RATE, and it is a correction rather than a
     # refinement. A flat p_unknown of 0.5 is only neutral for a question
     # that is a coin flip; "is the author British?" is true of 14% of the
@@ -561,6 +567,10 @@ def main() -> None:
             "t": b["title"],
             "a": b["author"],
             "y": b["year"],
+            "publication": b.get("publication", {}),
+            "publication_answers": b.get("publication_answers", {}),
+            "authorship": b.get("authorship", {}),
+            "protected_questions": b.get("protected_questions", []),
             "p": b["popularity"],
             "r": b["richness"],
             "w": b["wikidata"],
@@ -571,6 +581,17 @@ def main() -> None:
         }
         for b in books
     ]
+    from publication import read_json, derive_vector
+    vectors = read_json("research_vectors.json", {})
+    for row in book_rows:
+        for field in ("publication", "publication_answers", "authorship",
+                      "protected_questions"):
+            if not row.get(field):
+                row.pop(field, None)
+        if row["k"] in vectors:
+            row["v"] = derive_vector(vectors[row["k"]], {
+                'first_publish_year':row.get('y'), 'publication':row.get('publication'),
+                'authorship':row.get('authorship')})
     renamed = apply_display(book_rows, verbose=True)
     if renamed:
         print(f"Display overrides: {renamed} field(s) renamed for the reveal")
@@ -611,6 +632,8 @@ def main() -> None:
 
     sizes["meta.json"] = write("meta.json", {
         "version": 1,
+        "work_facts_version": 1,
+        "publication_ladder": LADDER,
         "question_hash": q_hash,
         "books": len(books),
         "questions": len(questions),

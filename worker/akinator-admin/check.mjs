@@ -77,7 +77,7 @@ if (!m) {
 // narrower class silently reported it as "never called" — passing, not
 // failing, so it would have hidden a real typo in a route name exactly
 // like this one just as easily as it hid a route that IS called.
-const called = [...html.matchAll(/["'](\/api\/[a-z/_]+)["']/g)].map((x) => x[1]);
+const called = [...html.matchAll(/["'](\/api\/[a-z/_-]+)["']/g)].map((x) => x[1]);
 const missing = [...new Set(called)].filter((p) => !relays.includes(p));
 if (missing.length) fail.push(`client calls relays absent from ROUTES: ${missing.join(", ")}`);
 else console.log(`ok  ${new Set(called).size} relay(s) called, all present in ROUTES`);

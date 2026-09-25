@@ -123,6 +123,7 @@ const ROUTES = {
   // note above the endpoint in akinator_admin.py for why absence of an
   // author can never stand in for it.
   "/api/noauthor": relay("/akinator/admin/noauthor"),
+  "/api/work-facts": relay("/akinator/admin/work-facts"),
   // Read-only. The prefix is /akinator/admin/drain (drain_admin_router in
   // tools/akinator_drain.py) — checked against the router, not guessed, since
   // a relay whose VALUE points at a path the backend does not serve is the
@@ -615,7 +616,7 @@ footer{margin-top:30px;font-size:12px;color:var(--mut)}
 
 <footer>Verified against Google Books / Open Library before a row is added — this page cannot invent a book.
 Excluding, adding and rewording reach players as soon as GitHub Pages redeploys the commit (about a minute) — no rebuild needed.
-A fact correction (year) reaches nobody until the next full <code>build_matrix.py</code> run: it feeds a matrix bit only that recomputes.</footer>
+Publication corrections recalculate the related answers and take effect on the next game load.</footer>
 </div>
 <script>
 ${ESC_FN}
@@ -1085,6 +1086,7 @@ document.getElementById("depAudit").addEventListener("click", async (e)=>{
 //   before Add book fires the one commit that uses it.
 let displayOverrides = {};
 let addPicked = null;   // the chosen /search candidate, or null (manual)
+let addFacts = {};
 let addAnswers = {};    // draft: question id -> true|false|null
 let addSheetNote = "";  // last "Fill from sheet" result, shown until the form re-renders
 let addTouched = new Set(); // ids the admin actually clicked, for the
@@ -1284,7 +1286,7 @@ document.getElementById("addManual").addEventListener("click", () => {
 // Authors tab's auDraft would be more machinery than the lifetime justifies.
 function renderAddForm(){
   const host = document.getElementById("addForm");
-  addAnswers = {}; addTouched = new Set(); addSheetNote = "";
+  addAnswers = {}; addFacts = {}; addTouched = new Set(); addSheetNote = "";
   const p = addPicked;
   host.innerHTML = '<div class="card">'
     + (p ? '<p class="effect">From ' + esc(p.source || "search") + ': <strong>'
@@ -1353,7 +1355,7 @@ function renderAddReview(questions){
       const on = (val) => ((val === "yes" && v === true) || (val === "no" && v === false)
         || (val === "unknown" && v === null)) ? "act" : "act ghost";
       const btn = (val, label) => '<button class="' + on(val) + ' addSet" data-q="'
-        + esc(q.id) + '" data-v="' + val + '">' + label + "</button>";
+        + esc(q.id) + '" data-v="' + val + '"' + ((b.protected_questions || []).includes(q.id) ? ' disabled title="Update the work facts above"' : "") + ' >' + label + "</button>";
       return "<tr><td class=\\"q\\">" + esc(q.text) + '<br><span class="sg-none">'
         + esc(q.id) + "</span></td><td>" + sugg
         + '<br><span class="sg-none">' + src(q.source) + "</span></td><td>"
@@ -1469,6 +1471,11 @@ document.getElementById("addForm").addEventListener("click", async (e) => {
     // The sheet OVERRIDES the mechanical suggestion where the two disagree —
     // it is a human-reviewed read of the actual book, stronger evidence than
     // an automatic subjects/description pass.
+    addFacts = sheet.facts;
+    if ((addFacts.authorship || {}).status === "anonymous") {
+      document.getElementById("addNoAuthor").checked = true; addAuthorCheck();
+    }
+    if (addFacts.publication && addFacts.publication.year != null) document.getElementById("addYear").value = addFacts.publication.year;
     const nBook = Object.keys(sheet.bookAnswers).length;
     Object.entries(sheet.bookAnswers).forEach(([q, v]) => { addAnswers[q] = v; addTouched.add(q); });
     renderAddReview(r.questions);
@@ -1555,7 +1562,7 @@ document.getElementById("addForm").addEventListener("click", async (e) => {
         // occasionally-flaky check on top would refuse real web novels
         // that simply have no official English edition.
         source: addPicked ? addPicked.source : null,
-        answers: addAnswers,
+        answers: addAnswers, facts: addFacts,
       });
       // Nothing to attach when there is deliberately no author, and calling
       // link anyway would be asking the server to name a book after an
@@ -1836,7 +1843,10 @@ let matrix = null, meta = null, overrides = {};
 // check.mjs catches it, which is exactly why check.mjs exists.
 let corrections = {};
 
+let committedWorkStates = {};
 function cellState(bookIndex, qIndex){
+  const fresh = committedWorkStates[(books[bookIndex] || {}).k];
+  if (fresh && Object.prototype.hasOwnProperty.call(fresh, questions[qIndex].id)) return fresh[questions[qIndex].id];
   if (!matrix || !meta) return null;
   const off = bookIndex * meta.bytes_per_row;
   return (matrix[off + (qIndex >> 2)] >> ((qIndex & 3) * 2)) & 3;
@@ -1856,7 +1866,7 @@ function cellState(bookIndex, qIndex){
 // up to 30 matches — the exact inline-embedding the Authors tab already
 // moved to and the same reason: no way to tell which row a separate panel
 // was about.
-let edOpenKey = null, edDraft = null, edSheetNote = "";
+let edOpenKey = null, edDraft = null, edSheetNote = "", edFacts = null;
 
 // ── paste an answer sheet ────────────────────────────────────────────────
 // Studio's own Gemini prompt (games/studio/server.js) asks for exactly this
@@ -1888,7 +1898,8 @@ function parseAnswerSheet(text){
   const liveIds = new Set(questions.map((q) => q.id));
   const unknownIds = [], badValues = [];
   for (const [id, v0] of Object.entries(src)) {
-    if (id === "title" || id === "author") continue;
+    if (["title", "author", "publication", "publication_answers", "authorship", "key"].includes(id)) continue;
+    if (id.startsWith("fact:firstpub_") || id === "fact:anonymous") continue;
     if (!liveIds.has(id)) { unknownIds.push(id); continue; }
     const v = String(v0).toLowerCase().trim();
     if (v === "unknown") continue;               // never guess -- leave it be
@@ -1898,6 +1909,7 @@ function parseAnswerSheet(text){
   return {
     title: typeof obj.title === "string" ? obj.title.trim() : "",
     author: typeof obj.author === "string" ? obj.author.trim() : "",
+    facts: Object.fromEntries(["publication", "publication_answers", "authorship"].filter((k) => obj[k] != null).map((k) => [k, obj[k]])),
     bookAnswers, authorAnswers, unknownIds, badValues,
   };
 }
@@ -1937,7 +1949,7 @@ function edCommitted(key){
 function edDirtyCount(){
   if (!edDraft || edOpenKey == null) return 0;
   const committed = edCommitted(edOpenKey);
-  let n = 0;
+  let n = edFacts && Object.keys(edFacts).length ? 1 : 0;
   new Set([...Object.keys(committed), ...Object.keys(edDraft)]).forEach((q) => {
     const a = Object.prototype.hasOwnProperty.call(committed, q) ? committed[q] : "\\u2205";
     const b = Object.prototype.hasOwnProperty.call(edDraft, q) ? edDraft[q] : "\\u2205";
@@ -1946,8 +1958,8 @@ function edDirtyCount(){
   return n;
 }
 
-function edOpen(key){ edOpenKey = key; edDraft = edCommitted(key); edSheetNote = ""; }
-function edClose(){ edOpenKey = null; edDraft = null; edSheetNote = ""; }
+function edOpen(key){ edOpenKey = key; edDraft = edCommitted(key); edSheetNote = ""; edFacts = null; }
+function edClose(){ edOpenKey = null; edDraft = null; edSheetNote = ""; edFacts = null; }
 
 function edCoverUrl(book){
   if (book.u) return book.u;
@@ -1979,7 +1991,7 @@ function editPanelHtml(i){
     const on = (val) => (has && ((val === "yes" && v === true) || (val === "no" && v === false)))
       ? "act" : "act ghost";
     const btn = (val, label) => '<button class="' + on(val) + ' edSet" data-q="'
-      + esc(q.id) + '" data-v="' + val + '">' + label + "</button>";
+      + esc(q.id) + '" data-v="' + val + '"' + ((b.protected_questions || []).includes(q.id) ? ' disabled title="Update the work facts above"' : "") + ' >' + label + "</button>";
     return "<tr><td class=\\"q\\">" + esc(q.text) + '<br><span class="sg-none">' + esc(q.id) + "</span></td>"
       + "<td>" + table + "</td><td>" + cur + "</td>"
       + '<td class="row qa">' + btn("yes", "Yes") + btn("no", "No")
@@ -2042,19 +2054,16 @@ function editPanelHtml(i){
     // indistinguishable from a write that failed. Same failure the Add-a-book
     // review table had: a control whose visible state was not its real one.
     + '<label class="inline" style="margin-top:10px"><input type="checkbox" class="edNoAuthor"'
-      + ((corrections[key] || {}).no_author ? " checked" : "")
+      + (((corrections[key] || {}).no_author || (b.authorship || {}).status === "anonymous") ? " checked" : "")
       + "> This book has no known author</label>"
-    + '<p class="effect">Recorded as a fact for the next rebuild, and it clears any '
-    + "attachment above \\u2014 the two are the same claim negated. No question reads it yet: "
-    + "at 3.5% of the corpus one could not clear the 5% floor, and a rule guessing it from a "
-    + "blank author field would answer yes for 173 books that all have authors.</p>"
+    + '<p class="effect">Use this only when the author’s identity is documented as unknown. '
+    + 'An empty catalogue entry is not evidence of anonymity. This updates the game’s answers.</p>'
     + '<div class="field" style="margin-top:16px"><label>First published '
       + "(feeds six era questions)</label>"
       + '<input type="text" class="edYear" inputmode="numeric" style="width:120px" value="'
       + esc(b.y == null ? "" : b.y) + '"></div>'
-    + '<button class="act ghost edSaveYear">Queue the year</button>'
-    + '<p class="effect">NOT instant. A year feeds a matrix bit that only a local '
-    + "build_matrix.py run recomputes.</p>"
+    + '<button class="act ghost edSaveYear">Save the year</button>'
+    + '<p class="effect">Saving recalculates all publication answers. For a sourced range or uncertain authorship, paste a research sheet above.</p>'
     + '<div class="scroll"><table class="qtable"><colgroup><col style="width:42%">'
     + '<col style="width:15%"><col style="width:15%"><col style="width:28%"></colgroup>'
     + "<thead><tr><th>Question</th><th>Table says</th>"
@@ -2183,9 +2192,11 @@ document.getElementById("edRows").addEventListener("click", async (e) => {
     catch (err) { edSheetNote = '<span class="sg-over">' + esc(err.message) + "</span>"; edRedraw(); return; }
 
     Object.assign(edDraft, sheet.bookAnswers);
+    edFacts = sheet.facts;
     const nBook = Object.keys(sheet.bookAnswers).length;
     let msg = nBook + " book answer" + (nBook === 1 ? "" : "s")
-      + " filled into the draft below — review, then Save.";
+      + " filled into the draft below — review, then Save."
+      + (edFacts && Object.keys(edFacts).length ? " Work facts to save: " + esc(JSON.stringify(edFacts)) : "");
     if (sheet.unknownIds.length) msg += " " + sheet.unknownIds.length
       + " id(s) the game does not ask were skipped: "
       + esc(sheet.unknownIds.slice(0, 6).join(", ")) + (sheet.unknownIds.length > 6 ? "…" : "") + ".";
@@ -2239,7 +2250,7 @@ document.getElementById("edRows").addEventListener("click", async (e) => {
       // Only what the reveal prints, and only when the fact was SET — the
       // page cannot restore a name it never had, so unticking leaves the
       // display alone rather than inventing one.
-      if (on && books[i]) books[i].a = "";
+      if (books[i]) { books[i].authorship = {status: on ? "anonymous" : "unresearched"}; if (on) books[i].a = "Unknown author"; }
       edRedraw();
       setStatus("edStatus", (on
         ? "Recorded as having no known author."
@@ -2265,7 +2276,11 @@ document.getElementById("edRows").addEventListener("click", async (e) => {
     e.target.disabled = true;
     setStatus("edStatus", "Writing\\u2026");
     try {
-      const r = await post("/api/taught/apply_batch", {work_key: key, answers});
+      const r = edFacts && Object.keys(edFacts).length
+        ? await post("/api/work-facts", {work_key: key, facts: edFacts, answers})
+        : await post("/api/taught/apply_batch", {work_key: key, answers});
+      if (r.book) books[i] = r.book;
+      if (r.states) committedWorkStates[key] = r.states;
       Object.entries(r.applied || {}).forEach(([qid, value]) => {
         if (value == null) delete (overrides[key] || {})[qid];
         else (overrides[key] = overrides[key] || {})[qid] = value;
@@ -2351,7 +2366,8 @@ document.getElementById("edRows").addEventListener("click", async (e) => {
     try {
       const r = await post("/api/correction",
         {work_key: key, field: "first_publish_year", value: parseInt(raw, 10)});
-      setStatus("edStatus", "Year queued — " + r.effect, true);
+      books[i].y = parseInt(raw, 10);
+      setStatus("edStatus", "Year saved — " + r.effect, true);
     } catch (err) { setStatus("edStatus", String(err.message || err), false); }
   }
 });
@@ -2816,7 +2832,7 @@ function authorPanelHtml(id){
       || (val === "no" && v === false) || (val === "unknown" && v === null)))
       ? "act" : "act ghost";
     const btn = (val, label) => '<button class="' + on(val) + ' auSet" data-q="'
-      + esc(q.id) + '" data-v="' + val + '">' + label + "</button>";
+      + esc(q.id) + '" data-v="' + val + '"' + ((b.protected_questions || []).includes(q.id) ? ' disabled title="Update the work facts above"' : "") + ' >' + label + "</button>";
     return "<tr><td class=\\"q\\">" + esc(q.text)
       + (q.retired ? ' <span class="badge">retired</span>' : "")
       + '<br><span class="sg-none">' + esc(q.id) + "</span></td>"

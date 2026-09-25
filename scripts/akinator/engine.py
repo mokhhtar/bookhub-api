@@ -33,6 +33,7 @@ import math
 from features import (EXCLUDES, LADDER_OF, LADDERS, PRESENCE_CONFIDENCE,
                       UNKNOWN_CONFIDENCE, absence_confidence,
                       ladder_determined, ladder_narrow)
+from publication import QUESTIONS as PUBLICATION_QUESTIONS
 from question_policy import not_applicable_ids
 from series import VOLUME_DOMINANCE
 
@@ -555,6 +556,9 @@ class Matrix:
                 if i is None:
                     continue
                 for q, p in cells.items():
+                    if (q in PUBLICATION_QUESTIONS or q == 'fact:anonymous'
+                            or q in books[i].get("protected_questions", [])):
+                        continue
                     # Cold questions are accepted here and ONLY here. This is
                     # the entire payoff of asking them: a cold cell has no
                     # other source, so overrides.json is not a correction to
@@ -692,9 +696,9 @@ class Engine:
         # LADDERS: several questions that are really one number. A firm
         # answer fixes an interval, and every rung the interval already
         # settles has exactly zero information left — so stop asking it.
-        # This is what made the owner's session ask "was it published in the
-        # last 25 years?" (yes), "in the last 10?" (no), and then "was it
-        # written before 2000?", whose answer had been determined two turns
+        # This is what made the owner's session ask "first published in 2001
+        # or later?" (yes), "in 2016 or later?" (no), and then "first
+        # published before 2000?", whose answer had been determined two turns
         # earlier.
         rung = LADDER_OF.get(question)
         if rung is not None:

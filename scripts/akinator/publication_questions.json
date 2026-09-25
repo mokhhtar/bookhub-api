@@ -1,0 +1,8 @@
+[
+  {"id":"fact:firstpub_lt_1900","op":"<","year":1900,"text":"Was this work first published before 1900?"},
+  {"id":"fact:firstpub_lt_1950","op":"<","year":1950,"text":"Was this work first published before 1950?"},
+  {"id":"fact:firstpub_lt_1970","op":"<","year":1970,"text":"Was this work first published before 1970?"},
+  {"id":"fact:firstpub_lt_2000","op":"<","year":2000,"text":"Was this work first published before 2000?"},
+  {"id":"fact:firstpub_ge_2001","op":">=","year":2001,"text":"Was this work first published in 2001 or later?"},
+  {"id":"fact:firstpub_ge_2016","op":">=","year":2016,"text":"Was this work first published in 2016 or later?"}
+]

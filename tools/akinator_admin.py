@@ -218,23 +218,137 @@ def correction(body: CorrectionRequest):
             status_code=400,
             detail=f"field must be one of {sorted(_CORRECTABLE_FIELDS)}")
 
-    current, _ = _get_json(ADMIN_CORRECTIONS_PATH, {})
-    if not isinstance(current, dict):
-        current = {}
-    entry = dict(current.get(body.work_key) or {})
-    entry[body.field] = body.value
-    current[body.work_key] = entry
-
-    note = f" — {body.note}" if body.note else ""
-    wrote = _commit_files(
-        {ADMIN_CORRECTIONS_PATH: _dump(current)},
-        f"mind reader admin: correct {body.work_key}.{body.field} "
-        f"-> {body.value}{note}")
+    from publication import valid_year
+    if not valid_year(body.value):
+        raise HTTPException(status_code=400, detail="Invalid first publication year")
+    def build(head):
+        current, _ = _get_json(ADMIN_CORRECTIONS_PATH, {}, head)
+        current.setdefault(body.work_key, {})[body.field] = body.value
+        files = _refresh_work_facts(head, current, body.work_key)
+        files[ADMIN_CORRECTIONS_PATH] = _dump(current)
+        return files, f"mind reader: correct first publication of {body.work_key}", True
+    wrote, _ = _commit_with_retry(build)
     if not wrote:
         raise HTTPException(status_code=502, detail="commit failed")
-    return {"ok": True, "effect": "next full rebuild only",
-            "note": "this does not change the live game — the fact feeds "
-                    "a matrix bit that only a local build recomputes"}
+    return {"ok": True, "effect": "instant on next game load"}
+
+
+def _refresh_work_facts(head, corrections, work_key):
+    from work_facts import refresh
+    books, _ = _get_json(f"{ARTIFACT_DIR}/books.json", None, head)
+    qs, _ = _get_json(QUESTIONS_PATH, None, head)
+    meta, _ = _get_json(f"{ARTIFACT_DIR}/meta.json", None, head)
+    raw, _ = _get_file(f"{ARTIFACT_DIR}/matrix.bin", head)
+    facts, _ = _get_json(f"{ARTIFACT_DIR}/work_facts.json", {}, head)
+    if not books or not qs or not meta or raw is None:
+        raise HTTPException(status_code=502, detail="Work facts artifacts unavailable")
+    if not meta.get("work_facts_version"):
+        raise HTTPException(status_code=409, detail="Migrate publication artifacts first")
+    if not any(b["k"] == work_key for b in books):
+        raise HTTPException(status_code=404, detail="Unknown book")
+    books, qs, meta, raw, _ = refresh(books, qs, meta, raw, facts, corrections)
+    authors, _ = _get_json(f"{ARTIFACT_DIR}/authors.json", {}, head)
+    for i, book in enumerate(books):
+        if (book.get('authorship') or {}).get('status') in ('anonymous', 'disputed'):
+            if i < len(authors.get('books', [])): authors['books'][i] = []
+    return {f"{ARTIFACT_DIR}/books.json": _dump(books), QUESTIONS_PATH: _dump(qs),
+            f"{ARTIFACT_DIR}/meta.json": _dump(meta), f"{ARTIFACT_DIR}/matrix.bin": raw,
+            f"{ARTIFACT_DIR}/authors.json": _dump(authors)}
+
+
+class WorkFactsRequest(BaseModel):
+    work_key: str = Field(..., max_length=220)
+    facts: dict = Field(default_factory=dict)
+    answers: dict[str, str] = Field(default_factory=dict)
+
+
+@router.post('/work-facts')
+def work_facts(body: WorkFactsRequest):
+    """One reviewed sheet, one commit: source facts, derived cells and other answers."""
+    from publication import QUESTIONS, validate_fact
+    from work_facts import refresh
+    if not _WORK_KEY.match(body.work_key):
+        raise HTTPException(status_code=400, detail='Malformed work key')
+    allowed = {'publication', 'publication_answers', 'authorship'}
+    if set(body.facts) - allowed:
+        raise HTTPException(status_code=400, detail='Unknown work fact field')
+    for qid, verdict in body.answers.items():
+        if verdict not in ('yes', 'no', 'clear'):
+            raise HTTPException(status_code=400, detail='Invalid answer verdict')
+        if qid in QUESTIONS or qid == 'fact:anonymous' or qid.startswith('author:'):
+            raise HTTPException(status_code=409, detail='Use sourced work facts or the author profile for this answer')
+
+    def build(head):
+        books, _ = _get_json(f'{ARTIFACT_DIR}/books.json', None, head)
+        qs, _ = _get_json(QUESTIONS_PATH, None, head)
+        meta, _ = _get_json(f'{ARTIFACT_DIR}/meta.json', None, head)
+        raw, _ = _get_file(f'{ARTIFACT_DIR}/matrix.bin', head)
+        if not books or not qs or not meta or raw is None:
+            raise HTTPException(status_code=502, detail='Artifacts unavailable')
+        if not meta.get('work_facts_version'):
+            raise HTTPException(status_code=409, detail='Migrate publication artifacts first')
+        if not any(b['k'] == body.work_key for b in books):
+            raise HTTPException(status_code=404, detail='Unknown book')
+        cold, _ = _get_json(f'{ARTIFACT_DIR}/cold_questions.json', [], head)
+        live_ids = {q['id'] for q in qs + cold}
+        if set(body.answers) - live_ids:
+            raise HTTPException(status_code=400, detail='Sheet contains retired question ids')
+        records, _ = _get_json(f'{ARTIFACT_DIR}/work_facts.json', {}, head)
+        record = {**records.get(body.work_key, {}), **body.facts}
+        try:
+            validate_fact(record)
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        records[body.work_key] = record
+        corrections, _ = _get_json(ADMIN_CORRECTIONS_PATH, {}, head)
+        correction = corrections.get(body.work_key, {})
+        # A newly reviewed source supersedes the previous manual verdict for
+        # that field, in the same transaction; unrelated corrections survive.
+        if 'publication' in body.facts: correction.pop('first_publish_year', None)
+        if 'authorship' in body.facts:
+            correction.pop('no_author', None)
+            correction.pop('authorship', None)
+            if (body.facts['authorship'] or {}).get('status') in ('anonymous', 'disputed'):
+                correction.pop('author_name', None)
+                correction.pop('author_key', None)
+        books, qs, meta, raw, _ = refresh(books, qs, meta, raw, records, corrections)
+        overrides, _ = _get_json(f'{ARTIFACT_DIR}/overrides.json', {}, head)
+        locked, _ = _get_json(f'{ARTIFACT_DIR}/overrides_locked.json', {}, head)
+        cells = overrides.setdefault(body.work_key, {})
+        held = set(locked.get(body.work_key, []))
+        row = next(b for b in books if b['k'] == body.work_key)
+        protected = set(QUESTIONS) | {'fact:anonymous'} | set(
+            row.get('protected_questions', []))
+        for qid in protected:
+            cells.pop(qid, None)
+            held.discard(qid)
+        applied = {}
+        for qid, verdict in body.answers.items():
+            if verdict == 'clear':
+                cells.pop(qid, None); held.discard(qid); applied[qid] = None
+            else:
+                cells[qid] = applied[qid] = .9 if verdict == 'yes' else .15
+                held.add(qid)
+        locked[body.work_key] = sorted(held)
+        authors, _ = _get_json(f'{ARTIFACT_DIR}/authors.json', {}, head)
+        for i, book in enumerate(books):
+            if (book.get('authorship') or {}).get('status') in ('anonymous', 'disputed'):
+                if i < len(authors.get('books', [])): authors['books'][i] = []
+        files = {f'{ARTIFACT_DIR}/{name}': _dump(value) for name, value in {
+            'books.json':books, 'questions.json':qs, 'meta.json':meta,
+            'work_facts.json':records, 'admin_corrections.json':corrections,
+            'overrides.json':overrides, 'overrides_locked.json':locked,
+            'authors.json':authors}.items()}
+        files[f'{ARTIFACT_DIR}/matrix.bin'] = raw
+        row_index = next(i for i, b in enumerate(books) if b['k'] == body.work_key)
+        width = meta['bytes_per_row']
+        states = {q['id']: (raw[row_index * width + j // 4] >> (2 * (j % 4))) & 3
+                  for j, q in enumerate(qs)}
+        return files, f'mind reader: sourced work facts for {body.work_key}', {
+            'applied':applied, 'book':row, 'states':states}
+    wrote, result = _commit_with_retry(build)
+    if not wrote: raise HTTPException(status_code=502, detail='Commit failed')
+    return {'ok':True, **result, 'note':'Facts and answers saved together; available on the next game load.'}
 
 
 # ── POST /akinator/admin/noauthor ───────────────────────────────────────
@@ -302,6 +416,7 @@ def noauthor(body: NoAuthorRequest):
         entry = dict(current.get(body.work_key) or {})
         if body.no_author:
             entry[_NO_AUTHOR_FIELD] = True
+            entry["authorship"] = {"status": "anonymous"}
             # THE TWO CLAIMS ARE THE SAME CLAIM NEGATED, so they cannot both
             # stand. /authors/link writes author_name/author_key into this
             # very entry; leaving them here beside no_author would let the
@@ -310,13 +425,16 @@ def noauthor(body: NoAuthorRequest):
             entry.pop("author_key", None)
         else:
             entry.pop(_NO_AUTHOR_FIELD, None)
+            entry["authorship"] = {"status": "unresearched"}
         if entry:
             current[body.work_key] = entry
         else:
             current.pop(body.work_key, None)
 
         note = f" — {body.note}" if body.note else ""
-        return ({ADMIN_CORRECTIONS_PATH: _dump(current)},
+        files = _refresh_work_facts(head, current, body.work_key)
+        files[ADMIN_CORRECTIONS_PATH] = _dump(current)
+        return (files,
                 f"mind reader admin: {body.work_key} "
                 f"{'has no known author' if body.no_author else 'author unknown again'}"
                 f"{note}",
@@ -326,11 +444,8 @@ def noauthor(body: NoAuthorRequest):
     if not wrote:
         raise HTTPException(status_code=502, detail="commit failed")
     return {"ok": True, "work_key": body.work_key, "no_author": bool(value),
-            "effect": "next full rebuild only",
-            "note": "Stored as a fact for the next rebuild. No question reads "
-                    "it yet — see the note above this endpoint for why, and "
-                    "for how many books would have to carry one before it "
-                    "could clear the frequency floor."}
+            "effect": "instant on next game load",
+            "note": "Authorship status and derived answers are updated together."}
 
 
 # ── POST /akinator/admin/question ───────────────────────────────────────
@@ -342,6 +457,9 @@ class QuestionRequest(BaseModel):
 
 @router.post("/question")
 def question(body: QuestionRequest):
+    from publication import QUESTIONS
+    if body.question_id in QUESTIONS and body.text != QUESTIONS[body.question_id]:
+        raise HTTPException(status_code=409, detail="Edit the central publication definition and regenerate artifacts")
     if not _QUESTION_ID.match(body.question_id):
         raise HTTPException(status_code=400, detail="malformed question id")
 
@@ -836,6 +954,7 @@ class BookRequest(BaseModel):
     # commit as the row, because the row itself is rebuilt from the /site/
     # page at the next full build and would otherwise lose it.
     no_author: bool = Field(default=False)
+    facts: dict = Field(default_factory=dict)
     year: int | None = Field(default=None, ge=1, le=2100)
     summary: str = Field(default="", max_length=4000)
     themes: list[str] = Field(default_factory=list, max_length=20)
@@ -936,6 +1055,13 @@ def book(body: BookRequest):
 
     from book_data import BookRecord, resolve_book         # noqa: E402
     from features import normalize                         # noqa: E402
+    from publication import validate_fact
+    try:
+        validate_fact(body.facts)
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if (body.facts.get('authorship') or {}).get('status') == 'anonymous':
+        body.no_author = True
 
     # AN EMPTY AUTHOR MAY NOT WEAKEN GROUNDING. resolve_book() matches on
     # title AND author when it has both; with the author gone it is a title
@@ -1031,7 +1157,11 @@ def book(body: BookRequest):
         "language": ["eng"],
         "readinglog_count": floor,
         "ebook_access": "",
+        "no_author": body.no_author,
+        **body.facts,
     }
+    if body.facts.get('publication'):
+        doc['first_publish_year'] = year = body.facts['publication'].get('year')
 
     # The admin's own summary first, the catalogue's description behind it.
     # Both are real text about this book, and `_label_traits` can only ever
@@ -1045,6 +1175,10 @@ def book(body: BookRequest):
     # is nowhere to say "no author" — so it goes through the same corrections
     # file /noauthor writes, in the same commit as the row.
     extra: dict[str, bytes] = {}
+    if body.facts:
+        records, _ = _get_json(f'{ARTIFACT_DIR}/work_facts.json', {})
+        records[doc['key']] = body.facts
+        extra[f'{ARTIFACT_DIR}/work_facts.json'] = _dump(records)
     if body.no_author:
         current, _ = _get_json(ADMIN_CORRECTIONS_PATH, {})
         if not isinstance(current, dict):

@@ -683,6 +683,8 @@ def link(body: LinkRequest):
             corrections = {}
         entry = dict(corrections.get(body.work_key) or {})
         previous = entry.get("author_name")
+        entry.pop("no_author", None)
+        entry["authorship"] = {"status": "known"}
         entry["author_name"] = [name]
         entry["author_key"] = [ol_key] if ol_key else []
         corrections[body.work_key] = entry

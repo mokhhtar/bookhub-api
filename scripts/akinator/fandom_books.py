@@ -311,10 +311,8 @@ def supplement(docs: list[dict], band: tuple[int, int] = DEFAULT_BAND,
             "language": ["eng"],
             "readinglog_count": int(top_val - frac * (top_val - bot_val)),
             "ebook_access": "",
-            # When the wiki itself was made. NOT a publication year and
-            # never stored as one -- features.py uses it in one direction
-            # only, to settle "in the last 10 years" for a book whose own
-            # year nobody could find. See harvest_fandom_wikidates.py.
+            # Historical enrichment only. A wiki timestamp is not evidence
+            # of first publication and no longer answers publication questions.
             "wiki_created": b.get("wiki_created"),
             "_fandom_wiki": b["subdomain"],
             "_year_source": b["year_source"],

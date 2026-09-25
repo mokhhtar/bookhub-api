@@ -126,6 +126,14 @@ DK_MIN_SAMPLE = 200
 DK_FLAG_RATE = 0.40
 
 
+def _protected(work_key, art=None):
+    art = art or _artifacts()
+    from publication import QUESTIONS
+    return set(QUESTIONS) | {'fact:anonymous'} | set(next((
+        b.get("protected_questions", []) for b in art.get("books", [])
+        if b.get("k") == work_key), []))
+
+
 def _live_question_ids(art: dict | None = None) -> set[str]:
     """Every question id the game currently asks — packed AND cold.
 
@@ -247,7 +255,7 @@ def drain(dry_run: bool = False) -> dict:
             # someone who looked the book up — the whole reason the manual
             # route exists is that a person can be right before eight
             # players are.
-            if qid in locked.get(work_key, ()):
+            if qid in _protected(work_key) or qid in locked.get(work_key, ()):
                 held += 1
                 continue
             # "Don't know" is excluded from the judgement entirely — it says
@@ -792,6 +800,8 @@ def apply_taught(body: TaughtApply) -> dict:
     # question list, and the editor lets a person type one.
     art = _artifacts()
     live_ids = _live_question_ids(art)
+    if body.question_id in _protected(body.work_key, art):
+        raise HTTPException(status_code=409, detail="Edit the sourced work facts instead of a derived answer")
     if live_ids and body.question_id not in live_ids:
         raise HTTPException(
             status_code=404,
@@ -891,6 +901,8 @@ def apply_taught_batch(body: TaughtApplyBatch) -> dict:
             status_code=404,
             detail=f"not questions the game asks: {bad_ids}")
 
+    if set(body.answers) & _protected(body.work_key, art):
+        raise HTTPException(status_code=409, detail="Edit the sourced work facts instead of derived answers")
     n = len(body.answers)
 
     # Same transaction as apply_taught, for the same reason. Batching lowers

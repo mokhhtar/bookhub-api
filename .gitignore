@@ -5,6 +5,7 @@ __pycache__/
 venv/
 *.egg-info/
 /scratch
+/.gemini/
 
 # Local QA artefacts. This is a backend repo — it has never tracked a single
 # image — but ~55 screenshots, a screen recording and 285 Playwright output

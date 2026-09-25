@@ -4,12 +4,10 @@ scripts/akinator/harvest_fandom_wikidates.py — when each wiki was created.
     python scripts/akinator/harvest_fandom_wikidates.py        # resumes
     python scripts/akinator/harvest_fandom_wikidates.py --refresh
 
-WHY A WIKI'S AGE IS EVIDENCE ABOUT A BOOK. 33 of the 39 web novels in the
-game carry no publication year: the wikis catalogue chapters and characters,
-and a prose harvest, a model and a keyword rule between them recovered four.
-`features.py` can settle five of the six era questions from the form alone —
-nothing serialised on the web predates 1900, 1950, 1970 or 2000 — but the
-sixth, "in the last 10 years", is exactly the one that varies.
+HISTORICAL DATA ONLY. This timestamp used to answer one relative publication
+question. Publication questions now require a sourced first-publication year,
+range, or direct comparison, so `features.py` deliberately ignores this file.
+The harvest remains useful for wiki provenance and is kept for compatibility.
 
 A wiki is made after the thing it is about. So:
 
@@ -17,9 +15,7 @@ A wiki is made after the thing it is about. So:
     wiki created after 2016   ->  nothing follows. Solo Leveling's wiki is
                                   from 2018 and the novel from 2014.
 
-Only the first direction is used, which is why an imprecise date is fine
-here and would not be if we were storing a year. Checked against the three
-of these books whose year is known: the wiki was never older than the book.
+Neither direction is now used to answer a publication question.
 
 WHICH TIMESTAMP, and why the LATER of two. Two API answers exist and they
 disagree:
@@ -153,7 +149,7 @@ def main() -> None:
     usable = sum(1 for v in done.values()
                  if v.get("created") and v["created"] < 2016)
     print(f"\n{dated}/{len(done)} dated; {usable} predate 2016 and therefore "
-          f"settle 'in the last 10 years'")
+          "record historical wiki provenance")
     print(f"-> {OUT_PATH}")
 
 

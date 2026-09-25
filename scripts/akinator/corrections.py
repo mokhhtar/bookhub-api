@@ -12,7 +12,7 @@ The case that opened this file: **Harry Potter and the Cursed Child**
 `first_publish_year: 2001`. The play premiered in the West End in 2016 and
 the playscript was published in 2016 — OL's own record for another edition
 of the same work (`OL24779727W`) says 2016. With 2001 the game answers "no"
-to *"Was it published in the last 10 years?"*, so a player who knows the
+to *"Was it first published in 2016 or later?"*, so a player who knows the
 book and answers "yes" — correctly — is punished for it.
 
 THE BAR FOR ADDING AN ENTRY, because a hand-maintained list is a liability
@@ -148,6 +148,8 @@ def apply_corrections(docs: list[dict], verbose: bool = False) -> int:
     era question's ladder, say) needs that bit recomputed, which only a
     full rebuild does.
     """
+    from publication import overlay_docs, read_json
+    overlay_docs(docs, read_json("work_facts.json", {}))
     admin = _load_admin_corrections()
     applied = 0
     for doc in docs:
@@ -161,5 +163,8 @@ def apply_corrections(docs: list[dict], verbose: bool = False) -> int:
                     print(f"    corrected {doc.get('title', '')[:44]}: "
                           f"{field} {doc.get(field)!r} -> {value!r}")
                 doc[field] = value
+                if field == "first_publish_year":
+                    doc.pop("publication", None)
+                    doc.pop("publication_answers", None)
                 applied += 1
     return applied

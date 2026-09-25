@@ -117,6 +117,7 @@ def books_from_artifacts(meta: dict, questions: list[dict],
             # means a trace mismatch always points at the main pool.
             "char_tokens": [],
             "key": b.get("k"),
+            "protected_questions": b.get("protected_questions", []),
         })
     return out
 

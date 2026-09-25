@@ -58,7 +58,7 @@ DEFAULT_SHIPPED = os.path.abspath(os.path.join(
 # and question_policy.json by hand/admin — and promoting a build must never
 # overwrite a file the build did not produce.
 BUILD_FILES = ("meta.json", "questions.json", "books.json", "matrix.bin",
-               "characters.json", "authors.json", "series.json")
+               "characters.json", "authors.json", "series.json", "publication_questions.json")
 
 
 def _load(path, name, default=None):

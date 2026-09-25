@@ -490,6 +490,8 @@ def _build_book_row(doc: dict, question_ids: list[str], bpr: int, rank: int,
     # automatic pipeline that ran before them — the same ordering
     # apply_author_facts uses for the author overlay over Wikidata.
     _apply_manual_answers(book, manual_answers, question_ids)
+    from publication import apply_facts
+    apply_facts(book, doc)
     row = _encode_row(book, question_ids, bpr, question_policy)
     return book, row
 
@@ -554,8 +556,12 @@ def append_book_row(doc: dict, prose: str = "", commit_message: str = "",
     matrix = matrix + row
     books = books + [{
         "k": doc["key"], "t": doc["title"],
-        "a": (doc.get("author_name") or [""])[0],
+        "a": book.get("author", (doc.get("author_name") or [""])[0]),
         "y": doc.get("first_publish_year"),
+        "publication": book.get("publication", {}),
+        "publication_answers": book.get("publication_answers", {}),
+        "authorship": book.get("authorship", {}),
+        "protected_questions": book.get("protected_questions", []),
         "p": doc.get("readinglog_count") or 0,
         "r": book["richness"], "w": None, "c": None,
         "addedAt": int(time.time()), "origin": origin,
@@ -694,6 +700,9 @@ def sync(dry_run: bool = False) -> dict:
         matrix += row
         books.append({"k": doc["key"], "t": page["title"], "a": page["author"],
                       "y": doc["first_publish_year"], "p": floor,
+                      "publication": book.get("publication", {}),
+                      "authorship": book.get("authorship", {}),
+                      "protected_questions": book.get("protected_questions", []),
                       "r": book["richness"], "w": None, "c": None})
         have.add(ident(page["title"], page["author"]))
         have_titles.add(normalize(page["title"]))

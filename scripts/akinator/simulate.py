@@ -206,6 +206,8 @@ def load_books(corpus_size: int = 0, with_author_traits: bool = True,
             else:
                 apply_labels(book, doc.get("key") or "", extracted)
 
+        from publication import apply_facts
+        apply_facts(book, doc)
         books.append(book)
     return books
 
