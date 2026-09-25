@@ -41,7 +41,7 @@ jobs:
   warm:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The version lives in one place — the sanitiser that produces the
       # document. Deriving it here rather than hardcoding means the upload
