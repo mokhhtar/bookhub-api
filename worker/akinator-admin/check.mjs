@@ -92,6 +92,16 @@ const orphan = tabs.filter((t) => !secs.includes(t));
 if (orphan.length) fail.push(`tab buttons with no section: ${orphan.join(", ")}`);
 else console.log(`ok  ${tabs.length} tab(s), each with a section`);
 
+// 4. new packed questions and automatic skip rules must reach the relationship
+// editor without a stale browser copy of questions.json hiding them.
+if (!html.includes('fetch(DATA+"/questions.json", {cache:"no-store"})')) {
+  fail.push("question picker does not bypass the browser cache");
+}
+if (!html.includes("automaticSkipRules") || !html.includes("Automatic policy")) {
+  fail.push("automatic skip rules are absent from the dependency table");
+}
+if (!fail.length) console.log("ok  relationship editor loads fresh questions and shows automatic skips");
+
 if (fail.length) {
   fail.forEach((f) => console.error(`FAIL  ${f}`));
   process.exit(1);

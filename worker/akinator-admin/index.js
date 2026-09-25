@@ -999,6 +999,7 @@ document.getElementById("exRows").addEventListener("click", async (e)=>{
 
 // ── directional parent/dependent questions ─────────────────────────────
 let dependencyRules = [];
+let automaticSkipRules = [];
 
 function fillDependencyPickers(){
   const opts = questions.map(q => \`<option value="\${esc(q.id)}">\${esc(q.id)} — \${esc(q.text)}</option>\`).join("");
@@ -1008,28 +1009,50 @@ function fillDependencyPickers(){
 
 function renderDependencies(){
   const rows = document.getElementById("depRows");
-  if (!dependencyRules.length) {
+  if (!dependencyRules.length && !automaticSkipRules.length) {
     rows.innerHTML = '<tr><td colspan="3" class="sub">Nothing declared.</td></tr>';
     return;
   }
-  rows.innerHTML = dependencyRules.map(r => \`<tr>
+  const manual = dependencyRules.map(r => \`<tr>
     <td><code>\${esc(r.parent)}</code> = <strong>\${esc(r.answer)}</strong></td>
     <td><code>\${esc(r.child)}</code></td>
     <td><button class="act ghost depDel" data-parent="\${esc(r.parent)}" data-answer="\${esc(r.answer)}" data-child="\${esc(r.child)}">Remove</button></td>
   </tr>\`).join("");
+  const automatic = automaticSkipRules.map(r => \`<tr>
+    <td><code>\${esc(r.parent)}</code> = <strong>\${esc(r.answer)}</strong></td>
+    <td><code>\${esc(r.child)}</code></td>
+    <td><span class="sub">Automatic policy</span></td>
+  </tr>\`).join("");
+  rows.innerHTML = automatic + manual;
+}
+
+function skipLeaves(condition){
+  if (!condition || typeof condition !== "object") return [];
+  if (typeof condition.question === "string" && (condition.answer === "yes" || condition.answer === "no")) return [condition];
+  if (Array.isArray(condition.any)) return condition.any.flatMap(skipLeaves);
+  return [];
 }
 
 async function loadDependencies(){
   try {
-    const [rules, cold] = await Promise.all([
+    const [rules, cold, policy] = await Promise.all([
       fetch(DATA+"/question_dependencies.json").then(r=>r.ok?r.json():[]).catch(()=>[]),
       fetch(DATA+"/cold_questions.json").then(r=>r.ok?r.json():[]).catch(()=>[]),
+      fetch(DATA+"/question_policy.json", {cache:"no-store"}).then(r=>r.ok?r.json():{}).catch(()=>({})),
     ]);
     if (Array.isArray(cold)) {
       const have = new Set(questions.map(q=>q.id));
       cold.forEach(q=>{ if(q && q.id && !have.has(q.id)){ questions.push(q); have.add(q.id); } });
     }
     dependencyRules = Array.isArray(rules) ? rules.filter(r=>r&&r.parent&&r.answer&&r.child) : [];
+    automaticSkipRules = [];
+    const entries = policy && policy.questions && typeof policy.questions === "object" ? policy.questions : {};
+    for (const [child, entry] of Object.entries(entries)) {
+      for (const leaf of skipLeaves(entry && entry.skip_if)) {
+        automaticSkipRules.push({parent:leaf.question, answer:leaf.answer, child});
+      }
+    }
+    automaticSkipRules.sort((a,b)=>(a.parent+a.answer+a.child).localeCompare(b.parent+b.answer+b.child));
     fillDependencyPickers(); renderDependencies();
   } catch (e) { setStatus("depStatus", String(e.message||e), false); }
 }
@@ -3985,7 +4008,7 @@ async function loadDrainAlert(){
     // been written, same convention as excluded.json/overrides.json.
     const [b, q, x, a, ao] = await Promise.all([
       fetch(DATA+"/books.json").then(r=>r.json()),
-      fetch(DATA+"/questions.json").then(r=>r.json()),
+      fetch(DATA+"/questions.json", {cache:"no-store"}).then(r=>r.json()),
       fetch(DATA+"/excluded.json").then(r=>r.ok?r.json():[]).catch(()=>[]),
       fetch(DATA+"/authors.json").then(r=>r.ok?r.json():{}).catch(()=>({})),
       fetch(DATA+"/author_overrides.json").then(r=>r.ok?r.json():{}).catch(()=>({})),
