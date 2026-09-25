@@ -1,0 +1,68 @@
+{
+  "key": "/site/anna-karenina",
+  "title": "Anna Karenina",
+  "author": "Leo Tolstoy",
+  "publication": {
+    "basis": "first_publication",
+    "year": 1878,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://en.wikipedia.org/wiki/Anna_Karenina"
+    ]
+  },
+  "publication_answers": {},
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://en.wikipedia.org/wiki/Anna_Karenina"
+    ]
+  },
+  "answers": {
+    "audience:children": "no",
+    "audience:ya": "no",
+    "author:alive": "yes",
+    "author:american": "no",
+    "author:british": "no",
+    "author:european": "yes",
+    "author:female": "yes",
+    "author:nonwestern": "no",
+    "author:prolific": "no",
+    "book:film": "yes",
+    "fact:namedchars": "yes",
+    "form:classic": "yes",
+    "form:fiction": "yes",
+    "form:nonfiction": "no",
+    "form:series": "no",
+    "form:webnovel": "no",
+    "genre:adventure": "no",
+    "genre:drama": "yes",
+    "genre:fantasy": "no",
+    "genre:history": "no",
+    "genre:psychology": "no",
+    "genre:romance": "no",
+    "genre:science": "no",
+    "genre:scifi": "no",
+    "place:britain": "no",
+    "place:europe_other": "yes",
+    "place:usa": "no",
+    "setting:school": "no",
+    "t:child": "no",
+    "t:detective": "no",
+    "t:family": "yes",
+    "t:funny": "no",
+    "t:otherworld": "no",
+    "t:powersystem": "no",
+    "t:realevents": "no",
+    "t:romance": "no",
+    "t:survival": "no",
+    "t:travel": "no",
+    "t:war": "no",
+    "theme:family": "yes",
+    "theme:friendship": "no",
+    "theme:magic": "no",
+    "setting:victorian": "no",
+    "form:firstperson": "no",
+    "form:memoir": "no"
+  }
+}

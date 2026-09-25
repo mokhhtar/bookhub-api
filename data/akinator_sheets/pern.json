@@ -1,0 +1,68 @@
+{
+  "key": "/fandom/pern",
+  "title": "Pern",
+  "author": "Unknown author",
+  "publication": {
+    "basis": "first_publication",
+    "year": 1967,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://en.wikipedia.org/wiki/Dragonriders_of_Pern"
+    ]
+  },
+  "publication_answers": {},
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://en.wikipedia.org/wiki/Dragonriders_of_Pern"
+    ]
+  },
+  "answers": {
+    "audience:children": "no",
+    "audience:ya": "no",
+    "author:alive": "unknown",
+    "author:american": "yes",
+    "author:british": "no",
+    "author:european": "no",
+    "author:female": "yes",
+    "author:nonwestern": "no",
+    "author:prolific": "yes",
+    "book:film": "no",
+    "fact:namedchars": "yes",
+    "form:classic": "no",
+    "form:fiction": "yes",
+    "form:nonfiction": "no",
+    "form:series": "yes",
+    "form:webnovel": "no",
+    "genre:adventure": "no",
+    "genre:drama": "no",
+    "genre:fantasy": "yes",
+    "genre:history": "no",
+    "genre:psychology": "no",
+    "genre:romance": "no",
+    "genre:science": "yes",
+    "genre:scifi": "no",
+    "place:britain": "no",
+    "place:europe_other": "no",
+    "place:usa": "yes",
+    "setting:school": "no",
+    "t:child": "yes",
+    "t:detective": "no",
+    "t:family": "no",
+    "t:funny": "no",
+    "t:otherworld": "no",
+    "t:powersystem": "no",
+    "t:realevents": "no",
+    "t:romance": "no",
+    "t:survival": "no",
+    "t:travel": "no",
+    "t:war": "yes",
+    "theme:family": "no",
+    "theme:friendship": "no",
+    "theme:magic": "no",
+    "setting:victorian": "no",
+    "form:firstperson": "no",
+    "form:memoir": "no"
+  }
+}

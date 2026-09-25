@@ -1,0 +1,68 @@
+{
+  "key": "/fandom/malazan",
+  "title": "Malazan",
+  "author": "Bantam Books",
+  "publication": {
+    "basis": "first_publication",
+    "year": 1999,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://en.wikipedia.org/wiki/Malazan_Book_of_the_Fallen"
+    ]
+  },
+  "publication_answers": {},
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://en.wikipedia.org/wiki/Malazan_Book_of_the_Fallen"
+    ]
+  },
+  "answers": {
+    "audience:children": "no",
+    "audience:ya": "yes",
+    "author:alive": "no",
+    "author:american": "no",
+    "author:british": "no",
+    "author:european": "no",
+    "author:female": "yes",
+    "author:nonwestern": "no",
+    "author:prolific": "yes",
+    "book:film": "no",
+    "fact:namedchars": "yes",
+    "form:classic": "no",
+    "form:fiction": "yes",
+    "form:nonfiction": "no",
+    "form:series": "yes",
+    "form:webnovel": "no",
+    "genre:adventure": "no",
+    "genre:drama": "no",
+    "genre:fantasy": "yes",
+    "genre:history": "no",
+    "genre:psychology": "no",
+    "genre:romance": "no",
+    "genre:science": "no",
+    "genre:scifi": "no",
+    "place:britain": "no",
+    "place:europe_other": "no",
+    "place:usa": "no",
+    "setting:school": "no",
+    "t:child": "no",
+    "t:detective": "no",
+    "t:family": "no",
+    "t:funny": "no",
+    "t:otherworld": "no",
+    "t:powersystem": "no",
+    "t:realevents": "no",
+    "t:romance": "no",
+    "t:survival": "no",
+    "t:travel": "no",
+    "t:war": "no",
+    "theme:family": "no",
+    "theme:friendship": "no",
+    "theme:magic": "no",
+    "setting:victorian": "no",
+    "form:firstperson": "no",
+    "form:memoir": "no"
+  }
+}

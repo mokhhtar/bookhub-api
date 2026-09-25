@@ -1,0 +1,68 @@
+{
+  "key": "/works/OL20417377M",
+  "title": "ALA yearbook",
+  "author": "American Libraries",
+  "publication": {
+    "basis": "first_publication",
+    "year": 1914,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://en.wikipedia.org/wiki/Allie_Beth_Martin"
+    ]
+  },
+  "publication_answers": {},
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://en.wikipedia.org/wiki/Allie_Beth_Martin"
+    ]
+  },
+  "answers": {
+    "audience:children": "no",
+    "audience:ya": "no",
+    "author:alive": "yes",
+    "author:american": "yes",
+    "author:british": "no",
+    "author:european": "no",
+    "author:female": "yes",
+    "author:nonwestern": "no",
+    "author:prolific": "no",
+    "book:film": "no",
+    "fact:namedchars": "no",
+    "form:classic": "no",
+    "form:fiction": "no",
+    "form:nonfiction": "yes",
+    "form:series": "no",
+    "form:webnovel": "no",
+    "genre:adventure": "no",
+    "genre:drama": "no",
+    "genre:fantasy": "no",
+    "genre:history": "no",
+    "genre:psychology": "no",
+    "genre:romance": "no",
+    "genre:science": "yes",
+    "genre:scifi": "no",
+    "place:britain": "no",
+    "place:europe_other": "no",
+    "place:usa": "yes",
+    "setting:school": "no",
+    "t:child": "no",
+    "t:detective": "no",
+    "t:family": "no",
+    "t:funny": "no",
+    "t:otherworld": "no",
+    "t:powersystem": "no",
+    "t:realevents": "yes",
+    "t:romance": "no",
+    "t:survival": "no",
+    "t:travel": "no",
+    "t:war": "no",
+    "theme:family": "no",
+    "theme:friendship": "no",
+    "theme:magic": "no",
+    "setting:victorian": "no",
+    "form:firstperson": "no",
+    "form:memoir": "no"
+  }
+}
