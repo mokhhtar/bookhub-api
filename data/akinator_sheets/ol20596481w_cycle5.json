@@ -1,0 +1,90 @@
+{
+  "title": "Tom Gates",
+  "author": "Liz Pichon",
+  "key": "/works/OL20596481W",
+  "publication": {
+    "basis": "first_publication",
+    "year": 2011,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://www.scholastic.co.uk"
+    ]
+  },
+  "publication_answers": {},
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://www.scholastic.co.uk"
+    ]
+  },
+  "sources": [
+    {
+      "url": "https://www.scholastic.co.uk",
+      "supports": [
+        "identity",
+        "first_publication",
+        "authorship",
+        "form:fiction",
+        "audience:children"
+      ]
+    }
+  ],
+  "source": "independent web research",
+  "saved": "2026-09-25T22:03:23.846961Z",
+  "questionCount": 52,
+  "answers": {
+    "fact:firstpub_lt_1900": "no",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "no",
+    "fact:firstpub_ge_2001": "yes",
+    "fact:firstpub_ge_2016": "no",
+    "audience:children": "yes",
+    "audience:ya": "unknown",
+    "author:alive": "yes",
+    "author:american": "unknown",
+    "author:british": "yes",
+    "author:european": "yes",
+    "author:female": "yes",
+    "author:nonwestern": "unknown",
+    "author:prolific": "unknown",
+    "book:film": "unknown",
+    "fact:namedchars": "unknown",
+    "form:classic": "unknown",
+    "form:fiction": "yes",
+    "form:nonfiction": "no",
+    "form:series": "yes",
+    "form:webnovel": "unknown",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:fantasy": "unknown",
+    "genre:history": "unknown",
+    "genre:psychology": "unknown",
+    "genre:romance": "unknown",
+    "genre:science": "unknown",
+    "genre:scifi": "unknown",
+    "place:britain": "yes",
+    "place:europe_other": "unknown",
+    "place:usa": "unknown",
+    "setting:school": "unknown",
+    "t:child": "unknown",
+    "t:detective": "unknown",
+    "t:family": "unknown",
+    "t:funny": "yes",
+    "t:otherworld": "unknown",
+    "t:powersystem": "unknown",
+    "t:realevents": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown",
+    "fact:anonymous": "no",
+    "setting:victorian": "unknown",
+    "form:firstperson": "unknown",
+    "form:memoir": "unknown"
+  }
+}

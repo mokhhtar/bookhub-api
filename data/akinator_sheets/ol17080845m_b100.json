@@ -1,0 +1,90 @@
+{
+  "title": "Ground-water site inventory data for selected wells...",
+  "author": "",
+  "key": "/works/OL17080845M",
+  "publication": {
+    "basis": "first_publication",
+    "year": 1984,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://pubs.usgs.gov"
+    ]
+  },
+  "publication_answers": {},
+  "authorship": {
+    "status": "anonymous",
+    "sources": [
+      "https://pubs.usgs.gov"
+    ]
+  },
+  "sources": [
+    {
+      "url": "https://pubs.usgs.gov",
+      "supports": [
+        "identity",
+        "first_publication",
+        "authorship",
+        "form:nonfiction",
+        "genre:science"
+      ]
+    }
+  ],
+  "source": "independent web research",
+  "saved": "2026-09-25T22:27:00.701264Z",
+  "questionCount": 52,
+  "answers": {
+    "fact:firstpub_lt_1900": "no",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "yes",
+    "fact:firstpub_ge_2001": "no",
+    "fact:firstpub_ge_2016": "no",
+    "audience:children": "unknown",
+    "audience:ya": "unknown",
+    "author:alive": "unknown",
+    "author:american": "unknown",
+    "author:british": "unknown",
+    "author:european": "unknown",
+    "author:female": "unknown",
+    "author:nonwestern": "unknown",
+    "author:prolific": "unknown",
+    "book:film": "unknown",
+    "fact:namedchars": "unknown",
+    "form:classic": "unknown",
+    "form:fiction": "no",
+    "form:nonfiction": "yes",
+    "form:series": "unknown",
+    "form:webnovel": "unknown",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:fantasy": "unknown",
+    "genre:history": "unknown",
+    "genre:psychology": "unknown",
+    "genre:romance": "unknown",
+    "genre:science": "yes",
+    "genre:scifi": "unknown",
+    "place:britain": "unknown",
+    "place:europe_other": "unknown",
+    "place:usa": "yes",
+    "setting:school": "unknown",
+    "t:child": "unknown",
+    "t:detective": "unknown",
+    "t:family": "unknown",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:powersystem": "unknown",
+    "t:realevents": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown",
+    "fact:anonymous": "yes",
+    "setting:victorian": "unknown",
+    "form:firstperson": "unknown",
+    "form:memoir": "unknown"
+  }
+}

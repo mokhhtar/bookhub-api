@@ -1,0 +1,99 @@
+{
+  "title": "Come Home to Yourself",
+  "author": "Déjà Rae",
+  "key": "/works/OL28083301W",
+  "publication": {
+    "basis": "first_publication",
+    "year": 2022,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://shopcatalog.com/products/come-home-to-yourself",
+      "https://www.abebooks.com/book-search/title/come-home-to-yourself/author/deja-rae/"
+    ]
+  },
+  "publication_answers": {},
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://shopcatalog.com/products/come-home-to-yourself",
+      "https://www.abebooks.com/book-search/title/come-home-to-yourself/author/deja-rae/"
+    ]
+  },
+  "sources": [
+    {
+      "url": "https://shopcatalog.com/products/come-home-to-yourself",
+      "supports": [
+        "identity",
+        "first_publication",
+        "authorship",
+        "form:nonfiction"
+      ]
+    },
+    {
+      "url": "https://www.abebooks.com/book-search/title/come-home-to-yourself/author/deja-rae/",
+      "supports": [
+        "identity",
+        "first_publication",
+        "authorship"
+      ]
+    }
+  ],
+  "source": "independent web research (LOC/SIL/Archive.org/ASME/Shop Catalog)",
+  "saved": "2026-09-25T21:29:59.213425Z",
+  "questionCount": 52,
+  "answers": {
+    "fact:firstpub_lt_1900": "no",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "no",
+    "fact:firstpub_ge_2001": "yes",
+    "fact:firstpub_ge_2016": "yes",
+    "audience:children": "no",
+    "audience:ya": "unknown",
+    "author:alive": "yes",
+    "author:american": "yes",
+    "author:british": "no",
+    "author:european": "no",
+    "author:female": "yes",
+    "author:nonwestern": "no",
+    "author:prolific": "unknown",
+    "book:film": "unknown",
+    "fact:namedchars": "unknown",
+    "form:classic": "no",
+    "form:fiction": "no",
+    "form:nonfiction": "yes",
+    "form:series": "no",
+    "form:webnovel": "no",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:fantasy": "unknown",
+    "genre:history": "unknown",
+    "genre:psychology": "unknown",
+    "genre:romance": "unknown",
+    "genre:science": "unknown",
+    "genre:scifi": "unknown",
+    "place:britain": "no",
+    "place:europe_other": "no",
+    "place:usa": "yes",
+    "setting:school": "unknown",
+    "t:child": "unknown",
+    "t:detective": "unknown",
+    "t:family": "unknown",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:powersystem": "unknown",
+    "t:realevents": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown",
+    "fact:anonymous": "no",
+    "setting:victorian": "no",
+    "form:firstperson": "yes",
+    "form:memoir": "no"
+  }
+}

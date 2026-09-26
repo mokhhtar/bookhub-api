@@ -1,0 +1,100 @@
+{
+  "title": "Electronic communication systems",
+  "author": "Roy Blake",
+  "key": "/works/OL3339807W",
+  "publication": {
+    "basis": "first_publication",
+    "year": 2001,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://www.cengage.com",
+      "https://www.walmart.com/ip/Electronic-Communication-Systems-Hardcover-9780766826847/1337482"
+    ]
+  },
+  "publication_answers": {},
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://www.cengage.com",
+      "https://www.walmart.com/ip/Electronic-Communication-Systems-Hardcover-9780766826847/1337482"
+    ]
+  },
+  "sources": [
+    {
+      "url": "https://www.cengage.com",
+      "supports": [
+        "identity",
+        "first_publication",
+        "authorship",
+        "form:nonfiction",
+        "genre:science"
+      ]
+    },
+    {
+      "url": "https://www.walmart.com/ip/Electronic-Communication-Systems-Hardcover-9780766826847/1337482",
+      "supports": [
+        "identity",
+        "first_publication",
+        "authorship"
+      ]
+    }
+  ],
+  "source": "independent web research",
+  "saved": "2026-09-25T21:36:21.724235Z",
+  "questionCount": 52,
+  "answers": {
+    "fact:firstpub_lt_1900": "no",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "no",
+    "fact:firstpub_ge_2001": "yes",
+    "fact:firstpub_ge_2016": "no",
+    "audience:children": "no",
+    "audience:ya": "unknown",
+    "author:alive": "unknown",
+    "author:american": "yes",
+    "author:british": "no",
+    "author:european": "no",
+    "author:female": "no",
+    "author:nonwestern": "no",
+    "author:prolific": "unknown",
+    "book:film": "unknown",
+    "fact:namedchars": "unknown",
+    "form:classic": "no",
+    "form:fiction": "no",
+    "form:nonfiction": "yes",
+    "form:series": "no",
+    "form:webnovel": "no",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:fantasy": "unknown",
+    "genre:history": "unknown",
+    "genre:psychology": "unknown",
+    "genre:romance": "unknown",
+    "genre:science": "yes",
+    "genre:scifi": "unknown",
+    "place:britain": "no",
+    "place:europe_other": "no",
+    "place:usa": "yes",
+    "setting:school": "unknown",
+    "t:child": "unknown",
+    "t:detective": "unknown",
+    "t:family": "unknown",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:powersystem": "unknown",
+    "t:realevents": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown",
+    "fact:anonymous": "no",
+    "setting:victorian": "no",
+    "form:firstperson": "no",
+    "form:memoir": "no"
+  }
+}

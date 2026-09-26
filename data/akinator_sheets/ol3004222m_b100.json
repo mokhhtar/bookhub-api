@@ -1,0 +1,80 @@
+{
+  "title": "[Itonama language publications].",
+  "author": "",
+  "key": "/works/OL3004222M",
+  "publication": null,
+  "publication_answers": {},
+  "authorship": {
+    "status": "anonymous",
+    "sources": [
+      "https://id.loc.gov/authorities/subjects/sh85068875.html"
+    ]
+  },
+  "sources": [
+    {
+      "url": "https://id.loc.gov/authorities/subjects/sh85068875.html",
+      "supports": [
+        "identity",
+        "authorship",
+        "form:nonfiction"
+      ]
+    }
+  ],
+  "source": "independent web research",
+  "saved": "2026-09-25T22:27:00.717221Z",
+  "questionCount": 52,
+  "answers": {
+    "fact:firstpub_lt_1900": "unknown",
+    "fact:firstpub_lt_1950": "unknown",
+    "fact:firstpub_lt_1970": "unknown",
+    "fact:firstpub_lt_2000": "unknown",
+    "fact:firstpub_ge_2001": "unknown",
+    "fact:firstpub_ge_2016": "unknown",
+    "audience:children": "unknown",
+    "audience:ya": "unknown",
+    "author:alive": "unknown",
+    "author:american": "unknown",
+    "author:british": "unknown",
+    "author:european": "unknown",
+    "author:female": "unknown",
+    "author:nonwestern": "unknown",
+    "author:prolific": "unknown",
+    "book:film": "unknown",
+    "fact:namedchars": "unknown",
+    "form:classic": "unknown",
+    "form:fiction": "no",
+    "form:nonfiction": "yes",
+    "form:series": "unknown",
+    "form:webnovel": "unknown",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:fantasy": "unknown",
+    "genre:history": "unknown",
+    "genre:psychology": "unknown",
+    "genre:romance": "unknown",
+    "genre:science": "yes",
+    "genre:scifi": "unknown",
+    "place:britain": "no",
+    "place:europe_other": "no",
+    "place:usa": "no",
+    "setting:school": "unknown",
+    "t:child": "unknown",
+    "t:detective": "unknown",
+    "t:family": "unknown",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:powersystem": "unknown",
+    "t:realevents": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown",
+    "fact:anonymous": "yes",
+    "setting:victorian": "unknown",
+    "form:firstperson": "unknown",
+    "form:memoir": "unknown"
+  }
+}

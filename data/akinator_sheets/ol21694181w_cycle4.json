@@ -1,0 +1,90 @@
+{
+  "title": "Heartstopper Colouring Book",
+  "author": "Alice Oseman",
+  "key": "/works/OL21694181W",
+  "publication": {
+    "basis": "first_publication",
+    "year": 2020,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://www.hodderchildrens.co.uk"
+    ]
+  },
+  "publication_answers": {},
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://www.hodderchildrens.co.uk"
+    ]
+  },
+  "sources": [
+    {
+      "url": "https://www.hodderchildrens.co.uk",
+      "supports": [
+        "identity",
+        "first_publication",
+        "authorship",
+        "form:nonfiction",
+        "audience:ya"
+      ]
+    }
+  ],
+  "source": "independent web research",
+  "saved": "2026-09-25T22:00:24.432572Z",
+  "questionCount": 52,
+  "answers": {
+    "fact:firstpub_lt_1900": "no",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "no",
+    "fact:firstpub_ge_2001": "yes",
+    "fact:firstpub_ge_2016": "yes",
+    "audience:children": "unknown",
+    "audience:ya": "yes",
+    "author:alive": "yes",
+    "author:american": "unknown",
+    "author:british": "yes",
+    "author:european": "yes",
+    "author:female": "yes",
+    "author:nonwestern": "unknown",
+    "author:prolific": "unknown",
+    "book:film": "unknown",
+    "fact:namedchars": "unknown",
+    "form:classic": "unknown",
+    "form:fiction": "no",
+    "form:nonfiction": "yes",
+    "form:series": "unknown",
+    "form:webnovel": "unknown",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:fantasy": "unknown",
+    "genre:history": "unknown",
+    "genre:psychology": "unknown",
+    "genre:romance": "unknown",
+    "genre:science": "unknown",
+    "genre:scifi": "unknown",
+    "place:britain": "yes",
+    "place:europe_other": "unknown",
+    "place:usa": "unknown",
+    "setting:school": "unknown",
+    "t:child": "unknown",
+    "t:detective": "unknown",
+    "t:family": "unknown",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:powersystem": "unknown",
+    "t:realevents": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown",
+    "fact:anonymous": "no",
+    "setting:victorian": "unknown",
+    "form:firstperson": "unknown",
+    "form:memoir": "unknown"
+  }
+}
