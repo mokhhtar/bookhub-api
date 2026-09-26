@@ -1,0 +1,88 @@
+{
+  "title": "All That You Deserve",
+  "author": "Jacqueline Whitney",
+  "key": "/works/OL25959739W",
+  "publication": {
+    "basis": "first_publication",
+    "year": 2021,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://books.apple.com/us/book/all-that-you-deserve/id1595160356"
+    ]
+  },
+  "publication_answers": {},
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://books.apple.com/us/book/all-that-you-deserve/id1595160356"
+    ]
+  },
+  "sources": [
+    {
+      "url": "https://books.apple.com/us/book/all-that-you-deserve/id1595160356",
+      "supports": [
+        "identity",
+        "authorship",
+        "first_publication"
+      ]
+    }
+  ],
+  "source": "independent web research",
+  "saved": "2026-09-25T20:58:41.101Z",
+  "questionCount": 52,
+  "answers": {
+    "audience:children": "unknown",
+    "audience:ya": "unknown",
+    "author:alive": "unknown",
+    "author:american": "unknown",
+    "author:british": "unknown",
+    "author:european": "unknown",
+    "author:female": "unknown",
+    "author:nonwestern": "unknown",
+    "author:prolific": "unknown",
+    "book:film": "unknown",
+    "fact:namedchars": "unknown",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "no",
+    "fact:firstpub_ge_2001": "yes",
+    "fact:firstpub_ge_2016": "yes",
+    "fact:firstpub_lt_1900": "no",
+    "form:classic": "unknown",
+    "form:fiction": "yes",
+    "form:nonfiction": "unknown",
+    "form:series": "unknown",
+    "form:webnovel": "unknown",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:fantasy": "unknown",
+    "genre:history": "unknown",
+    "genre:psychology": "unknown",
+    "genre:romance": "unknown",
+    "genre:science": "unknown",
+    "genre:scifi": "unknown",
+    "place:britain": "unknown",
+    "place:europe_other": "unknown",
+    "place:usa": "unknown",
+    "setting:school": "unknown",
+    "t:child": "unknown",
+    "t:detective": "unknown",
+    "t:family": "unknown",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:powersystem": "unknown",
+    "t:realevents": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown",
+    "fact:anonymous": "no",
+    "setting:victorian": "unknown",
+    "form:firstperson": "unknown",
+    "form:memoir": "unknown"
+  }
+}

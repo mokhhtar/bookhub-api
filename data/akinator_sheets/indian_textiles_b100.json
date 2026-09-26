@@ -1,0 +1,104 @@
+{
+  "title": "Indian Textiles",
+  "author": "John Gillow",
+  "key": "/site/indian-textiles",
+  "publication": {
+    "basis": "first_publication",
+    "year": 1999,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://thamesandhudson.com/indian-textiles-9780500514788"
+    ]
+  },
+  "publication_answers": {},
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://thamesandhudson.com/authors/john-gillow-17482"
+    ]
+  },
+  "sources": [
+    {
+      "url": "https://thamesandhudson.com/authors/john-gillow-17482",
+      "supports": [
+        "author:alive",
+        "author:american",
+        "author:british",
+        "author:european",
+        "author:female",
+        "author:nonwestern",
+        "author:prolific",
+        "authorship",
+        "first_publication",
+        "identity"
+      ]
+    },
+    {
+      "url": "https://thamesandhudson.com/indian-textiles-9780500514788",
+      "supports": [
+        "authorship",
+        "first_publication",
+        "form:nonfiction",
+        "identity"
+      ]
+    }
+  ],
+  "source": "independent web research",
+  "saved": true,
+  "questionCount": 52,
+  "answers": {
+    "fact:anonymous": "no",
+    "fact:firstpub_lt_1900": "no",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "yes",
+    "fact:firstpub_ge_2001": "no",
+    "fact:firstpub_ge_2016": "no",
+    "form:fiction": "no",
+    "form:nonfiction": "yes",
+    "form:webnovel": "no",
+    "form:series": "no",
+    "genre:fantasy": "no",
+    "genre:history": "no",
+    "genre:psychology": "no",
+    "genre:science": "no",
+    "author:alive": "yes",
+    "author:american": "no",
+    "author:british": "yes",
+    "author:female": "no",
+    "author:nonwestern": "no",
+    "place:usa": "yes",
+    "t:realevents": "no",
+    "t:powersystem": "no",
+    "audience:children": "unknown",
+    "audience:ya": "unknown",
+    "author:european": "no",
+    "author:prolific": "yes",
+    "book:film": "unknown",
+    "fact:namedchars": "unknown",
+    "form:classic": "unknown",
+    "form:firstperson": "unknown",
+    "form:memoir": "unknown",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:romance": "unknown",
+    "genre:scifi": "unknown",
+    "place:britain": "unknown",
+    "place:europe_other": "unknown",
+    "setting:school": "unknown",
+    "setting:victorian": "unknown",
+    "t:child": "unknown",
+    "t:detective": "unknown",
+    "t:family": "unknown",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown"
+  }
+}

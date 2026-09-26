@@ -1,0 +1,89 @@
+{
+  "title": "Information and evidence secured by the American Commission, consisting of delegates from different states in the United States and different provinces of Canada, assembled for the purpose of investigating in European countries cooperative agricultural finance, production, distribution, and rural life; and the United States Commission, appointed by President Wilson \"To cooperate with the American Commission assembled under the auspices of the Southern Commercial Congress to investigate and study in European countries cooperative land-mortgage banks, cooperative rural credit unions, and similar organizations and institutions devoting their attention to the promotion of agriculture and the betterment of rural conditions\" (H.R. 28283, approved March 4, 1913).",
+  "author": "U.S. Senate Commission",
+  "key": "/works/OL16117275M",
+  "publication": {
+    "basis": "first_publication",
+    "year": 1920,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://lccn.loc.gov/14030101"
+    ]
+  },
+  "publication_answers": {},
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://lccn.loc.gov/14030101"
+    ]
+  },
+  "sources": [
+    {
+      "url": "https://lccn.loc.gov/14030101",
+      "supports": [
+        "identity",
+        "first_publication",
+        "authorship",
+        "form:nonfiction"
+      ]
+    }
+  ],
+  "source": "independent web research",
+  "saved": true,
+  "questionCount": 52,
+  "answers": {
+    "fact:anonymous": "no",
+    "fact:firstpub_lt_1900": "no",
+    "fact:firstpub_lt_1950": "yes",
+    "fact:firstpub_lt_1970": "yes",
+    "fact:firstpub_lt_2000": "yes",
+    "fact:firstpub_ge_2001": "no",
+    "fact:firstpub_ge_2016": "no",
+    "form:fiction": "no",
+    "form:nonfiction": "yes",
+    "form:webnovel": "no",
+    "form:series": "no",
+    "genre:fantasy": "no",
+    "genre:history": "no",
+    "genre:psychology": "no",
+    "genre:science": "no",
+    "author:alive": "unknown",
+    "author:american": "unknown",
+    "author:british": "unknown",
+    "author:female": "unknown",
+    "author:nonwestern": "unknown",
+    "place:usa": "no",
+    "t:realevents": "no",
+    "t:powersystem": "no",
+    "audience:children": "unknown",
+    "audience:ya": "unknown",
+    "author:european": "unknown",
+    "author:prolific": "unknown",
+    "book:film": "unknown",
+    "fact:namedchars": "unknown",
+    "form:classic": "unknown",
+    "form:firstperson": "unknown",
+    "form:memoir": "unknown",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:romance": "unknown",
+    "genre:scifi": "unknown",
+    "place:britain": "unknown",
+    "place:europe_other": "unknown",
+    "setting:school": "unknown",
+    "setting:victorian": "unknown",
+    "t:child": "unknown",
+    "t:detective": "unknown",
+    "t:family": "unknown",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown"
+  }
+}

@@ -1,0 +1,89 @@
+{
+  "title": "Sunshine Reception Stories Set B: Helping Dad: Guided Reading Pack (Literacy Edition: Sunshine)",
+  "author": "Sunshine Reading Program",
+  "key": "/works/OL10243493M",
+  "publication": {
+    "basis": "first_publication",
+    "year": 1990,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://books.google.com/books?id=0X5QAAAAMAAJ"
+    ]
+  },
+  "publication_answers": {},
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://books.google.com/books?id=0X5QAAAAMAAJ"
+    ]
+  },
+  "sources": [
+    {
+      "url": "https://books.google.com/books?id=0X5QAAAAMAAJ",
+      "supports": [
+        "identity",
+        "first_publication",
+        "authorship",
+        "form:nonfiction"
+      ]
+    }
+  ],
+  "source": "independent web research",
+  "saved": true,
+  "questionCount": 52,
+  "answers": {
+    "fact:anonymous": "no",
+    "fact:firstpub_lt_1900": "no",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "yes",
+    "fact:firstpub_ge_2001": "no",
+    "fact:firstpub_ge_2016": "no",
+    "form:fiction": "yes",
+    "form:nonfiction": "no",
+    "form:webnovel": "no",
+    "form:series": "yes",
+    "genre:fantasy": "no",
+    "genre:history": "no",
+    "genre:psychology": "no",
+    "genre:science": "no",
+    "author:alive": "unknown",
+    "author:american": "unknown",
+    "author:british": "unknown",
+    "author:female": "unknown",
+    "author:nonwestern": "unknown",
+    "place:usa": "yes",
+    "t:realevents": "yes",
+    "t:powersystem": "no",
+    "audience:children": "yes",
+    "audience:ya": "unknown",
+    "author:european": "unknown",
+    "author:prolific": "unknown",
+    "book:film": "unknown",
+    "fact:namedchars": "unknown",
+    "form:classic": "unknown",
+    "form:firstperson": "unknown",
+    "form:memoir": "unknown",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:romance": "unknown",
+    "genre:scifi": "unknown",
+    "place:britain": "unknown",
+    "place:europe_other": "unknown",
+    "setting:school": "unknown",
+    "setting:victorian": "unknown",
+    "t:child": "yes",
+    "t:detective": "unknown",
+    "t:family": "yes",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown"
+  }
+}

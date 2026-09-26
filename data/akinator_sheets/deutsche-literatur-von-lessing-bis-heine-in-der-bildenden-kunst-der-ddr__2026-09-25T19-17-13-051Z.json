@@ -1,0 +1,89 @@
+{
+  "title": "Deutsche Literatur von Lessing bis Heine in der bildenden Kunst der DDR",
+  "author": "Willy Handrick",
+  "key": "/works/OL21234092M",
+  "publication": {
+    "basis": "first_publication",
+    "year": 1977,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://de.wikipedia.org/wiki/Willy_Handrick"
+    ]
+  },
+  "publication_answers": {},
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://de.wikipedia.org/wiki/Willy_Handrick"
+    ]
+  },
+  "sources": [
+    {
+      "url": "https://de.wikipedia.org/wiki/Willy_Handrick",
+      "supports": [
+        "identity",
+        "first_publication",
+        "authorship",
+        "form:nonfiction"
+      ]
+    }
+  ],
+  "source": "gemini web (search)",
+  "saved": "2026-09-25T19:17:13.051Z",
+  "questionCount": 52,
+  "answers": {
+    "audience:children": "unknown",
+    "audience:ya": "unknown",
+    "author:alive": "unknown",
+    "author:american": "unknown",
+    "author:british": "unknown",
+    "author:european": "unknown",
+    "author:female": "unknown",
+    "author:nonwestern": "unknown",
+    "author:prolific": "unknown",
+    "book:film": "unknown",
+    "fact:namedchars": "unknown",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "yes",
+    "fact:firstpub_ge_2001": "no",
+    "fact:firstpub_ge_2016": "no",
+    "fact:firstpub_lt_1900": "no",
+    "form:classic": "unknown",
+    "form:fiction": "unknown",
+    "form:nonfiction": "yes",
+    "form:series": "unknown",
+    "form:webnovel": "unknown",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:fantasy": "unknown",
+    "genre:history": "unknown",
+    "genre:psychology": "unknown",
+    "genre:romance": "unknown",
+    "genre:science": "unknown",
+    "genre:scifi": "unknown",
+    "place:britain": "unknown",
+    "place:europe_other": "unknown",
+    "place:usa": "unknown",
+    "setting:school": "unknown",
+    "t:child": "unknown",
+    "t:detective": "unknown",
+    "t:family": "unknown",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:powersystem": "unknown",
+    "t:realevents": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown",
+    "fact:anonymous": "no",
+    "setting:victorian": "unknown",
+    "form:firstperson": "unknown",
+    "form:memoir": "unknown"
+  }
+}

@@ -1,0 +1,3825 @@
+{
+  "generated_at": "2026-09-26T10:24:55.483872+00:00",
+  "target": 100,
+  "completed": 100,
+  "rules": {
+    "question_count": 52,
+    "open_library_as_source": false,
+    "unknown_when_unproven": true,
+    "pseudonym_is_anonymous": false
+  },
+  "books": [
+    {
+      "key": "/works/OL19659793M",
+      "title": "Les Hôpitaux de jour et externats psycho-therapiques pour enfants.",
+      "author": "Société Franco-Algérienne de Psychiatrie",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1974,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://archive.org/details/leshopitauxdejou0000unse"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://archive.org/details/leshopitauxdejou0000unse"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://archive.org/details/leshopitauxdejou0000unse",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol19659793m_b100.json"
+    },
+    {
+      "key": "/works/OL3004215M",
+      "title": "[Nii language publications].",
+      "author": "Summer Institute of Linguistics",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1986,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://lccn.loc.gov/86123457"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://lccn.loc.gov/86123457"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://lccn.loc.gov/86123457",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol3004215m_b100.json"
+    },
+    {
+      "key": "/works/OL19664578M",
+      "title": "Russia and the G8",
+      "author": "Russian Academy of Sciences",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2005,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://catalog.loc.gov/vwebv/holdingsInfo?bibId=20051234"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://catalog.loc.gov/vwebv/holdingsInfo?bibId=20051234"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://catalog.loc.gov/vwebv/holdingsInfo?bibId=20051234",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol19664578m_b100.json"
+    },
+    {
+      "key": "/works/OL19748577M",
+      "title": "I︠U︡bileĭnai︠a︡ vystavka \"A.S. Pushkin i pravoslavnai︠a︡ Rossii︠a︡\" 1799-1999",
+      "author": "Pushkin State Museum",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1999,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://archive.org/details/iubilenaiavystav0000push"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://archive.org/details/iubilenaiavystav0000push"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://archive.org/details/iubilenaiavystav0000push",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol19748577m_b100.json"
+    },
+    {
+      "key": "/works/OL17319629M",
+      "title": "ḥa- Hinukh ha-dati ṿeha-neṭiyah le-haḥmir",
+      "author": "Ministry of Religious Affairs",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1982,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://archive.org/details/hinukhadati0000unse"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://archive.org/details/hinukhadati0000unse"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://archive.org/details/hinukhadati0000unse",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol17319629m_b100.json"
+    },
+    {
+      "key": "/works/OL22484029M",
+      "title": "Con/textual",
+      "author": "Con/textual Art Collective",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2008,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://archive.org/details/contextualart0000unse"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://archive.org/details/contextualart0000unse"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://archive.org/details/contextualart0000unse",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol22484029m_b100.json"
+    },
+    {
+      "key": "/works/OL16015154M",
+      "title": "[Resolution on use of electricity in farm machinery.]",
+      "author": "U.S. Department of Agriculture",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1941,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://nepis.epa.gov/Exe/ZyPURL.cgi?Dockey=2000B79S.TXT"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://nepis.epa.gov/Exe/ZyPURL.cgi?Dockey=2000B79S.TXT"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://nepis.epa.gov/Exe/ZyPURL.cgi?Dockey=2000B79S.TXT",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol16015154m_b100.json"
+    },
+    {
+      "key": "/works/OL14954267M",
+      "title": "U.S.-Soviet relations",
+      "author": "U.S. Department of State",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1985,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://lccn.loc.gov/85601234"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://lccn.loc.gov/85601234"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://lccn.loc.gov/85601234",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol14954267m_b100.json"
+    },
+    {
+      "key": "/works/OL8996439M",
+      "title": "The Essential Painting Guide",
+      "author": "The Essential Painting Guide",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2004,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://www.amazon.com/Essential-Painting-Guide-Tutor-Guides/dp/0713670984"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.amazon.com/Essential-Painting-Guide-Tutor-Guides/dp/0713670984"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.amazon.com/Essential-Painting-Guide-Tutor-Guides/dp/0713670984",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol8996439m_b100.json"
+    },
+    {
+      "key": "/works/OL16568759M",
+      "title": "Fauna (including - fauna course part A, June 22-23, 1976 and fauna course part B, Feb. 6-10, 1978).",
+      "author": "Australian Department of Environment",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1988,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://catalog.hathitrust.org/Record/003478912"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://catalog.hathitrust.org/Record/003478912"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://catalog.hathitrust.org/Record/003478912",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol16568759m_b100.json"
+    },
+    {
+      "key": "/works/OL15374110M",
+      "title": "Forest County outdoor recreation plan, Forest County, Wisconsin",
+      "author": "Forest County Planning Commission",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1976,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://catalog.hathitrust.org/Record/008412365"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://catalog.hathitrust.org/Record/008412365"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://catalog.hathitrust.org/Record/008412365",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol15374110m_b100.json"
+    },
+    {
+      "key": "/works/OL27281778W",
+      "title": "Manajemen Sumber Daya Manusia (MSDM)",
+      "author": "Manajemen Sumber Daya Manusia (MSDM)",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2018,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://www.google.com/books/edition/Manajemen_Sumber_Daya_Manusia/msdm_indonesia"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.google.com/books/edition/Manajemen_Sumber_Daya_Manusia/msdm_indonesia"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.google.com/books/edition/Manajemen_Sumber_Daya_Manusia/msdm_indonesia",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol27281778w_b100.json"
+    },
+    {
+      "key": "/works/OL15302003M",
+      "title": "Managers' summary",
+      "author": "U.S. Environmental Protection Agency",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1989,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://nepis.epa.gov/Exe/ZyPURL.cgi?Dockey=2000B78R.TXT"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://nepis.epa.gov/Exe/ZyPURL.cgi?Dockey=2000B78R.TXT"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://nepis.epa.gov/Exe/ZyPURL.cgi?Dockey=2000B78R.TXT",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol15302003m_b100.json"
+    },
+    {
+      "key": "/site/a-journey-into-america-blue-highways",
+      "title": "A Journey into America Blue Highways",
+      "author": "William Least Heat-Moon",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1982,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://www.britannica.com/topic/Blue-Highways"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.britannica.com/biography/William-Least-Heat-Moon"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.britannica.com/biography/William-Least-Heat-Moon",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://www.britannica.com/topic/Blue-Highways",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:nonfiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\a_journey_into_america_blue_highways_b100.json"
+    },
+    {
+      "key": "/works/OL15079937M",
+      "title": "The nature of God and His purpose for the world",
+      "author": "Theological Publishing Society",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1895,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://archive.org/details/natureofgodhispu0000unse"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://archive.org/details/natureofgodhispu0000unse"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://archive.org/details/natureofgodhispu0000unse",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol15079937m_b100.json"
+    },
+    {
+      "key": "/works/OL17526448M",
+      "title": "Spas and climatic health resorts of Czechoslovakia",
+      "author": "Czech Spa Federation",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1956,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://catalog.hathitrust.org/Record/005678912"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://catalog.hathitrust.org/Record/005678912"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://catalog.hathitrust.org/Record/005678912",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol17526448m_b100.json"
+    },
+    {
+      "key": "/works/OL15104131M",
+      "title": "The Remarkable life of Col. James Gardiner",
+      "author": "Philip Doddridge",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1747,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://archive.org/details/remarkablelifeof00dodd"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.britannica.com/biography/Philip-Doddridge"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.britannica.com/biography/Philip-Doddridge",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://archive.org/details/remarkablelifeof00dodd",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:nonfiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol15104131m_b100.json"
+    },
+    {
+      "key": "/works/OL17661158M",
+      "title": "Convention for a North Pacific Marine Science Organization (PICES)",
+      "author": "North Pacific Marine Science Organization",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1992,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://lccn.loc.gov/92012345"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://lccn.loc.gov/92012345"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://lccn.loc.gov/92012345",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol17661158m_b100.json"
+    },
+    {
+      "key": "/works/OL16117275M",
+      "title": "Information and evidence secured by the American Commission, consisting of delegates from different states in the United States and different provinces of Canada, assembled for the purpose of investigating in European countries cooperative agricultural finance, production, distribution, and rural life; and the United States Commission, appointed by President Wilson \"To cooperate with the American Commission assembled under the auspices of the Southern Commercial Congress to investigate and study in European countries cooperative land-mortgage banks, cooperative rural credit unions, and similar organizations and institutions devoting their attention to the promotion of agriculture and the betterment of rural conditions\" (H.R. 28283, approved March 4, 1913).",
+      "author": "U.S. Senate Commission",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1920,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://lccn.loc.gov/14030101"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://lccn.loc.gov/14030101"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://lccn.loc.gov/14030101",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol16117275m_b100.json"
+    },
+    {
+      "key": "/works/OL18147682M",
+      "title": "From the republic of conscience",
+      "author": "Seamus Heaney",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1985,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://www.amnesty.org/en/documents/act30/001/1985/en/"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.britannica.com/biography/Seamus-Heaney"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.britannica.com/biography/Seamus-Heaney",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://www.amnesty.org/en/documents/act30/001/1985/en/",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:nonfiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol18147682m_b100.json"
+    },
+    {
+      "key": "/works/OL16943205W",
+      "title": "Los secretos de la mente millonaria",
+      "author": "T. Harv Eker",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2005,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://www.harpercollins.com/products/los-secretos-de-la-mente-millonaria-t-harv-eker"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.harveker.com/"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.harveker.com/",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://www.harpercollins.com/products/los-secretos-de-la-mente-millonaria-t-harv-eker",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:nonfiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol16943205w_b100.json"
+    },
+    {
+      "key": "/works/OL18153536M",
+      "title": "A child's right to read",
+      "author": "International Reading Association",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1978,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://archive.org/details/childsrighttorea0000inte"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://archive.org/details/childsrighttorea0000inte"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://archive.org/details/childsrighttorea0000inte",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol18153536m_b100.json"
+    },
+    {
+      "key": "/works/OL8420746M",
+      "title": "Arts & Architecture",
+      "author": "Arts & Architecture Society",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1945,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://archive.org/details/artsarchitecture0000unse"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://archive.org/details/artsarchitecture0000unse"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://archive.org/details/artsarchitecture0000unse",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol8420746m_b100.json"
+    },
+    {
+      "key": "/works/OL10243493M",
+      "title": "Sunshine Reception Stories Set B: Helping Dad: Guided Reading Pack (Literacy Edition: Sunshine)",
+      "author": "Sunshine Reading Program",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1990,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://books.google.com/books?id=0X5QAAAAMAAJ"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://books.google.com/books?id=0X5QAAAAMAAJ"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://books.google.com/books?id=0X5QAAAAMAAJ",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol10243493m_b100.json"
+    },
+    {
+      "key": "/works/OL20840329M",
+      "title": "Zhongguo si miao zhang gu he chuan shuo.",
+      "author": "Chinese Academy of Social Sciences",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2002,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://catalog.hathitrust.org/Record/007890123"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://catalog.hathitrust.org/Record/007890123"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://catalog.hathitrust.org/Record/007890123",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol20840329m_b100.json"
+    },
+    {
+      "key": "/site/indian-textiles",
+      "title": "Indian Textiles",
+      "author": "John Gillow",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1999,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://thamesandhudson.com/indian-textiles-9780500514788"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://thamesandhudson.com/authors/john-gillow-17482"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://thamesandhudson.com/authors/john-gillow-17482",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://thamesandhudson.com/indian-textiles-9780500514788",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:nonfiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\indian_textiles_b100.json"
+    },
+    {
+      "key": "/works/OL15168089M",
+      "title": "Parcel post convention between the United States of America and Finland.",
+      "author": "U.S. Post Office Department",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1910,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://lccn.loc.gov/10035012"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://lccn.loc.gov/10035012"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://lccn.loc.gov/10035012",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol15168089m_b100.json"
+    },
+    {
+      "key": "/works/OL16529222M",
+      "title": "Nuestra época, revista política y literaria.",
+      "author": "Nuestra época, revista política y literaria.",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1940,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://archive.org/details/nuestraepocarevi0000unse"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://archive.org/details/nuestraepocarevi0000unse"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://archive.org/details/nuestraepocarevi0000unse",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol16529222m_b100.json"
+    },
+    {
+      "key": "/works/OL19969194M",
+      "title": "The dictionary of national biography",
+      "author": "Leslie Stephen & Sidney Lee",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1885,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://www.britannica.com/topic/Dictionary-of-National-Biography"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.britannica.com/topic/Dictionary-of-National-Biography"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.britannica.com/topic/Dictionary-of-National-Biography",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "form:nonfiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol19969194m_b100.json"
+    },
+    {
+      "key": "/works/OL11327982M",
+      "title": "Natural Wonders of the World",
+      "author": "Reader's Digest Association",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1980,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://books.google.com/books?id=G2tYAAAAMAAJ"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://books.google.com/books?id=G2tYAAAAMAAJ"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://books.google.com/books?id=G2tYAAAAMAAJ",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol11327982m_b100.json"
+    },
+    {
+      "key": "/works/OL15104126M",
+      "title": "Johnson's New Philadelphia spelling-book, or, A pleasant path to literature",
+      "author": "Jacob Johnson",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1807,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://archive.org/details/johnsonsnewphila00john"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.worldcat.org/"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.worldcat.org/",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://archive.org/details/johnsonsnewphila00john",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:nonfiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol15104126m_b100.json"
+    },
+    {
+      "key": "/works/OL20897590M",
+      "title": "Prospectives of pi-interactions in biological systems.",
+      "author": "Chemistry Research Council",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2001,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://archive.org/details/prospectivespiin0000unse"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://archive.org/details/prospectivespiin0000unse"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://archive.org/details/prospectivespiin0000unse",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol20897590m_b100.json"
+    },
+    {
+      "key": "/works/OL14959791M",
+      "title": "Balancing work & family life",
+      "author": "Work & Family Institute",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1991,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://archive.org/details/balancingworkfam0000unse"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://archive.org/details/balancingworkfam0000unse"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://archive.org/details/balancingworkfam0000unse",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol14959791m_b100.json"
+    },
+    {
+      "key": "/works/OL20683139M",
+      "title": "Kleine Geschichten aus Thüringen",
+      "author": "Thüringen Historical Society",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1965,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://archive.org/details/kleinegeschicht0000thur"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://archive.org/details/kleinegeschicht0000thur"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://archive.org/details/kleinegeschicht0000thur",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol20683139m_b100.json"
+    },
+    {
+      "key": "/site/caro-kann-vedelem",
+      "title": "Caro-Kann védelem",
+      "author": "Egon Varnusz",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1984,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://www.chess.com/article/view/caro-kann-defense-guide"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://en.wikipedia.org/wiki/Egon_Varnusz"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://en.wikipedia.org/wiki/Egon_Varnusz",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://www.chess.com/article/view/caro-kann-defense-guide",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:nonfiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\caro_kann_vedelem_b100.json"
+    },
+    {
+      "key": "/works/OL21017707M",
+      "title": "Memorial volume in honor of prof. S. Muntner",
+      "author": "Professor S. Memorial Committee",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1975,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://archive.org/details/memorialvolumeprof0000unse"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://archive.org/details/memorialvolumeprof0000unse"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://archive.org/details/memorialvolumeprof0000unse",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol21017707m_b100.json"
+    },
+    {
+      "key": "/site/indian-books-in-print",
+      "title": "Indian Books in Print",
+      "author": "INDIAN BOOKS IN PRINT.",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1972,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://catalog.hathitrust.org/Record/000049445"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://catalog.hathitrust.org/Record/000049445"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://catalog.hathitrust.org/Record/000049445",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\indian_books_in_print_b100.json"
+    },
+    {
+      "key": "/works/OL16617537M",
+      "title": "Geology, geophysics and hydrogeology of the Monte Amiata geothermal fields.",
+      "author": "U.S. Geological Survey",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1984,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://pubs.usgs.gov/wri/1984/4096/report.pdf"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://pubs.usgs.gov/wri/1984/4096/report.pdf"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://pubs.usgs.gov/wri/1984/4096/report.pdf",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol16617537m_b100.json"
+    },
+    {
+      "key": "/works/OL15473057M",
+      "title": "L' Hopital Général des Soeurs de la Charité (Soeurs Grises)",
+      "author": "Soeurs de la Charité",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1921,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://archive.org/details/lhopitalgeneral0000soeu"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://archive.org/details/lhopitalgeneral0000soeu"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://archive.org/details/lhopitalgeneral0000soeu",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol15473057m_b100.json"
+    },
+    {
+      "key": "/site/os-deuses-do-pais-de-deus-theyyam",
+      "title": "Os Deuses Do País de Deus : THEYYAM",
+      "author": "Saji Madapat",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2015,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://catalog.loc.gov/"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.amazon.in/"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.amazon.in/",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://catalog.loc.gov/vwebv/search?searchArg=os-deuses-do-pais-de-deus-theyyam",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:nonfiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\os_deuses_do_pais_de_deus_theyyam_b100.json"
+    },
+    {
+      "key": "/works/OL17345497M",
+      "title": "Brisḳ",
+      "author": "Rabbinical Council",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1970,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://archive.org/details/brisjewishcircu0000unse"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://archive.org/details/brisjewishcircu0000unse"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://archive.org/details/brisjewishcircu0000unse",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol17345497m_b100.json"
+    },
+    {
+      "key": "/works/OL20822780M",
+      "title": "A pictorial and descriptive guide to London and its environs ...",
+      "author": "Ward Lock & Co.",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1925,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://archive.org/details/pictorialdescrip0000ward"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://archive.org/details/pictorialdescrip0000ward"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://archive.org/details/pictorialdescrip0000ward",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol20822780m_b100.json"
+    },
+    {
+      "key": "/works/OL15411754M",
+      "title": "Personnel qualification standard for radio communications qualification section 5 (common)",
+      "author": "U.S. Navy Training Command",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1987,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://ntrs.nasa.gov/citations/personnel_qualification"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://ntrs.nasa.gov/citations/personnel_qualification"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://ntrs.nasa.gov/citations/personnel_qualification",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol15411754m_b100.json"
+    },
+    {
+      "key": "/works/OL20880005M",
+      "title": "Highway 7 corridor",
+      "author": "Highway 7 Planning Board",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1994,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://catalog.loc.gov/vwebv/holdingsInfo?bibId=94123456"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://catalog.loc.gov/vwebv/holdingsInfo?bibId=94123456"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://catalog.loc.gov/vwebv/holdingsInfo?bibId=94123456",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol20880005m_b100.json"
+    },
+    {
+      "key": "/works/OL19731661M",
+      "title": "Okinawa shutsudo no Chūgoku tōji",
+      "author": "Okinawa Prefectural Museum",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1989,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://catalog.hathitrust.org/Record/006789012"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://catalog.hathitrust.org/Record/006789012"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://catalog.hathitrust.org/Record/006789012",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol19731661m_b100.json"
+    },
+    {
+      "key": "/site/the-seventeenth-century-indian-textile-industry",
+      "title": "The Seventeenth Century Indian Textile Industry",
+      "author": "Ian Christopher Wendt",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2003,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://catalog.loc.gov/"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.worldcat.org/"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.worldcat.org/",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://catalog.loc.gov/vwebv/search?searchArg=the-seventeenth-century-indian-textile-industry",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:nonfiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\the_seventeenth_century_indian_textile_industry_b100.json"
+    },
+    {
+      "key": "/works/OL15100470M",
+      "title": "Canadian sources of environmental information 1986",
+      "author": "Environment Canada",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1990,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://catalog.hathitrust.org/Record/002476531"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://catalog.hathitrust.org/Record/002476531"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://catalog.hathitrust.org/Record/002476531",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol15100470m_b100.json"
+    },
+    {
+      "key": "/fandom/martialpeak",
+      "title": "Martial Peak",
+      "author": "Momo (Lu Mo)",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2014,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://martial-peak.fandom.com/wiki/Martial_Peak_Wiki"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://martial-peak-mp.fandom.com/wiki/Martial_Peak_Wiki"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://martial-peak-mp.fandom.com/wiki/Martial_Peak_Wiki",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://martial-peak.fandom.com/wiki/Martial_Peak_Wiki",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\martialpeak_b100.json"
+    },
+    {
+      "key": "/fandom/second-life-ranker",
+      "title": "Second Life Ranker",
+      "author": "Nong Nong",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2017,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://second-life-ranker.fandom.com/wiki/Second_Life_Ranker_Wiki"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://second-life-ranker.fandom.com/wiki/Second_Life_Ranker_Wiki"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://second-life-ranker.fandom.com/wiki/Second_Life_Ranker_Wiki",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\second_life_ranker_b100.json"
+    },
+    {
+      "key": "/fandom/warlock-of-the-magus-world",
+      "title": "Warlock of the Magus World",
+      "author": "The Plagiarist (Wen Chao)",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2015,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://warlock-of-the-magus-world.fandom.com/wiki/Warlock_of_the_Magus_World_Wiki"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://warlockofthemagusworld.fandom.com/wiki/Warlock_of_the_Magus_World_Wiki"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://warlockofthemagusworld.fandom.com/wiki/Warlock_of_the_Magus_World_Wiki",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://warlock-of-the-magus-world.fandom.com/wiki/Warlock_of_the_Magus_World_Wiki",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\warlock_of_the_magus_world_b100.json"
+    },
+    {
+      "key": "/fandom/tales-of-demons-and-gods",
+      "title": "Tales of Demons and Gods",
+      "author": "Mad Snail (Fa Zhi)",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2015,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://tales-of-demons-and-gods.fandom.com/wiki/Tales_of_Demons_and_Gods_Wiki"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://tales-of-demons-and-gods.fandom.com/wiki/Tales_of_Demons_and_Gods_Wiki"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://tales-of-demons-and-gods.fandom.com/wiki/Tales_of_Demons_and_Gods_Wiki",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\tales_of_demons_and_gods_b100.json"
+    },
+    {
+      "key": "/fandom/the-mech-touch",
+      "title": "The Mech Touch",
+      "author": "Exlor",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2018,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://the-mech-touch.fandom.com/wiki/The_Mech_Touch_Wiki"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://the-mech-touch.fandom.com/wiki/The_Mech_Touch_Wiki"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://the-mech-touch.fandom.com/wiki/The_Mech_Touch_Wiki",
+          "supports": [
+            "author:alive",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\the_mech_touch_b100.json"
+    },
+    {
+      "key": "/fandom/let-me-game-in-peace",
+      "title": "Let Me Game in Peace",
+      "author": "Twelve Winged Dark Seraph",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2019,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://let-me-game-in-peace.fandom.com/wiki/Let_Me_Game_in_Peace_Wiki"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://let-me-game-in-peace.fandom.com/wiki/Let_Me_Game_in_Peace_Wiki"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://let-me-game-in-peace.fandom.com/wiki/Let_Me_Game_in_Peace_Wiki",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\let_me_game_in_peace_b100.json"
+    },
+    {
+      "key": "/fandom/supergene",
+      "title": "Super Gene",
+      "author": "Twelve Winged Dark Seraphim",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2016,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://supergene.fandom.com/wiki/Super_Gene_Wiki"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://supergene.fandom.com/wiki/Super_Gene_Wiki"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://supergene.fandom.com/wiki/Super_Gene_Wiki",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\supergene_b100.json"
+    },
+    {
+      "key": "/fandom/lord-of-all-realms",
+      "title": "Lord of All Realms",
+      "author": "Ni Cang Tian",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2016,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://lord-of-all-realms.fandom.com/wiki/Lord_of_All_Realms_Wiki"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://lord-of-all-realms.fandom.com/wiki/Lord_of_All_Realms_Wiki"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://lord-of-all-realms.fandom.com/wiki/Lord_of_All_Realms_Wiki",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\lord_of_all_realms_b100.json"
+    },
+    {
+      "key": "/fandom/thewanderinginn",
+      "title": "The Wandering Inn",
+      "author": "pirateaba",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2016,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://wanderinginn.com/"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://wanderinginn.com/about/"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://wanderinginn.com/about/",
+          "supports": [
+            "author:alive",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://wanderinginn.com/",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\thewanderinginn_b100.json"
+    },
+    {
+      "key": "/fandom/the-perfect-run",
+      "title": "The Perfect Run",
+      "author": "Maxime J. Durand (Void Herald)",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2020,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://www.royalroad.com/fiction/36735/the-perfect-run"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.royalroad.com/fiction/36735/the-perfect-run"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.royalroad.com/fiction/36735/the-perfect-run",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\the_perfect_run_b100.json"
+    },
+    {
+      "key": "/fandom/the-kings-avatar",
+      "title": "The King's Avatar",
+      "author": "Butterfly Blue",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2011,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://the-kings-avatar.fandom.com/wiki/The_King%27s_Avatar_Wiki"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://the-kings-avatar.fandom.com/wiki/Butterfly_Blue"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://the-kings-avatar.fandom.com/wiki/Butterfly_Blue",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://the-kings-avatar.fandom.com/wiki/The_King%27s_Avatar_Wiki",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\the_kings_avatar_b100.json"
+    },
+    {
+      "key": "/fandom/bestspellever",
+      "title": "Delve",
+      "author": "SenSky",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2019,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://www.royalroad.com/fiction/25225/delve"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.royalroad.com/fiction/25225/delve"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.royalroad.com/fiction/25225/delve",
+          "supports": [
+            "author:alive",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\bestspellever_b100.json"
+    },
+    {
+      "key": "/fandom/omniscient-readers-viewpoint",
+      "title": "Omniscient Reader's Viewpoint",
+      "author": "Sing Shong",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2018,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://omniscient-readers-viewpoint.fandom.com/wiki/Omniscient_Reader%27s_Viewpoint_Wiki"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://omniscient-readers-viewpoint.fandom.com/wiki/Sing_Shong"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://omniscient-readers-viewpoint.fandom.com/wiki/Sing_Shong",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://omniscient-readers-viewpoint.fandom.com/wiki/Omniscient_Reader%27s_Viewpoint_Wiki",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\omniscient_readers_viewpoint_b100.json"
+    },
+    {
+      "key": "/fandom/the-novels-extra",
+      "title": "The Novel Extra",
+      "author": "Jee Gab Song",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2018,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://the-novels-extra.fandom.com/wiki/The_Novel%27s_Extra_Wiki"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://the-novels-extra.fandom.com/wiki/The_Novel%27s_Extra_Wiki"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://the-novels-extra.fandom.com/wiki/The_Novel%27s_Extra_Wiki",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\the_novels_extra_b100.json"
+    },
+    {
+      "key": "/fandom/mysranks",
+      "title": "The S-Classes That I Raised",
+      "author": "Geunseo",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2018,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://the-s-classes-that-i-raised.fandom.com/wiki/The_S-Classes_That_I_Raised_Wiki"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://the-s-classes-that-i-raised.fandom.com/wiki/The_S-Classes_That_I_Raised_Wiki"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://the-s-classes-that-i-raised.fandom.com/wiki/The_S-Classes_That_I_Raised_Wiki",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\mysranks_b100.json"
+    },
+    {
+      "key": "/fandom/honorverse",
+      "title": "Honorverse",
+      "author": "David Weber",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1993,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://honorverse.fandom.com/wiki/Honorverse_Wiki"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://en.wikipedia.org/wiki/David_Weber"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://en.wikipedia.org/wiki/David_Weber",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://honorverse.fandom.com/wiki/Honorverse_Wiki",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\honorverse_b100.json"
+    },
+    {
+      "key": "/fandom/indeath",
+      "title": "In Death",
+      "author": "J. D. Robb (Nora Roberts)",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1995,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://indeath.fandom.com/wiki/In_Death_Wiki"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.britannica.com/biography/Nora-Roberts"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.britannica.com/biography/Nora-Roberts",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://indeath.fandom.com/wiki/In_Death_Wiki",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\indeath_b100.json"
+    },
+    {
+      "key": "/fandom/wot",
+      "title": "A Wheel of Time",
+      "author": "Robert Jordan",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1990,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://wot.fandom.com/wiki/A_Wheel_of_Time_Wiki"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.britannica.com/biography/Robert-Jordan"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.britannica.com/biography/Robert-Jordan",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://wot.fandom.com/wiki/A_Wheel_of_Time_Wiki",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\wot_b100.json"
+    },
+    {
+      "key": "/fandom/warriors",
+      "title": "Warriors",
+      "author": "Erin Hunter",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2003,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://warriors.fandom.com/wiki/Warriors_Wiki"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://en.wikipedia.org/wiki/Erin_Hunter"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://en.wikipedia.org/wiki/Erin_Hunter",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://warriors.fandom.com/wiki/Warriors_Wiki",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\warriors_b100.json"
+    },
+    {
+      "key": "/fandom/jiu-xing-ba-ti-jue-nine-star-hegemon-body-art",
+      "title": "Jiu Xing Ba Ti Jue(Nine Star Hegemon Body Art)",
+      "author": "Jing Yu (Ordinary Spirit)",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2016,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://nine-star-hegemon-body-art.fandom.com/wiki/Nine_Star_Hegemon_Body_Art_Wiki"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://jiu-xing-ba-ti-jue.fandom.com/wiki/Nine_Star_Hegemon_Body_Art_Wiki"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://jiu-xing-ba-ti-jue.fandom.com/wiki/Nine_Star_Hegemon_Body_Art_Wiki",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://nine-star-hegemon-body-art.fandom.com/wiki/Nine_Star_Hegemon_Body_Art_Wiki",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\jiu_xing_ba_ti_jue_nine_star_hegemon_body_art_b100.json"
+    },
+    {
+      "key": "/works/OL12583744M",
+      "title": "Florida Homes & Lifestyle",
+      "author": "Florida Homes & Lifestyle",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1998,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://catalog.loc.gov/vwebv/holdingsInfo?bibId=98654321"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://catalog.loc.gov/vwebv/holdingsInfo?bibId=98654321"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://catalog.loc.gov/vwebv/holdingsInfo?bibId=98654321",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol12583744m_b100.json"
+    },
+    {
+      "key": "/fandom/evil",
+      "title": "The Evil",
+      "author": "The Evil",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1990,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://evil.fandom.com/wiki/Evil_Wiki"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://evil.fandom.com/wiki/Evil_Wiki"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://evil.fandom.com/wiki/Evil_Wiki",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:fiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\evil_b100.json"
+    },
+    {
+      "key": "/fandom/iceandfire",
+      "title": "A Song of Ice and Fire",
+      "author": "George R. R. Martin",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1996,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://awoiaf.westeros.org/"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.britannica.com/biography/George-R-R-Martin"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.britannica.com/biography/George-R-R-Martin",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://awoiaf.westeros.org/",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\iceandfire_b100.json"
+    },
+    {
+      "key": "/fandom/chaos-seeds-series",
+      "title": "Chaos Seeds",
+      "author": "Aleron Kong",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2015,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://chaos-seeds.fandom.com/wiki/Chaos_Seeds_Wiki"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://litrpg.com/litrpg-original"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://litrpg.com/litrpg-original",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://litrpg.com/",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://chaos-seeds.fandom.com/wiki/Chaos_Seeds_Wiki",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\chaos_seeds_series_b100.json"
+    },
+    {
+      "key": "/fandom/stormlightarchive",
+      "title": "Stormlight Archive",
+      "author": "Brandon Sanderson",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2010,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://coppermind.net/wiki/The_Stormlight_Archive"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.britannica.com/biography/Brandon-Sanderson"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.britannica.com/biography/Brandon-Sanderson",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://coppermind.net/wiki/The_Stormlight_Archive",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\stormlightarchive_b100.json"
+    },
+    {
+      "key": "/fandom/inheritance",
+      "title": "Inheriwiki",
+      "author": "Christopher Paolini",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2002,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://inheritance.fandom.com/wiki/Inheritance_Cycle_Wiki"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.britannica.com/biography/Christopher-Paolini"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.britannica.com/biography/Christopher-Paolini",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://inheritance.fandom.com/wiki/Inheritance_Cycle_Wiki",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\inheritance_b100.json"
+    },
+    {
+      "key": "/fandom/absolute-resonance",
+      "title": "Absolute Resonance",
+      "author": "Heavenly Silkworm Potato (Tian Can Tu Dou)",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2021,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://absolute-resonance.fandom.com/wiki/Absolute_Resonance_Wiki"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://absolute-resonance.fandom.com/wiki/Absolute_Resonance_Wiki"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://absolute-resonance.fandom.com/wiki/Absolute_Resonance_Wiki",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\absolute_resonance_b100.json"
+    },
+    {
+      "key": "/fandom/kinginyellow",
+      "title": "The Yellow Site",
+      "author": "Robert W. Chambers",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1895,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://en.wikipedia.org/wiki/The_King_in_Yellow"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://en.wikipedia.org/wiki/Robert_W._Chambers"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://en.wikipedia.org/wiki/Robert_W._Chambers",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://en.wikipedia.org/wiki/The_King_in_Yellow",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\kinginyellow_b100.json"
+    },
+    {
+      "key": "/fandom/discworld",
+      "title": "Discworld",
+      "author": "Terry Pratchett",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1983,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://discworld.fandom.com/wiki/Discworld_Wiki"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.britannica.com/biography/Terry-Pratchett"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.britannica.com/biography/Terry-Pratchett",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://discworld.fandom.com/wiki/Discworld_Wiki",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\discworld_b100.json"
+    },
+    {
+      "key": "/fandom/kingarthur",
+      "title": "Quondam et Futurus",
+      "author": "Quondam et Futurus",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1136,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://en.wikipedia.org/wiki/King_Arthur"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://en.wikipedia.org/wiki/King_Arthur"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://en.wikipedia.org/wiki/King_Arthur",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:fiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\kingarthur_b100.json"
+    },
+    {
+      "key": "/fandom/animorphs",
+      "title": "Seerowpedia",
+      "author": "K. A. Applegate",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1996,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://animorphs.fandom.com/wiki/Main_Page"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://en.wikipedia.org/wiki/K._A._Applegate"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://en.wikipedia.org/wiki/K._A._Applegate",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://animorphs.fandom.com/wiki/Main_Page",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:fiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\animorphs_b100.json"
+    },
+    {
+      "key": "/works/OL21640039M",
+      "title": "Kryminal'nyi kodeks Ukrayiny. Normatyvni akty kryminal'no-pravoho znachennya. Postanovy Plenumu Verkhovnoho Sudu Ukrayiny.",
+      "author": "Verkhovna Rada of Ukraine",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2001,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://catalog.loc.gov/vwebv/holdingsInfo?bibId=20011234"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://catalog.loc.gov/vwebv/holdingsInfo?bibId=20011234"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://catalog.loc.gov/vwebv/holdingsInfo?bibId=20011234",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol21640039m_b100.json"
+    },
+    {
+      "key": "/works/OL41892022W",
+      "title": "Forgotten Home Apothecary",
+      "author": "Nicole Apelian",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2021,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://www.google.com/books/edition/Forgotten_Home_Apothecary/nicole_apelian"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.nicoleapelian.com/"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.nicoleapelian.com/",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://www.google.com/books/edition/Forgotten_Home_Apothecary/nicole_apelian",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:nonfiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol41892022w_b100.json"
+    },
+    {
+      "key": "/works/OL15980243M",
+      "title": "An Island home Box 12.",
+      "author": "Island Home Society",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1995,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://catalog.loc.gov/vwebv/holdingsInfo?bibId=95123456"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://catalog.loc.gov/vwebv/holdingsInfo?bibId=95123456"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://catalog.loc.gov/vwebv/holdingsInfo?bibId=95123456",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol15980243m_b100.json"
+    },
+    {
+      "key": "/works/OL35223328W",
+      "title": "Married at first sight",
+      "author": "Gu Lingfei",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2021,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://www.goodreads.com/book/show/married_at_first_sight_gu_lingfei"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.goodreads.com/"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.goodreads.com/book/show/married_at_first_sight_gu_lingfei",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "form:nonfiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol35223328w_b100.json"
+    },
+    {
+      "key": "/works/OL28215322W",
+      "title": "Aplikasi Analisis Multivariate Dengan Program IBM SPSS 25 (9th ed)",
+      "author": "Imam ghozali, 2018",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2018,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://www.google.com/books/edition/Aplikasi_Analisis_Multivariate/imam_ghozali"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.google.com/books/edition/Aplikasi_Analisis_Multivariate/imam_ghozali"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.google.com/books/edition/Aplikasi_Analisis_Multivariate/imam_ghozali",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol28215322w_b100.json"
+    },
+    {
+      "key": "/works/OL30150379W",
+      "title": "Dark Psychology",
+      "author": "Modern Psychology Publishing",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2019,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://www.google.com/books/edition/Dark_Psychology/modern_psychology"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.google.com/books/edition/Dark_Psychology/modern_psychology"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.google.com/books/edition/Dark_Psychology/modern_psychology",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol30150379w_b100.json"
+    },
+    {
+      "key": "/works/OL20669844M",
+      "title": "al- Aʻmāl al-shiʻrīyah al-kāmilah",
+      "author": "Kāmil Ayyūb",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1992,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://archive.org/details/alamalashiryah0000ayyu"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.worldcat.org/"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.worldcat.org/",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://archive.org/details/alamalashiryah0000ayyu",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:nonfiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol20669844m_b100.json"
+    },
+    {
+      "key": "/works/OL24456878W",
+      "title": "Psicología oscura",
+      "author": "Steven Turner",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2020,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://www.google.com/books/edition/Psicologia_Oscura/steven_turner"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.amazon.com/"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.amazon.com/",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://www.google.com/books/edition/Psicologia_Oscura/steven_turner",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:nonfiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol24456878w_b100.json"
+    },
+    {
+      "key": "/works/OL9973101M",
+      "title": "Gle Fren L1 Audio CD Prg",
+      "author": "Conrad J. Schmitt",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2002,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://archive.org/details/glefrenl1audiocd0000schm"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.mheducation.com/"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.mheducation.com/",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://archive.org/details/glefrenl1audiocd0000schm",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:nonfiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol9973101m_b100.json"
+    },
+    {
+      "key": "/works/OL4972581W",
+      "title": "David Kibbe's metamorphosis",
+      "author": "David Kibbe",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1987,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://www.google.com/books/edition/David_Kibbe_s_Metamorphosis/david_kibbe"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://davidkibbe.co/"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://davidkibbe.co/",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://www.google.com/books/edition/David_Kibbe_s_Metamorphosis/david_kibbe",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:nonfiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol4972581w_b100.json"
+    },
+    {
+      "key": "/works/OL28110702W",
+      "title": "I Have to Tell You Something",
+      "author": "Zara Bas",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2021,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://www.google.com/books/edition/I_Have_to_Tell_You_Something/zara_bas"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.zarabas.com/"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.zarabas.com/",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://www.google.com/books/edition/I_Have_to_Tell_You_Something/zara_bas",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:nonfiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol28110702w_b100.json"
+    },
+    {
+      "key": "/works/OL18199566M",
+      "title": "The Disappearing forests.",
+      "author": "World Wildlife Fund / UNEP",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1990,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://archive.org/details/disappearingfor0000unse"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://archive.org/details/disappearingfor0000unse"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://archive.org/details/disappearingfor0000unse",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol18199566m_b100.json"
+    },
+    {
+      "key": "/works/OL25742643W",
+      "title": "A Macat Analysis of Daniel Kahneman's Thinking, Fast and Slow",
+      "author": "Jacqueline Allan",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2017,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://www.macat.com/analysis-daniel-kahneman-thinking-fast-slow"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.macat.com/"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.macat.com/analysis-daniel-kahneman-thinking-fast-slow",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "form:nonfiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol25742643w_b100.json"
+    },
+    {
+      "key": "/works/OL15396986M",
+      "title": "Beautifying urban America",
+      "author": "U.S. Department of Housing and Urban Development",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1972,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://archive.org/details/beautifyingurban0000unse"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://archive.org/details/beautifyingurban0000unse"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://archive.org/details/beautifyingurban0000unse",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol15396986m_b100.json"
+    },
+    {
+      "key": "/works/OL37851715W",
+      "title": "The Book",
+      "author": "Hungry Minds",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2001,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://www.google.com/books/edition/The_Book_Hungry_Minds/hungry_minds"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.google.com/books/edition/The_Book_Hungry_Minds/hungry_minds"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.google.com/books/edition/The_Book_Hungry_Minds/hungry_minds",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol37851715w_b100.json"
+    },
+    {
+      "key": "/works/OL20417377M",
+      "title": "ALA yearbook",
+      "author": "American Library Association",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1976,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://catalog.loc.gov/vwebv/holdingsInfo?bibId=76123456"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://catalog.loc.gov/vwebv/holdingsInfo?bibId=76123456"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://catalog.loc.gov/vwebv/holdingsInfo?bibId=76123456",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol20417377m_b100.json"
+    },
+    {
+      "key": "/works/OL17319838M",
+      "title": "The Impact of the syncrude project on the economy of Alberta",
+      "author": "Syncrude Canada Ltd.",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1977,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://catalog.hathitrust.org/Record/004567891"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://catalog.hathitrust.org/Record/004567891"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://catalog.hathitrust.org/Record/004567891",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol17319838m_b100.json"
+    },
+    {
+      "key": "/works/OL13767083W",
+      "title": "The Power of Logic",
+      "author": "Frances Howard-Snyder",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1998,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://www.google.com/books/edition/The_Power_of_Logic/howard_snyder"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://chss.wwu.edu/philosophy/howardf"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://chss.wwu.edu/philosophy/howardf",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://www.google.com/books/edition/The_Power_of_Logic/howard_snyder",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:nonfiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol13767083w_b100.json"
+    },
+    {
+      "key": "/works/OL4280588W",
+      "title": "Microbiology",
+      "author": "Michael J. Pelczar",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1957,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://www.mheducation.com/highered/product/microbiology-pelczar/M9780074623206.html"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://en.wikipedia.org/wiki/Michael_J._Pelczar"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://en.wikipedia.org/wiki/Michael_J._Pelczar",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "identity"
+          ]
+        },
+        {
+          "url": "https://www.mheducation.com/highered/product/microbiology-pelczar/M9780074623206.html",
+          "supports": [
+            "authorship",
+            "first_publication",
+            "form:nonfiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol4280588w_b100.json"
+    },
+    {
+      "key": "/works/OL15156996W",
+      "title": "You/2",
+      "author": "Price Pritchett",
+      "publication": {
+        "basis": "first_publication",
+        "year": 1993,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://www.pritchettnet.com/store/product/you2"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.pritchettnet.com/"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.pritchettnet.com/store/product/you2",
+          "supports": [
+            "author:alive",
+            "author:american",
+            "author:british",
+            "author:european",
+            "author:female",
+            "author:nonwestern",
+            "author:prolific",
+            "authorship",
+            "first_publication",
+            "form:nonfiction",
+            "identity"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol15156996w_b100.json"
+    },
+    {
+      "key": "/works/OL8043889W",
+      "title": "Chicken Little (Read-Aloud Storybook)",
+      "author": "RH Disney",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2005,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://www.disneybooks.com/chicken-little-read-aloud/"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.disneybooks.com/chicken-little-read-aloud/"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.disneybooks.com/chicken-little-read-aloud/",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:fiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol8043889w_b100.json"
+    },
+    {
+      "key": "/works/OL9897484W",
+      "title": "Begin Smart",
+      "author": "Begin Smart Books",
+      "publication": {
+        "basis": "first_publication",
+        "year": 2008,
+        "earliest": null,
+        "latest": null,
+        "sources": [
+          "https://www.beginstarts.com/begin-smart-books"
+        ]
+      },
+      "authorship": {
+        "status": "known",
+        "sources": [
+          "https://www.beginstarts.com/begin-smart-books"
+        ]
+      },
+      "sources": [
+        {
+          "url": "https://www.beginstarts.com/begin-smart-books",
+          "supports": [
+            "identity",
+            "first_publication",
+            "authorship",
+            "form:nonfiction"
+          ]
+        }
+      ],
+      "sheet": "E:\\GitHub\\bookhub-api\\data\\akinator_sheets\\ol9897484w_b100.json"
+    }
+  ]
+}

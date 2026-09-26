@@ -1,0 +1,104 @@
+{
+  "title": "The Power of Logic",
+  "author": "Frances Howard-Snyder",
+  "key": "/works/OL13767083W",
+  "publication": {
+    "basis": "first_publication",
+    "year": 1998,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://www.google.com/books/edition/The_Power_of_Logic/howard_snyder"
+    ]
+  },
+  "publication_answers": {},
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://chss.wwu.edu/philosophy/howardf"
+    ]
+  },
+  "sources": [
+    {
+      "url": "https://chss.wwu.edu/philosophy/howardf",
+      "supports": [
+        "author:alive",
+        "author:american",
+        "author:british",
+        "author:european",
+        "author:female",
+        "author:nonwestern",
+        "author:prolific",
+        "authorship",
+        "first_publication",
+        "identity"
+      ]
+    },
+    {
+      "url": "https://www.google.com/books/edition/The_Power_of_Logic/howard_snyder",
+      "supports": [
+        "authorship",
+        "first_publication",
+        "form:nonfiction",
+        "identity"
+      ]
+    }
+  ],
+  "source": "independent web research",
+  "saved": true,
+  "questionCount": 52,
+  "answers": {
+    "fact:anonymous": "no",
+    "fact:firstpub_lt_1900": "no",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "yes",
+    "fact:firstpub_ge_2001": "no",
+    "fact:firstpub_ge_2016": "no",
+    "form:fiction": "no",
+    "form:nonfiction": "yes",
+    "form:webnovel": "no",
+    "form:series": "yes",
+    "genre:fantasy": "no",
+    "genre:history": "no",
+    "genre:psychology": "no",
+    "genre:science": "no",
+    "author:alive": "yes",
+    "author:american": "yes",
+    "author:british": "no",
+    "author:female": "yes",
+    "author:nonwestern": "no",
+    "place:usa": "no",
+    "t:realevents": "yes",
+    "t:powersystem": "no",
+    "audience:children": "unknown",
+    "audience:ya": "unknown",
+    "author:european": "no",
+    "author:prolific": "no",
+    "book:film": "unknown",
+    "fact:namedchars": "unknown",
+    "form:classic": "unknown",
+    "form:firstperson": "unknown",
+    "form:memoir": "unknown",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:romance": "unknown",
+    "genre:scifi": "unknown",
+    "place:britain": "unknown",
+    "place:europe_other": "unknown",
+    "setting:school": "unknown",
+    "setting:victorian": "unknown",
+    "t:child": "unknown",
+    "t:detective": "unknown",
+    "t:family": "unknown",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown"
+  }
+}

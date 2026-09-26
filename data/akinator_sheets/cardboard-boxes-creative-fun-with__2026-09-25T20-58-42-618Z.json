@@ -1,0 +1,88 @@
+{
+  "title": "Cardboard Boxes (Creative Fun with)",
+  "author": "Nikki Connor",
+  "key": "/works/OL9305390M",
+  "publication": {
+    "basis": "first_publication",
+    "year": 1997,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://obnb.uk/p10101440-creative-fun-with-cardboard-boxes"
+    ]
+  },
+  "publication_answers": {},
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://obnb.uk/p10101440-creative-fun-with-cardboard-boxes"
+    ]
+  },
+  "sources": [
+    {
+      "url": "https://obnb.uk/p10101440-creative-fun-with-cardboard-boxes",
+      "supports": [
+        "identity",
+        "authorship",
+        "first_publication"
+      ]
+    }
+  ],
+  "source": "independent web research",
+  "saved": "2026-09-25T20:58:42.619Z",
+  "questionCount": 52,
+  "answers": {
+    "audience:children": "unknown",
+    "audience:ya": "unknown",
+    "author:alive": "unknown",
+    "author:american": "unknown",
+    "author:british": "unknown",
+    "author:european": "unknown",
+    "author:female": "unknown",
+    "author:nonwestern": "unknown",
+    "author:prolific": "unknown",
+    "book:film": "unknown",
+    "fact:namedchars": "unknown",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "yes",
+    "fact:firstpub_ge_2001": "no",
+    "fact:firstpub_ge_2016": "no",
+    "fact:firstpub_lt_1900": "no",
+    "form:classic": "unknown",
+    "form:fiction": "no",
+    "form:nonfiction": "yes",
+    "form:series": "unknown",
+    "form:webnovel": "unknown",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:fantasy": "unknown",
+    "genre:history": "unknown",
+    "genre:psychology": "unknown",
+    "genre:romance": "unknown",
+    "genre:science": "unknown",
+    "genre:scifi": "unknown",
+    "place:britain": "unknown",
+    "place:europe_other": "unknown",
+    "place:usa": "unknown",
+    "setting:school": "unknown",
+    "t:child": "unknown",
+    "t:detective": "unknown",
+    "t:family": "unknown",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:powersystem": "unknown",
+    "t:realevents": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown",
+    "fact:anonymous": "no",
+    "setting:victorian": "unknown",
+    "form:firstperson": "unknown",
+    "form:memoir": "unknown"
+  }
+}

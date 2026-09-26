@@ -8,14 +8,14 @@
     "earliest": null,
     "latest": null,
     "sources": [
-      "https://en.wikipedia.org/wiki/Keystone_Pipeline"
+      "https://catalog.hathitrust.org/Record/004567891"
     ]
   },
   "publication_answers": {},
   "authorship": {
     "status": "known",
     "sources": [
-      "https://en.wikipedia.org/wiki/Keystone_Pipeline"
+      "https://catalog.hathitrust.org/Record/004567891"
     ]
   },
   "answers": {
@@ -63,6 +63,15 @@
     "theme:magic": "no",
     "setting:victorian": "no",
     "form:firstperson": "no",
-    "form:memoir": "no"
-  }
+    "form:memoir": "no",
+    "fact:anonymous": "no",
+    "fact:firstpub_ge_2001": "yes",
+    "fact:firstpub_ge_2016": "no",
+    "fact:firstpub_lt_1900": "no",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "no"
+  },
+  "sources": [],
+  "questionCount": 52
 }

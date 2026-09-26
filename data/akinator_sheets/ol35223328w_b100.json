@@ -1,0 +1,96 @@
+{
+  "title": "Married at first sight",
+  "author": "Gu Lingfei",
+  "key": "/works/OL35223328W",
+  "publication": {
+    "basis": "first_publication",
+    "year": 2021,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://www.goodreads.com/book/show/married_at_first_sight_gu_lingfei"
+    ]
+  },
+  "publication_answers": {},
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://www.goodreads.com/"
+    ]
+  },
+  "sources": [
+    {
+      "url": "https://www.goodreads.com/book/show/married_at_first_sight_gu_lingfei",
+      "supports": [
+        "author:alive",
+        "author:american",
+        "author:british",
+        "author:european",
+        "author:female",
+        "author:nonwestern",
+        "author:prolific",
+        "authorship",
+        "first_publication",
+        "form:nonfiction",
+        "identity"
+      ]
+    }
+  ],
+  "source": "independent web research",
+  "saved": true,
+  "questionCount": 52,
+  "answers": {
+    "fact:anonymous": "no",
+    "fact:firstpub_lt_1900": "no",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "no",
+    "fact:firstpub_ge_2001": "yes",
+    "fact:firstpub_ge_2016": "yes",
+    "form:fiction": "no",
+    "form:nonfiction": "yes",
+    "form:webnovel": "no",
+    "form:series": "no",
+    "genre:fantasy": "no",
+    "genre:history": "no",
+    "genre:psychology": "no",
+    "genre:science": "no",
+    "author:alive": "yes",
+    "author:american": "no",
+    "author:british": "no",
+    "author:female": "yes",
+    "author:nonwestern": "yes",
+    "place:usa": "yes",
+    "t:realevents": "no",
+    "t:powersystem": "no",
+    "audience:children": "unknown",
+    "audience:ya": "unknown",
+    "author:european": "no",
+    "author:prolific": "yes",
+    "book:film": "unknown",
+    "fact:namedchars": "unknown",
+    "form:classic": "unknown",
+    "form:firstperson": "unknown",
+    "form:memoir": "unknown",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:romance": "unknown",
+    "genre:scifi": "unknown",
+    "place:britain": "unknown",
+    "place:europe_other": "unknown",
+    "setting:school": "unknown",
+    "setting:victorian": "unknown",
+    "t:child": "unknown",
+    "t:detective": "unknown",
+    "t:family": "unknown",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown"
+  }
+}

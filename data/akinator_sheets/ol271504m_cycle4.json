@@ -13,7 +13,7 @@
   },
   "publication_answers": {},
   "authorship": {
-    "status": "anonymous",
+    "status": "known",
     "sources": [
       "https://archive.org/details/commemorativebio00jhbe"
     ]
@@ -82,7 +82,7 @@
     "theme:family": "unknown",
     "theme:friendship": "unknown",
     "theme:magic": "unknown",
-    "fact:anonymous": "yes",
+    "fact:anonymous": "no",
     "setting:victorian": "unknown",
     "form:firstperson": "unknown",
     "form:memoir": "unknown"

@@ -1,0 +1,95 @@
+{
+  "title": "Second Life Ranker",
+  "author": "Nong Nong",
+  "key": "/fandom/second-life-ranker",
+  "publication": {
+    "basis": "first_publication",
+    "year": 2017,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://second-life-ranker.fandom.com/wiki/Second_Life_Ranker_Wiki"
+    ]
+  },
+  "publication_answers": {},
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://second-life-ranker.fandom.com/wiki/Second_Life_Ranker_Wiki"
+    ]
+  },
+  "sources": [
+    {
+      "url": "https://second-life-ranker.fandom.com/wiki/Second_Life_Ranker_Wiki",
+      "supports": [
+        "author:alive",
+        "author:american",
+        "author:british",
+        "author:european",
+        "author:nonwestern",
+        "author:prolific",
+        "authorship",
+        "first_publication",
+        "form:fiction",
+        "identity"
+      ]
+    }
+  ],
+  "source": "independent web research",
+  "saved": true,
+  "questionCount": 52,
+  "answers": {
+    "fact:anonymous": "no",
+    "fact:firstpub_lt_1900": "no",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "no",
+    "fact:firstpub_ge_2001": "yes",
+    "fact:firstpub_ge_2016": "yes",
+    "form:fiction": "yes",
+    "form:nonfiction": "no",
+    "form:webnovel": "yes",
+    "form:series": "yes",
+    "genre:fantasy": "yes",
+    "genre:history": "no",
+    "genre:psychology": "yes",
+    "genre:science": "no",
+    "author:alive": "yes",
+    "author:american": "no",
+    "author:british": "no",
+    "author:female": "unknown",
+    "author:nonwestern": "yes",
+    "place:usa": "no",
+    "t:realevents": "no",
+    "t:powersystem": "yes",
+    "audience:children": "unknown",
+    "audience:ya": "unknown",
+    "author:european": "no",
+    "author:prolific": "yes",
+    "book:film": "unknown",
+    "fact:namedchars": "unknown",
+    "form:classic": "unknown",
+    "form:firstperson": "unknown",
+    "form:memoir": "unknown",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:romance": "unknown",
+    "genre:scifi": "unknown",
+    "place:britain": "unknown",
+    "place:europe_other": "unknown",
+    "setting:school": "unknown",
+    "setting:victorian": "unknown",
+    "t:child": "unknown",
+    "t:detective": "unknown",
+    "t:family": "unknown",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown"
+  }
+}

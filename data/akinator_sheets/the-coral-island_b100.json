@@ -1,6 +1,6 @@
 {
   "title": "The Coral Island",
-  "author": "Robert Michael Ballantyne, Ralph Crane, George Dalziel, Edward Dalziel",
+  "author": "R. M. Ballantyne",
   "key": "/site/the-coral-island",
   "publication": {
     "basis": "first_publication",
@@ -15,21 +15,36 @@
   "authorship": {
     "status": "known",
     "sources": [
-      "https://www.britannica.com/topic/The-Coral-Island"
+      "https://www.britannica.com/biography/R-M-Ballantyne"
     ]
   },
   "sources": [
     {
+      "url": "https://www.britannica.com/biography/R-M-Ballantyne",
+      "supports": [
+        "author:alive",
+        "author:american",
+        "author:british",
+        "author:european",
+        "author:female",
+        "author:nonwestern",
+        "author:prolific",
+        "authorship",
+        "first_publication",
+        "identity"
+      ]
+    },
+    {
       "url": "https://www.britannica.com/topic/The-Coral-Island",
       "supports": [
-        "identity",
+        "authorship",
         "first_publication",
-        "authorship"
+        "identity"
       ]
     }
   ],
   "source": "independent web research",
-  "saved": "2026-09-26T06:49:33.539086Z",
+  "saved": true,
   "questionCount": 52,
   "answers": {
     "fact:firstpub_lt_1900": "yes",
@@ -41,12 +56,12 @@
     "audience:children": "yes",
     "audience:ya": "yes",
     "author:alive": "no",
-    "author:american": "unknown",
+    "author:american": "no",
     "author:british": "yes",
-    "author:european": "yes",
-    "author:female": "unknown",
-    "author:nonwestern": "unknown",
-    "author:prolific": "unknown",
+    "author:european": "no",
+    "author:female": "no",
+    "author:nonwestern": "no",
+    "author:prolific": "yes",
     "book:film": "unknown",
     "fact:namedchars": "unknown",
     "form:classic": "yes",

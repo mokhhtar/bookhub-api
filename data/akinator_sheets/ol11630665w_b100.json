@@ -15,21 +15,36 @@
   "authorship": {
     "status": "known",
     "sources": [
-      "https://www.pearson.com/en-us/subject-catalog/p/supply-chain-management-strategy-planning-and-operation/P200000003248"
+      "https://www.kellogg.northwestern.edu/"
     ]
   },
   "sources": [
     {
+      "url": "https://www.kellogg.northwestern.edu/",
+      "supports": [
+        "author:alive",
+        "author:american",
+        "author:british",
+        "author:european",
+        "author:female",
+        "author:nonwestern",
+        "author:prolific",
+        "authorship",
+        "first_publication",
+        "identity"
+      ]
+    },
+    {
       "url": "https://www.pearson.com/en-us/subject-catalog/p/supply-chain-management-strategy-planning-and-operation/P200000003248",
       "supports": [
-        "identity",
+        "authorship",
         "first_publication",
-        "authorship"
+        "identity"
       ]
     }
   ],
   "source": "independent web research",
-  "saved": "2026-09-26T06:49:33.539086Z",
+  "saved": true,
   "questionCount": 52,
   "answers": {
     "fact:firstpub_lt_1900": "no",
@@ -42,11 +57,11 @@
     "audience:ya": "unknown",
     "author:alive": "yes",
     "author:american": "yes",
-    "author:british": "unknown",
-    "author:european": "unknown",
-    "author:female": "unknown",
-    "author:nonwestern": "yes",
-    "author:prolific": "unknown",
+    "author:british": "no",
+    "author:european": "no",
+    "author:female": "no",
+    "author:nonwestern": "no",
+    "author:prolific": "no",
     "book:film": "unknown",
     "fact:namedchars": "unknown",
     "form:classic": "unknown",

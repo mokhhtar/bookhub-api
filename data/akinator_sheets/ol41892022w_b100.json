@@ -1,0 +1,104 @@
+{
+  "title": "Forgotten Home Apothecary",
+  "author": "Nicole Apelian",
+  "key": "/works/OL41892022W",
+  "publication": {
+    "basis": "first_publication",
+    "year": 2021,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://www.google.com/books/edition/Forgotten_Home_Apothecary/nicole_apelian"
+    ]
+  },
+  "publication_answers": {},
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://www.nicoleapelian.com/"
+    ]
+  },
+  "sources": [
+    {
+      "url": "https://www.nicoleapelian.com/",
+      "supports": [
+        "author:alive",
+        "author:american",
+        "author:british",
+        "author:european",
+        "author:female",
+        "author:nonwestern",
+        "author:prolific",
+        "authorship",
+        "first_publication",
+        "identity"
+      ]
+    },
+    {
+      "url": "https://www.google.com/books/edition/Forgotten_Home_Apothecary/nicole_apelian",
+      "supports": [
+        "authorship",
+        "first_publication",
+        "form:nonfiction",
+        "identity"
+      ]
+    }
+  ],
+  "source": "independent web research",
+  "saved": true,
+  "questionCount": 52,
+  "answers": {
+    "fact:anonymous": "no",
+    "fact:firstpub_lt_1900": "no",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "no",
+    "fact:firstpub_ge_2001": "yes",
+    "fact:firstpub_ge_2016": "yes",
+    "form:fiction": "no",
+    "form:nonfiction": "yes",
+    "form:webnovel": "no",
+    "form:series": "no",
+    "genre:fantasy": "no",
+    "genre:history": "yes",
+    "genre:psychology": "no",
+    "genre:science": "no",
+    "author:alive": "yes",
+    "author:american": "yes",
+    "author:british": "no",
+    "author:female": "yes",
+    "author:nonwestern": "no",
+    "place:usa": "yes",
+    "t:realevents": "no",
+    "t:powersystem": "no",
+    "audience:children": "unknown",
+    "audience:ya": "unknown",
+    "author:european": "no",
+    "author:prolific": "yes",
+    "book:film": "unknown",
+    "fact:namedchars": "unknown",
+    "form:classic": "unknown",
+    "form:firstperson": "unknown",
+    "form:memoir": "unknown",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:romance": "unknown",
+    "genre:scifi": "unknown",
+    "place:britain": "unknown",
+    "place:europe_other": "unknown",
+    "setting:school": "unknown",
+    "setting:victorian": "unknown",
+    "t:child": "unknown",
+    "t:detective": "unknown",
+    "t:family": "unknown",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown"
+  }
+}

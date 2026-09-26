@@ -1,0 +1,98 @@
+{
+  "title": "The New-England Primer",
+  "author": "Benjamin Harris",
+  "key": "/works/OL18147687M",
+  "publication": {
+    "basis": "first_publication",
+    "year": null,
+    "earliest": 1687,
+    "latest": 1690,
+    "sources": [
+      "https://en.wikipedia.org/wiki/The_New-England_Primer",
+      "https://www.britannica.com/topic/The-New-England-Primer"
+    ]
+  },
+  "publication_answers": {},
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://en.wikipedia.org/wiki/The_New-England_Primer",
+      "https://en.wikipedia.org/wiki/Benjamin_Harris_(publisher)"
+    ]
+  },
+  "sources": [
+    {
+      "url": "https://en.wikipedia.org/wiki/The_New-England_Primer",
+      "supports": [
+        "identity",
+        "first_publication",
+        "authorship",
+        "audience"
+      ]
+    },
+    {
+      "url": "https://www.britannica.com/topic/The-New-England-Primer",
+      "supports": [
+        "identity",
+        "first_publication"
+      ]
+    }
+  ],
+  "source": "gemini web (search)",
+  "saved": "2026-09-25T19:13:17.499Z",
+  "questionCount": 52,
+  "answers": {
+    "audience:children": "yes",
+    "audience:ya": "no",
+    "author:alive": "no",
+    "author:american": "no",
+    "author:british": "yes",
+    "author:european": "no",
+    "author:female": "no",
+    "author:nonwestern": "no",
+    "author:prolific": "no",
+    "book:film": "no",
+    "fact:namedchars": "no",
+    "fact:firstpub_lt_1950": "yes",
+    "fact:firstpub_lt_1970": "yes",
+    "fact:firstpub_lt_2000": "yes",
+    "fact:firstpub_ge_2001": "no",
+    "fact:firstpub_ge_2016": "no",
+    "fact:firstpub_lt_1900": "yes",
+    "form:classic": "yes",
+    "form:fiction": "no",
+    "form:nonfiction": "yes",
+    "form:series": "no",
+    "form:webnovel": "no",
+    "genre:adventure": "no",
+    "genre:drama": "no",
+    "genre:fantasy": "no",
+    "genre:history": "no",
+    "genre:psychology": "no",
+    "genre:romance": "no",
+    "genre:science": "no",
+    "genre:scifi": "no",
+    "place:britain": "no",
+    "place:europe_other": "no",
+    "place:usa": "yes",
+    "setting:school": "yes",
+    "t:child": "yes",
+    "t:detective": "no",
+    "t:family": "no",
+    "t:funny": "no",
+    "t:otherworld": "no",
+    "t:powersystem": "no",
+    "t:realevents": "no",
+    "t:romance": "no",
+    "t:survival": "no",
+    "t:travel": "no",
+    "t:war": "no",
+    "theme:family": "no",
+    "theme:friendship": "no",
+    "theme:magic": "no",
+    "fact:anonymous": "no",
+    "setting:victorian": "no",
+    "form:firstperson": "no",
+    "form:memoir": "no"
+  }
+}

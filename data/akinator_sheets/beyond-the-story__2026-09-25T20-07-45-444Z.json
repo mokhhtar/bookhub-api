@@ -1,0 +1,88 @@
+{
+  "title": "Beyond the Story",
+  "author": "BTS, Myeongseok Kang",
+  "key": "/works/OL35750752W",
+  "publication": {
+    "basis": "first_publication",
+    "year": 2023,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://us.macmillan.com/books/9781250326768/beyondthestory/"
+    ]
+  },
+  "publication_answers": {},
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://us.macmillan.com/books/9781250326768/beyondthestory/"
+    ]
+  },
+  "sources": [
+    {
+      "url": "https://us.macmillan.com/books/9781250326768/beyondthestory/",
+      "supports": [
+        "identity",
+        "authorship",
+        "first_publication"
+      ]
+    }
+  ],
+  "source": "independent web research",
+  "saved": "2026-09-25T20:07:45.444Z",
+  "questionCount": 52,
+  "answers": {
+    "audience:children": "unknown",
+    "audience:ya": "unknown",
+    "author:alive": "unknown",
+    "author:american": "unknown",
+    "author:british": "unknown",
+    "author:european": "unknown",
+    "author:female": "unknown",
+    "author:nonwestern": "yes",
+    "author:prolific": "unknown",
+    "book:film": "unknown",
+    "fact:namedchars": "yes",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "no",
+    "fact:firstpub_ge_2001": "yes",
+    "fact:firstpub_ge_2016": "yes",
+    "fact:firstpub_lt_1900": "no",
+    "form:classic": "unknown",
+    "form:fiction": "no",
+    "form:nonfiction": "yes",
+    "form:series": "unknown",
+    "form:webnovel": "unknown",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:fantasy": "unknown",
+    "genre:history": "unknown",
+    "genre:psychology": "unknown",
+    "genre:romance": "unknown",
+    "genre:science": "unknown",
+    "genre:scifi": "unknown",
+    "place:britain": "unknown",
+    "place:europe_other": "unknown",
+    "place:usa": "unknown",
+    "setting:school": "unknown",
+    "t:child": "unknown",
+    "t:detective": "unknown",
+    "t:family": "unknown",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:powersystem": "unknown",
+    "t:realevents": "yes",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown",
+    "fact:anonymous": "no",
+    "setting:victorian": "unknown",
+    "form:firstperson": "unknown",
+    "form:memoir": "no"
+  }
+}

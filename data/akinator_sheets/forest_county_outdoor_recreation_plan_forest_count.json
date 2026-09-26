@@ -7,7 +7,7 @@
   "authorship": {
     "status": "known",
     "sources": [
-      "https://en.wikipedia.org/wiki/Kettle_Moraine_State_Forest"
+      "https://catalog.hathitrust.org/Record/008412365"
     ]
   },
   "answers": {
@@ -55,6 +55,15 @@
     "theme:magic": "no",
     "setting:victorian": "no",
     "form:firstperson": "no",
-    "form:memoir": "no"
-  }
+    "form:memoir": "no",
+    "fact:anonymous": "no",
+    "fact:firstpub_ge_2001": "unknown",
+    "fact:firstpub_ge_2016": "unknown",
+    "fact:firstpub_lt_1900": "unknown",
+    "fact:firstpub_lt_1950": "unknown",
+    "fact:firstpub_lt_1970": "unknown",
+    "fact:firstpub_lt_2000": "unknown"
+  },
+  "sources": [],
+  "questionCount": 52
 }

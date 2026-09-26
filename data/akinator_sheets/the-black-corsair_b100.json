@@ -15,21 +15,36 @@
   "authorship": {
     "status": "known",
     "sources": [
-      "https://www.britannica.com/topic/The-Black-Corsair"
+      "https://en.wikipedia.org/wiki/Emilio_Salgari"
     ]
   },
   "sources": [
     {
+      "url": "https://en.wikipedia.org/wiki/Emilio_Salgari",
+      "supports": [
+        "author:alive",
+        "author:american",
+        "author:british",
+        "author:european",
+        "author:female",
+        "author:nonwestern",
+        "author:prolific",
+        "authorship",
+        "first_publication",
+        "identity"
+      ]
+    },
+    {
       "url": "https://www.britannica.com/topic/The-Black-Corsair",
       "supports": [
-        "identity",
+        "authorship",
         "first_publication",
-        "authorship"
+        "identity"
       ]
     }
   ],
   "source": "independent web research",
-  "saved": "2026-09-26T06:49:33.539086Z",
+  "saved": true,
   "questionCount": 52,
   "answers": {
     "fact:firstpub_lt_1900": "yes",
@@ -41,11 +56,11 @@
     "audience:children": "unknown",
     "audience:ya": "unknown",
     "author:alive": "no",
-    "author:american": "unknown",
-    "author:british": "unknown",
+    "author:american": "no",
+    "author:british": "no",
     "author:european": "yes",
-    "author:female": "unknown",
-    "author:nonwestern": "unknown",
+    "author:female": "no",
+    "author:nonwestern": "no",
     "author:prolific": "yes",
     "book:film": "yes",
     "fact:namedchars": "unknown",

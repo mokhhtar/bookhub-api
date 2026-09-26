@@ -1,0 +1,103 @@
+{
+  "title": "Omniscient Reader's Viewpoint",
+  "author": "Sing Shong",
+  "key": "/fandom/omniscient-readers-viewpoint",
+  "publication": {
+    "basis": "first_publication",
+    "year": 2018,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://omniscient-readers-viewpoint.fandom.com/wiki/Omniscient_Reader%27s_Viewpoint_Wiki"
+    ]
+  },
+  "publication_answers": {},
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://omniscient-readers-viewpoint.fandom.com/wiki/Sing_Shong"
+    ]
+  },
+  "sources": [
+    {
+      "url": "https://omniscient-readers-viewpoint.fandom.com/wiki/Sing_Shong",
+      "supports": [
+        "author:alive",
+        "author:american",
+        "author:british",
+        "author:european",
+        "author:nonwestern",
+        "author:prolific",
+        "authorship",
+        "first_publication",
+        "identity"
+      ]
+    },
+    {
+      "url": "https://omniscient-readers-viewpoint.fandom.com/wiki/Omniscient_Reader%27s_Viewpoint_Wiki",
+      "supports": [
+        "authorship",
+        "first_publication",
+        "form:fiction",
+        "identity"
+      ]
+    }
+  ],
+  "source": "independent web research",
+  "saved": true,
+  "questionCount": 52,
+  "answers": {
+    "fact:anonymous": "no",
+    "fact:firstpub_lt_1900": "no",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "no",
+    "fact:firstpub_ge_2001": "yes",
+    "fact:firstpub_ge_2016": "yes",
+    "form:fiction": "yes",
+    "form:nonfiction": "no",
+    "form:webnovel": "yes",
+    "form:series": "yes",
+    "genre:fantasy": "yes",
+    "genre:history": "yes",
+    "genre:psychology": "no",
+    "genre:science": "no",
+    "author:alive": "yes",
+    "author:american": "no",
+    "author:british": "no",
+    "author:female": "unknown",
+    "author:nonwestern": "yes",
+    "place:usa": "yes",
+    "t:realevents": "no",
+    "t:powersystem": "yes",
+    "audience:children": "unknown",
+    "audience:ya": "unknown",
+    "author:european": "no",
+    "author:prolific": "yes",
+    "book:film": "unknown",
+    "fact:namedchars": "unknown",
+    "form:classic": "unknown",
+    "form:firstperson": "unknown",
+    "form:memoir": "unknown",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:romance": "unknown",
+    "genre:scifi": "unknown",
+    "place:britain": "unknown",
+    "place:europe_other": "unknown",
+    "setting:school": "unknown",
+    "setting:victorian": "unknown",
+    "t:child": "unknown",
+    "t:detective": "unknown",
+    "t:family": "unknown",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown"
+  }
+}

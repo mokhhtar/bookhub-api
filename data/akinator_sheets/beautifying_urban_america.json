@@ -8,14 +8,14 @@
     "earliest": null,
     "latest": null,
     "sources": [
-      "https://en.wikipedia.org/wiki/Highway_Beautification_Act"
+      "https://archive.org/details/beautifyingurban0000unse"
     ]
   },
   "publication_answers": {},
   "authorship": {
     "status": "known",
     "sources": [
-      "https://en.wikipedia.org/wiki/Highway_Beautification_Act"
+      "https://archive.org/details/beautifyingurban0000unse"
     ]
   },
   "answers": {
@@ -63,6 +63,15 @@
     "theme:magic": "no",
     "setting:victorian": "no",
     "form:firstperson": "no",
-    "form:memoir": "no"
-  }
+    "form:memoir": "no",
+    "fact:anonymous": "no",
+    "fact:firstpub_ge_2001": "no",
+    "fact:firstpub_ge_2016": "no",
+    "fact:firstpub_lt_1900": "no",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "yes",
+    "fact:firstpub_lt_2000": "yes"
+  },
+  "sources": [],
+  "questionCount": 52
 }

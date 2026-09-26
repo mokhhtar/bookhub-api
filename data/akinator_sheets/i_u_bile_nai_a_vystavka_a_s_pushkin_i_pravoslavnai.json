@@ -5,9 +5,9 @@
   "publication": null,
   "publication_answers": {},
   "authorship": {
-    "status": "unresearched",
+    "status": "known",
     "sources": [
-      "https://en.wikipedia.org/wiki/Special:Search?search=I%C3%AF%C2%B8%C2%A0U%C3%AF%C2%B8%D8%8Cbile%D8%A4%C2%ADnai%C3%AF%C2%B8%C2%A0a%C3%AF%C2%B8%D8%8C%20vystavka%20%22A.S.%20Pushkin%20i%20pravoslavnai%C3%AF%C2%B8%C2%A0a%C3%AF%C2%B8%D8%8C%20Rossii%C3%AF%C2%B8%C2%A0a%C3%AF%C2%B8%D8%8C%22%201799-1999"
+      "https://archive.org/details/iubilenaiavystav0000push"
     ]
   },
   "answers": {
@@ -55,6 +55,15 @@
     "theme:magic": "no",
     "setting:victorian": "no",
     "form:firstperson": "no",
-    "form:memoir": "no"
-  }
+    "form:memoir": "no",
+    "fact:anonymous": "no",
+    "fact:firstpub_ge_2001": "unknown",
+    "fact:firstpub_ge_2016": "unknown",
+    "fact:firstpub_lt_1900": "unknown",
+    "fact:firstpub_lt_1950": "unknown",
+    "fact:firstpub_lt_1970": "unknown",
+    "fact:firstpub_lt_2000": "unknown"
+  },
+  "sources": [],
+  "questionCount": 52
 }

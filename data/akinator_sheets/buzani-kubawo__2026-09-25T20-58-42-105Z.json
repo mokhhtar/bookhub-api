@@ -1,0 +1,79 @@
+{
+  "title": "Buzani Kubawo",
+  "author": "W. K. Tamsanqa",
+  "key": "/works/OL9330611W",
+  "publication": null,
+  "publication_answers": {},
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://oxford.co.za/shop/school/literature/fet-phase/isixhosa-fet-phase/9780190419448-buzani-kubawo-isixhosa-drama-fet-epub3/"
+    ]
+  },
+  "sources": [
+    {
+      "url": "https://oxford.co.za/shop/school/literature/fet-phase/isixhosa-fet-phase/9780190419448-buzani-kubawo-isixhosa-drama-fet-epub3/",
+      "supports": [
+        "identity",
+        "authorship"
+      ]
+    }
+  ],
+  "source": "independent web research",
+  "saved": "2026-09-25T20:58:42.105Z",
+  "questionCount": 52,
+  "answers": {
+    "audience:children": "unknown",
+    "audience:ya": "unknown",
+    "author:alive": "unknown",
+    "author:american": "unknown",
+    "author:british": "unknown",
+    "author:european": "unknown",
+    "author:female": "unknown",
+    "author:nonwestern": "unknown",
+    "author:prolific": "unknown",
+    "book:film": "unknown",
+    "fact:namedchars": "unknown",
+    "fact:firstpub_lt_1950": "unknown",
+    "fact:firstpub_lt_1970": "unknown",
+    "fact:firstpub_lt_2000": "unknown",
+    "fact:firstpub_ge_2001": "unknown",
+    "fact:firstpub_ge_2016": "unknown",
+    "fact:firstpub_lt_1900": "unknown",
+    "form:classic": "unknown",
+    "form:fiction": "yes",
+    "form:nonfiction": "unknown",
+    "form:series": "unknown",
+    "form:webnovel": "unknown",
+    "genre:adventure": "unknown",
+    "genre:drama": "yes",
+    "genre:fantasy": "unknown",
+    "genre:history": "unknown",
+    "genre:psychology": "unknown",
+    "genre:romance": "unknown",
+    "genre:science": "unknown",
+    "genre:scifi": "unknown",
+    "place:britain": "unknown",
+    "place:europe_other": "unknown",
+    "place:usa": "unknown",
+    "setting:school": "unknown",
+    "t:child": "unknown",
+    "t:detective": "unknown",
+    "t:family": "yes",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:powersystem": "unknown",
+    "t:realevents": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown",
+    "fact:anonymous": "no",
+    "setting:victorian": "unknown",
+    "form:firstperson": "unknown",
+    "form:memoir": "unknown"
+  }
+}

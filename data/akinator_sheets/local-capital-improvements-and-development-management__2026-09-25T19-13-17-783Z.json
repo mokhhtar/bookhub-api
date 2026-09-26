@@ -1,0 +1,89 @@
+{
+  "title": "Local capital improvements and development management",
+  "author": "American Planning Association",
+  "key": "/works/OL17823218M",
+  "publication": {
+    "basis": "first_publication",
+    "year": 1980,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://www.govinfo.gov/content/pkg/GOVPUB-GP3-598b0669caf95204b09a7a7e34757e2a/pdf/GOVPUB-GP3-598b0669caf95204b09a7a7e34757e2a.pdf"
+    ]
+  },
+  "publication_answers": {},
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://www.govinfo.gov/content/pkg/GOVPUB-GP3-598b0669caf95204b09a7a7e34757e2a/pdf/GOVPUB-GP3-598b0669caf95204b09a7a7e34757e2a.pdf"
+    ]
+  },
+  "sources": [
+    {
+      "url": "https://www.govinfo.gov/content/pkg/GOVPUB-GP3-598b0669caf95204b09a7a7e34757e2a/pdf/GOVPUB-GP3-598b0669caf95204b09a7a7e34757e2a.pdf",
+      "supports": [
+        "identity",
+        "first_publication",
+        "authorship",
+        "nonfiction"
+      ]
+    }
+  ],
+  "source": "gemini web (search)",
+  "saved": "2026-09-25T19:13:17.783Z",
+  "questionCount": 52,
+  "answers": {
+    "audience:children": "no",
+    "audience:ya": "no",
+    "author:alive": "unknown",
+    "author:american": "unknown",
+    "author:british": "unknown",
+    "author:european": "unknown",
+    "author:female": "unknown",
+    "author:nonwestern": "unknown",
+    "author:prolific": "unknown",
+    "book:film": "no",
+    "fact:namedchars": "no",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "yes",
+    "fact:firstpub_ge_2001": "no",
+    "fact:firstpub_ge_2016": "no",
+    "fact:firstpub_lt_1900": "no",
+    "form:classic": "no",
+    "form:fiction": "no",
+    "form:nonfiction": "yes",
+    "form:series": "no",
+    "form:webnovel": "no",
+    "genre:adventure": "no",
+    "genre:drama": "no",
+    "genre:fantasy": "no",
+    "genre:history": "no",
+    "genre:psychology": "no",
+    "genre:romance": "no",
+    "genre:science": "no",
+    "genre:scifi": "no",
+    "place:britain": "no",
+    "place:europe_other": "no",
+    "place:usa": "yes",
+    "setting:school": "no",
+    "t:child": "no",
+    "t:detective": "no",
+    "t:family": "no",
+    "t:funny": "no",
+    "t:otherworld": "no",
+    "t:powersystem": "no",
+    "t:realevents": "yes",
+    "t:romance": "no",
+    "t:survival": "no",
+    "t:travel": "no",
+    "t:war": "no",
+    "theme:family": "no",
+    "theme:friendship": "no",
+    "theme:magic": "no",
+    "fact:anonymous": "no",
+    "setting:victorian": "no",
+    "form:firstperson": "no",
+    "form:memoir": "no"
+  }
+}

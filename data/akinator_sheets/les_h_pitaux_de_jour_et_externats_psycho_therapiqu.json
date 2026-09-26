@@ -5,9 +5,9 @@
   "publication": null,
   "publication_answers": {},
   "authorship": {
-    "status": "unresearched",
+    "status": "known",
     "sources": [
-      "https://en.wikipedia.org/wiki/Special:Search?search=Les%20H%D8%A3%C2%B4pitaux%20de%20jour%20et%20externats%20psycho-therapiques%20pour%20enfants."
+      "https://archive.org/details/leshopitauxdejou0000unse"
     ]
   },
   "answers": {
@@ -55,6 +55,15 @@
     "theme:magic": "no",
     "setting:victorian": "no",
     "form:firstperson": "no",
-    "form:memoir": "no"
-  }
+    "form:memoir": "no",
+    "fact:anonymous": "no",
+    "fact:firstpub_ge_2001": "unknown",
+    "fact:firstpub_ge_2016": "unknown",
+    "fact:firstpub_lt_1900": "unknown",
+    "fact:firstpub_lt_1950": "unknown",
+    "fact:firstpub_lt_1970": "unknown",
+    "fact:firstpub_lt_2000": "unknown"
+  },
+  "sources": [],
+  "questionCount": 52
 }
