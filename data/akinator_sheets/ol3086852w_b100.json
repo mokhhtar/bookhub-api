@@ -8,30 +8,28 @@
     "earliest": null,
     "latest": null,
     "sources": [
-      "https://www.penguinrandomhouse.com"
+      "https://www.penguinrandomhouse.com/books/292850/under-the-feet-of-jesus-by-helena-maria-viramontes/"
     ]
   },
   "publication_answers": {},
   "authorship": {
     "status": "known",
     "sources": [
-      "https://www.penguinrandomhouse.com"
+      "https://www.penguinrandomhouse.com/books/292850/under-the-feet-of-jesus-by-helena-maria-viramontes/"
     ]
   },
   "sources": [
     {
-      "url": "https://www.penguinrandomhouse.com",
+      "url": "https://www.penguinrandomhouse.com/books/292850/under-the-feet-of-jesus-by-helena-maria-viramontes/",
       "supports": [
         "identity",
         "first_publication",
-        "authorship",
-        "form:fiction",
-        "genre:drama"
+        "authorship"
       ]
     }
   ],
   "source": "independent web research",
-  "saved": "2026-09-25T22:25:56.465195Z",
+  "saved": "2026-09-26T06:49:33.539086Z",
   "questionCount": 52,
   "answers": {
     "fact:firstpub_lt_1900": "no",
@@ -47,7 +45,7 @@
     "author:british": "unknown",
     "author:european": "unknown",
     "author:female": "yes",
-    "author:nonwestern": "unknown",
+    "author:nonwestern": "yes",
     "author:prolific": "unknown",
     "book:film": "unknown",
     "fact:namedchars": "unknown",

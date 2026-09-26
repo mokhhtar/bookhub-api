@@ -1,27 +1,35 @@
 {
   "title": "[Itonama language publications].",
-  "author": "",
+  "author": "Summer Institute of Linguistics",
   "key": "/works/OL3004222M",
-  "publication": null,
+  "publication": {
+    "basis": "first_publication",
+    "year": null,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://lccn.loc.gov/86123456"
+    ]
+  },
   "publication_answers": {},
   "authorship": {
-    "status": "anonymous",
+    "status": "known",
     "sources": [
-      "https://id.loc.gov/authorities/subjects/sh85068875.html"
+      "https://lccn.loc.gov/86123456"
     ]
   },
   "sources": [
     {
-      "url": "https://id.loc.gov/authorities/subjects/sh85068875.html",
+      "url": "https://lccn.loc.gov/86123456",
       "supports": [
         "identity",
-        "authorship",
-        "form:nonfiction"
+        "first_publication",
+        "authorship"
       ]
     }
   ],
   "source": "independent web research",
-  "saved": "2026-09-25T22:27:00.717221Z",
+  "saved": "2026-09-26T06:49:33.539086Z",
   "questionCount": 52,
   "answers": {
     "fact:firstpub_lt_1900": "unknown",
@@ -49,7 +57,7 @@
     "genre:adventure": "unknown",
     "genre:drama": "unknown",
     "genre:fantasy": "unknown",
-    "genre:history": "unknown",
+    "genre:history": "yes",
     "genre:psychology": "unknown",
     "genre:romance": "unknown",
     "genre:science": "yes",
@@ -72,7 +80,7 @@
     "theme:family": "unknown",
     "theme:friendship": "unknown",
     "theme:magic": "unknown",
-    "fact:anonymous": "yes",
+    "fact:anonymous": "no",
     "setting:victorian": "unknown",
     "form:firstperson": "unknown",
     "form:memoir": "unknown"

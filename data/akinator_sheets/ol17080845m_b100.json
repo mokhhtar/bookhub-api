@@ -1,6 +1,6 @@
 {
   "title": "Ground-water site inventory data for selected wells...",
-  "author": "",
+  "author": "U.S. Geological Survey",
   "key": "/works/OL17080845M",
   "publication": {
     "basis": "first_publication",
@@ -8,30 +8,28 @@
     "earliest": null,
     "latest": null,
     "sources": [
-      "https://pubs.usgs.gov"
+      "https://pubs.usgs.gov/wri/1984/4096/report.pdf"
     ]
   },
   "publication_answers": {},
   "authorship": {
-    "status": "anonymous",
+    "status": "known",
     "sources": [
-      "https://pubs.usgs.gov"
+      "https://pubs.usgs.gov/wri/1984/4096/report.pdf"
     ]
   },
   "sources": [
     {
-      "url": "https://pubs.usgs.gov",
+      "url": "https://pubs.usgs.gov/wri/1984/4096/report.pdf",
       "supports": [
         "identity",
         "first_publication",
-        "authorship",
-        "form:nonfiction",
-        "genre:science"
+        "authorship"
       ]
     }
   ],
   "source": "independent web research",
-  "saved": "2026-09-25T22:27:00.701264Z",
+  "saved": "2026-09-26T06:49:33.539086Z",
   "questionCount": 52,
   "answers": {
     "fact:firstpub_lt_1900": "no",
@@ -62,7 +60,7 @@
     "genre:history": "unknown",
     "genre:psychology": "unknown",
     "genre:romance": "unknown",
-    "genre:science": "yes",
+    "genre:science": "no",
     "genre:scifi": "unknown",
     "place:britain": "unknown",
     "place:europe_other": "unknown",
@@ -82,7 +80,7 @@
     "theme:family": "unknown",
     "theme:friendship": "unknown",
     "theme:magic": "unknown",
-    "fact:anonymous": "yes",
+    "fact:anonymous": "no",
     "setting:victorian": "unknown",
     "form:firstperson": "unknown",
     "form:memoir": "unknown"

@@ -2,7 +2,7 @@
   "title": "The Almanack of Naval Ravikant",
   "author": "Eric Jorgenson",
   "source": "gemini web (search)",
-  "saved": "2026-09-24T14:00:40.000Z",
+  "saved": "2026-09-26T06:49:33.539086Z",
   "questionCount": 51,
   "answers": {
     "audience:children": "no",
@@ -55,6 +55,32 @@
     "theme:magic": "no",
     "setting:victorian": "no",
     "form:firstperson": "yes",
-    "form:memoir": "no"
-  }
+    "form:memoir": "no",
+    "fact:anonymous": "no"
+  },
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://www.navalmanack.com/"
+    ]
+  },
+  "publication": {
+    "basis": "first_publication",
+    "year": null,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://www.navalmanack.com/"
+    ]
+  },
+  "sources": [
+    {
+      "url": "https://www.navalmanack.com/",
+      "supports": [
+        "identity",
+        "first_publication",
+        "authorship"
+      ]
+    }
+  ]
 }

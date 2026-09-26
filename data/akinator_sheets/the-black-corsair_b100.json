@@ -8,31 +8,28 @@
     "earliest": null,
     "latest": null,
     "sources": [
-      "https://www.britannica.com"
+      "https://www.britannica.com/topic/The-Black-Corsair"
     ]
   },
   "publication_answers": {},
   "authorship": {
     "status": "known",
     "sources": [
-      "https://www.britannica.com"
+      "https://www.britannica.com/topic/The-Black-Corsair"
     ]
   },
   "sources": [
     {
-      "url": "https://www.britannica.com",
+      "url": "https://www.britannica.com/topic/The-Black-Corsair",
       "supports": [
         "identity",
         "first_publication",
-        "authorship",
-        "form:fiction",
-        "form:classic",
-        "genre:adventure"
+        "authorship"
       ]
     }
   ],
   "source": "independent web research",
-  "saved": "2026-09-25T22:27:00.709377Z",
+  "saved": "2026-09-26T06:49:33.539086Z",
   "questionCount": 52,
   "answers": {
     "fact:firstpub_lt_1900": "yes",
@@ -78,8 +75,8 @@
     "t:realevents": "unknown",
     "t:romance": "unknown",
     "t:survival": "unknown",
-    "t:travel": "unknown",
-    "t:war": "unknown",
+    "t:travel": "yes",
+    "t:war": "yes",
     "theme:family": "unknown",
     "theme:friendship": "unknown",
     "theme:magic": "unknown",

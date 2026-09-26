@@ -8,30 +8,28 @@
     "earliest": null,
     "latest": null,
     "sources": [
-      "https://books.google.com"
+      "https://www.cengage.com/c/psychology-themes-and-variations-11e-weiten/9781337407137/"
     ]
   },
   "publication_answers": {},
   "authorship": {
     "status": "known",
     "sources": [
-      "https://books.google.com"
+      "https://www.cengage.com/c/psychology-themes-and-variations-11e-weiten/9781337407137/"
     ]
   },
   "sources": [
     {
-      "url": "https://books.google.com",
+      "url": "https://www.cengage.com/c/psychology-themes-and-variations-11e-weiten/9781337407137/",
       "supports": [
         "identity",
         "first_publication",
-        "authorship",
-        "form:nonfiction",
-        "genre:psychology"
+        "authorship"
       ]
     }
   ],
   "source": "independent web research",
-  "saved": "2026-09-25T22:24:03.219266Z",
+  "saved": "2026-09-26T06:49:33.539086Z",
   "questionCount": 52,
   "answers": {
     "fact:firstpub_lt_1900": "no",
@@ -62,7 +60,7 @@
     "genre:history": "unknown",
     "genre:psychology": "yes",
     "genre:romance": "unknown",
-    "genre:science": "unknown",
+    "genre:science": "yes",
     "genre:scifi": "unknown",
     "place:britain": "unknown",
     "place:europe_other": "unknown",

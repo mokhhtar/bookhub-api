@@ -1,6 +1,6 @@
 {
   "title": "Esquire's The New Rules for Men",
-  "author": "Esquire",
+  "author": "Editors of Esquire",
   "key": "/works/OL25740044W",
   "publication": {
     "basis": "first_publication",
@@ -8,29 +8,28 @@
     "earliest": null,
     "latest": null,
     "sources": [
-      "https://books.google.com"
+      "https://www.hearst.com/magazines/esquire/esquire-the-new-rules-for-men"
     ]
   },
   "publication_answers": {},
   "authorship": {
-    "status": "anonymous",
+    "status": "known",
     "sources": [
-      "https://books.google.com"
+      "https://www.hearst.com/magazines/esquire/esquire-the-new-rules-for-men"
     ]
   },
   "sources": [
     {
-      "url": "https://books.google.com",
+      "url": "https://www.hearst.com/magazines/esquire/esquire-the-new-rules-for-men",
       "supports": [
         "identity",
         "first_publication",
-        "authorship",
-        "form:nonfiction"
+        "authorship"
       ]
     }
   ],
   "source": "independent web research",
-  "saved": "2026-09-25T22:24:03.199452Z",
+  "saved": "2026-09-26T06:49:33.539086Z",
   "questionCount": 52,
   "answers": {
     "fact:firstpub_lt_1900": "no",
@@ -81,7 +80,7 @@
     "theme:family": "unknown",
     "theme:friendship": "unknown",
     "theme:magic": "unknown",
-    "fact:anonymous": "yes",
+    "fact:anonymous": "no",
     "setting:victorian": "unknown",
     "form:firstperson": "unknown",
     "form:memoir": "unknown"

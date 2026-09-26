@@ -8,29 +8,28 @@
     "earliest": null,
     "latest": null,
     "sources": [
-      "https://www.abebooks.com"
+      "https://www.navalmanack.com/"
     ]
   },
   "publication_answers": {},
   "authorship": {
     "status": "known",
     "sources": [
-      "https://www.abebooks.com"
+      "https://www.navalmanack.com/"
     ]
   },
   "sources": [
     {
-      "url": "https://www.abebooks.com",
+      "url": "https://www.navalmanack.com/",
       "supports": [
         "identity",
         "first_publication",
-        "authorship",
-        "form:nonfiction"
+        "authorship"
       ]
     }
   ],
   "source": "independent web research",
-  "saved": "2026-09-25T22:24:03.207200Z",
+  "saved": "2026-09-26T06:49:33.539086Z",
   "questionCount": 52,
   "answers": {
     "fact:firstpub_lt_1900": "no",
@@ -59,7 +58,7 @@
     "genre:drama": "unknown",
     "genre:fantasy": "unknown",
     "genre:history": "unknown",
-    "genre:psychology": "unknown",
+    "genre:psychology": "yes",
     "genre:romance": "unknown",
     "genre:science": "unknown",
     "genre:scifi": "unknown",

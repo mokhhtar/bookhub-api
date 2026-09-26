@@ -8,30 +8,28 @@
     "earliest": null,
     "latest": null,
     "sources": [
-      "https://www.wiley.com"
+      "https://www.wiley.com/en-us/The+New+Trading+for+a+Living%3A+Psychology%2C+Discipline%2C+Trading+Tools+and+Systems%2C+Risk+Management%2C+Trade+Execution-p-9781118443927"
     ]
   },
   "publication_answers": {},
   "authorship": {
     "status": "known",
     "sources": [
-      "https://www.wiley.com"
+      "https://www.wiley.com/en-us/The+New+Trading+for+a+Living%3A+Psychology%2C+Discipline%2C+Trading+Tools+and+Systems%2C+Risk+Management%2C+Trade+Execution-p-9781118443927"
     ]
   },
   "sources": [
     {
-      "url": "https://www.wiley.com",
+      "url": "https://www.wiley.com/en-us/The+New+Trading+for+a+Living%3A+Psychology%2C+Discipline%2C+Trading+Tools+and+Systems%2C+Risk+Management%2C+Trade+Execution-p-9781118443927",
       "supports": [
         "identity",
         "first_publication",
-        "authorship",
-        "form:nonfiction",
-        "genre:psychology"
+        "authorship"
       ]
     }
   ],
   "source": "independent web research",
-  "saved": "2026-09-25T22:25:03.952213Z",
+  "saved": "2026-09-26T06:49:33.539086Z",
   "questionCount": 52,
   "answers": {
     "fact:firstpub_lt_1900": "no",
@@ -85,6 +83,6 @@
     "fact:anonymous": "no",
     "setting:victorian": "unknown",
     "form:firstperson": "unknown",
-    "form:memoir": "unknown"
+    "form:memoir": "yes"
   }
 }

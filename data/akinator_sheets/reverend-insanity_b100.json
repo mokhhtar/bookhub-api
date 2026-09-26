@@ -8,30 +8,28 @@
     "earliest": null,
     "latest": null,
     "sources": [
-      "https://book.qidian.com"
+      "https://book.qidian.com/info/2518831/"
     ]
   },
   "publication_answers": {},
   "authorship": {
     "status": "known",
     "sources": [
-      "https://book.qidian.com"
+      "https://book.qidian.com/info/2518831/"
     ]
   },
   "sources": [
     {
-      "url": "https://book.qidian.com",
+      "url": "https://book.qidian.com/info/2518831/",
       "supports": [
         "identity",
         "first_publication",
-        "authorship",
-        "form:fiction",
-        "form:webnovel"
+        "authorship"
       ]
     }
   ],
   "source": "independent web research",
-  "saved": "2026-09-25T22:27:00.711300Z",
+  "saved": "2026-09-26T06:49:33.539086Z",
   "questionCount": 52,
   "answers": {
     "fact:firstpub_lt_1900": "no",

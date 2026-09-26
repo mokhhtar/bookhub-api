@@ -53,5 +53,41 @@
     "target_children": 0,
     "tone_dark_or_serious": 0,
     "tone_humorous_or_satirical": 0
-  }
+  },
+  "answers": {
+    "genre:adventure": "yes",
+    "fact:anonymous": "no",
+    "fact:firstpub_lt_1900": "no",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "no",
+    "fact:firstpub_ge_2001": "yes",
+    "fact:firstpub_ge_2016": "yes"
+  },
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://www.google.com/books/edition/The_Art_of_Being_Alone/84cI0AEACAAJ"
+    ]
+  },
+  "publication": {
+    "basis": "first_publication",
+    "year": 2023,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://www.google.com/books/edition/The_Art_of_Being_Alone/84cI0AEACAAJ"
+    ]
+  },
+  "sources": [
+    {
+      "url": "https://www.google.com/books/edition/The_Art_of_Being_Alone/84cI0AEACAAJ",
+      "supports": [
+        "identity",
+        "first_publication",
+        "authorship"
+      ]
+    }
+  ],
+  "saved": "2026-09-26T06:49:33.539086Z"
 }

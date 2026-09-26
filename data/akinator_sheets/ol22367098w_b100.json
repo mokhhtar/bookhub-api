@@ -8,29 +8,28 @@
     "earliest": null,
     "latest": null,
     "sources": [
-      "https://books.google.com"
+      "https://www.burg.com/books/the-art-of-persuasion/"
     ]
   },
   "publication_answers": {},
   "authorship": {
     "status": "known",
     "sources": [
-      "https://books.google.com"
+      "https://www.burg.com/books/the-art-of-persuasion/"
     ]
   },
   "sources": [
     {
-      "url": "https://books.google.com",
+      "url": "https://www.burg.com/books/the-art-of-persuasion/",
       "supports": [
         "identity",
         "first_publication",
-        "authorship",
-        "form:nonfiction"
+        "authorship"
       ]
     }
   ],
   "source": "independent web research",
-  "saved": "2026-09-25T22:24:03.211423Z",
+  "saved": "2026-09-26T06:49:33.539086Z",
   "questionCount": 52,
   "answers": {
     "fact:firstpub_lt_1900": "no",
@@ -70,7 +69,7 @@
     "t:child": "unknown",
     "t:detective": "unknown",
     "t:family": "unknown",
-    "t:funny": "unknown",
+    "t:funny": "yes",
     "t:otherworld": "unknown",
     "t:powersystem": "unknown",
     "t:realevents": "unknown",

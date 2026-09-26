@@ -8,30 +8,28 @@
     "earliest": null,
     "latest": null,
     "sources": [
-      "https://www.pearson.com"
+      "https://www.pearson.com/en-us/subject-catalog/p/human-anatomy/P200000003507"
     ]
   },
   "publication_answers": {},
   "authorship": {
     "status": "known",
     "sources": [
-      "https://www.pearson.com"
+      "https://www.pearson.com/en-us/subject-catalog/p/human-anatomy/P200000003507"
     ]
   },
   "sources": [
     {
-      "url": "https://www.pearson.com",
+      "url": "https://www.pearson.com/en-us/subject-catalog/p/human-anatomy/P200000003507",
       "supports": [
         "identity",
         "first_publication",
-        "authorship",
-        "form:nonfiction",
-        "genre:science"
+        "authorship"
       ]
     }
   ],
   "source": "independent web research",
-  "saved": "2026-09-25T22:27:00.649432Z",
+  "saved": "2026-09-26T06:49:33.539086Z",
   "questionCount": 52,
   "answers": {
     "fact:firstpub_lt_1900": "no",
@@ -42,7 +40,7 @@
     "fact:firstpub_ge_2016": "no",
     "audience:children": "unknown",
     "audience:ya": "unknown",
-    "author:alive": "no",
+    "author:alive": "yes",
     "author:american": "yes",
     "author:british": "unknown",
     "author:european": "unknown",

@@ -8,30 +8,28 @@
     "earliest": null,
     "latest": null,
     "sources": [
-      "https://www.mheducation.com"
+      "https://www.mheducation.com/highered/product/life-span-development-santrock/M9781260245844.html"
     ]
   },
   "publication_answers": {},
   "authorship": {
     "status": "known",
     "sources": [
-      "https://www.mheducation.com"
+      "https://www.mheducation.com/highered/product/life-span-development-santrock/M9781260245844.html"
     ]
   },
   "sources": [
     {
-      "url": "https://www.mheducation.com",
+      "url": "https://www.mheducation.com/highered/product/life-span-development-santrock/M9781260245844.html",
       "supports": [
         "identity",
         "first_publication",
-        "authorship",
-        "form:nonfiction",
-        "genre:psychology"
+        "authorship"
       ]
     }
   ],
   "source": "independent web research",
-  "saved": "2026-09-25T22:27:00.585384Z",
+  "saved": "2026-09-26T06:49:33.539086Z",
   "questionCount": 52,
   "answers": {
     "fact:firstpub_lt_1900": "no",
@@ -85,6 +83,6 @@
     "fact:anonymous": "no",
     "setting:victorian": "unknown",
     "form:firstperson": "unknown",
-    "form:memoir": "unknown"
+    "form:memoir": "yes"
   }
 }

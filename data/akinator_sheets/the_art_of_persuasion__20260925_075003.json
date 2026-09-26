@@ -53,5 +53,8 @@
     "target_children": 0,
     "tone_dark_or_serious": 0,
     "tone_humorous_or_satirical": 0
+  },
+  "answers": {
+    "t:realevents": "yes"
   }
 }

@@ -8,29 +8,28 @@
     "earliest": null,
     "latest": null,
     "sources": [
-      "https://books.google.com"
+      "https://overcominggravity.com/"
     ]
   },
   "publication_answers": {},
   "authorship": {
     "status": "known",
     "sources": [
-      "https://books.google.com"
+      "https://overcominggravity.com/"
     ]
   },
   "sources": [
     {
-      "url": "https://books.google.com",
+      "url": "https://overcominggravity.com/",
       "supports": [
         "identity",
         "first_publication",
-        "authorship",
-        "form:nonfiction"
+        "authorship"
       ]
     }
   ],
   "source": "independent web research",
-  "saved": "2026-09-25T22:25:56.457466Z",
+  "saved": "2026-09-26T06:49:33.539086Z",
   "questionCount": 52,
   "answers": {
     "fact:firstpub_lt_1900": "no",
@@ -56,7 +55,7 @@
     "form:series": "unknown",
     "form:webnovel": "unknown",
     "genre:adventure": "unknown",
-    "genre:drama": "unknown",
+    "genre:drama": "yes",
     "genre:fantasy": "unknown",
     "genre:history": "unknown",
     "genre:psychology": "unknown",

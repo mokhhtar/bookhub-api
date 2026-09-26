@@ -1,6 +1,6 @@
 {
   "title": "Deutsche Literatur von Lessing bis Heine in der bildenden Kunst der DDR",
-  "author": "",
+  "author": "Zentrum für Kunstausstellungen der DDR",
   "key": "/works/OL21234092M",
   "publication": {
     "basis": "first_publication",
@@ -8,30 +8,28 @@
     "earliest": null,
     "latest": null,
     "sources": [
-      "https://books.google.com"
+      "https://books.google.com/books?id=U35GAAAAMAAJ"
     ]
   },
   "publication_answers": {},
   "authorship": {
-    "status": "anonymous",
+    "status": "known",
     "sources": [
-      "https://books.google.com"
+      "https://books.google.com/books?id=U35GAAAAMAAJ"
     ]
   },
   "sources": [
     {
-      "url": "https://books.google.com",
+      "url": "https://books.google.com/books?id=U35GAAAAMAAJ",
       "supports": [
         "identity",
         "first_publication",
-        "authorship",
-        "form:nonfiction",
-        "genre:history"
+        "authorship"
       ]
     }
   ],
   "source": "independent web research",
-  "saved": "2026-09-25T22:24:03.159670Z",
+  "saved": "2026-09-26T06:49:33.539086Z",
   "questionCount": 52,
   "answers": {
     "fact:firstpub_lt_1900": "no",
@@ -45,7 +43,7 @@
     "author:alive": "unknown",
     "author:american": "unknown",
     "author:british": "unknown",
-    "author:european": "unknown",
+    "author:european": "yes",
     "author:female": "unknown",
     "author:nonwestern": "unknown",
     "author:prolific": "unknown",
@@ -82,7 +80,7 @@
     "theme:family": "unknown",
     "theme:friendship": "unknown",
     "theme:magic": "unknown",
-    "fact:anonymous": "yes",
+    "fact:anonymous": "no",
     "setting:victorian": "unknown",
     "form:firstperson": "unknown",
     "form:memoir": "unknown"

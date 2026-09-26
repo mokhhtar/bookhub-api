@@ -8,30 +8,28 @@
     "earliest": null,
     "latest": null,
     "sources": [
-      "https://www.soundstrue.com"
+      "https://www.soundstrue.com/products/no-bad-parts"
     ]
   },
   "publication_answers": {},
   "authorship": {
     "status": "known",
     "sources": [
-      "https://www.soundstrue.com"
+      "https://www.soundstrue.com/products/no-bad-parts"
     ]
   },
   "sources": [
     {
-      "url": "https://www.soundstrue.com",
+      "url": "https://www.soundstrue.com/products/no-bad-parts",
       "supports": [
         "identity",
         "first_publication",
-        "authorship",
-        "form:nonfiction",
-        "genre:psychology"
+        "authorship"
       ]
     }
   ],
   "source": "independent web research",
-  "saved": "2026-09-25T22:25:03.856375Z",
+  "saved": "2026-09-26T06:49:33.539086Z",
   "questionCount": 52,
   "answers": {
     "fact:firstpub_lt_1900": "no",
@@ -74,7 +72,7 @@
     "t:funny": "unknown",
     "t:otherworld": "unknown",
     "t:powersystem": "unknown",
-    "t:realevents": "unknown",
+    "t:realevents": "yes",
     "t:romance": "unknown",
     "t:survival": "unknown",
     "t:travel": "unknown",
