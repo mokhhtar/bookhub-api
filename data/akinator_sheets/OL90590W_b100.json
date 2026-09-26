@@ -1,0 +1,92 @@
+{
+  "key": "/works/OL90590W",
+  "title": "Psychology",
+  "author": "Dennis Coon",
+  "publication": {
+    "basis": "first_publication",
+    "year": 1977,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://www.cengage.com/c/psychology-modules-for-active-learning-14e-coon/9781305940413/"
+    ],
+    "url": "https://www.cengage.com/c/psychology-modules-for-active-learning-14e-coon/9781305940413/"
+  },
+  "answers": {
+    "audience:children": "unknown",
+    "audience:ya": "unknown",
+    "author:alive": "unknown",
+    "author:american": "yes",
+    "author:british": "unknown",
+    "author:european": "unknown",
+    "author:female": "no",
+    "author:nonwestern": "unknown",
+    "author:prolific": "unknown",
+    "book:film": "unknown",
+    "fact:anonymous": "no",
+    "fact:firstpub_ge_2001": "no",
+    "fact:firstpub_ge_2016": "no",
+    "fact:firstpub_lt_1900": "no",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "yes",
+    "fact:namedchars": "unknown",
+    "form:classic": "unknown",
+    "form:fiction": "no",
+    "form:firstperson": "unknown",
+    "form:memoir": "unknown",
+    "form:nonfiction": "yes",
+    "form:series": "yes",
+    "form:webnovel": "unknown",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:fantasy": "unknown",
+    "genre:history": "unknown",
+    "genre:psychology": "yes",
+    "genre:romance": "unknown",
+    "genre:science": "yes",
+    "genre:scifi": "unknown",
+    "place:britain": "unknown",
+    "place:europe_other": "unknown",
+    "place:usa": "unknown",
+    "setting:school": "yes",
+    "setting:victorian": "unknown",
+    "t:child": "unknown",
+    "t:detective": "unknown",
+    "t:family": "unknown",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:powersystem": "unknown",
+    "t:realevents": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown"
+  },
+  "supports": {
+    "author:american": "https://openlibrary.org/works/OL90590W",
+    "genre:psychology": "https://openlibrary.org/works/OL90590W",
+    "publication.year": "https://openlibrary.org/works/OL90590W"
+  },
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://www.cengage.com/c/psychology-modules-for-active-learning-14e-coon/9781305940413/"
+    ]
+  },
+  "questionCount": 52,
+  "sources": [
+    {
+      "url": "https://www.cengage.com/c/psychology-modules-for-active-learning-14e-coon/9781305940413/",
+      "supports": [
+        "identity",
+        "first_publication",
+        "authorship",
+        "form:nonfiction"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,92 @@
+{
+  "key": "/works/OL21351323W",
+  "title": "Guide to Combat",
+  "author": "Mojang",
+  "publication": {
+    "basis": "first_publication",
+    "year": 2017,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://www.penguinrandomhouse.com/books/557161/minecraft-guide-to-combat-by-mojang-ab/"
+    ],
+    "url": "https://www.penguinrandomhouse.com/books/557161/minecraft-guide-to-combat-by-mojang-ab/"
+  },
+  "answers": {
+    "audience:children": "yes",
+    "audience:ya": "unknown",
+    "author:alive": "unknown",
+    "author:american": "no",
+    "author:british": "no",
+    "author:european": "yes",
+    "author:female": "no",
+    "author:nonwestern": "unknown",
+    "author:prolific": "unknown",
+    "book:film": "unknown",
+    "fact:anonymous": "no",
+    "fact:firstpub_ge_2001": "yes",
+    "fact:firstpub_ge_2016": "yes",
+    "fact:firstpub_lt_1900": "no",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "no",
+    "fact:namedchars": "unknown",
+    "form:classic": "unknown",
+    "form:fiction": "no",
+    "form:firstperson": "unknown",
+    "form:memoir": "unknown",
+    "form:nonfiction": "yes",
+    "form:series": "unknown",
+    "form:webnovel": "unknown",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:fantasy": "unknown",
+    "genre:history": "unknown",
+    "genre:psychology": "unknown",
+    "genre:romance": "unknown",
+    "genre:science": "unknown",
+    "genre:scifi": "unknown",
+    "place:britain": "unknown",
+    "place:europe_other": "unknown",
+    "place:usa": "unknown",
+    "setting:school": "unknown",
+    "setting:victorian": "unknown",
+    "t:child": "yes",
+    "t:detective": "unknown",
+    "t:family": "unknown",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:powersystem": "unknown",
+    "t:realevents": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown"
+  },
+  "supports": {
+    "author:european": "https://openlibrary.org/works/OL21351323W",
+    "form:nonfiction": "https://openlibrary.org/works/OL21351323W",
+    "publication.year": "https://openlibrary.org/works/OL21351323W"
+  },
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://www.penguinrandomhouse.com/books/557161/minecraft-guide-to-combat-by-mojang-ab/"
+    ]
+  },
+  "questionCount": 52,
+  "sources": [
+    {
+      "url": "https://www.penguinrandomhouse.com/books/557161/minecraft-guide-to-combat-by-mojang-ab/",
+      "supports": [
+        "identity",
+        "first_publication",
+        "authorship",
+        "form:nonfiction"
+      ]
+    }
+  ]
+}

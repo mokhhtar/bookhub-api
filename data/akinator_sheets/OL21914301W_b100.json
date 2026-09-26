@@ -1,0 +1,92 @@
+{
+  "key": "/works/OL21914301W",
+  "title": "Single. on Purpose",
+  "author": "John Kim",
+  "publication": {
+    "basis": "first_publication",
+    "year": 2021,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://www.harpercollins.com/products/single-on-purpose-john-kim"
+    ],
+    "url": "https://www.harpercollins.com/products/single-on-purpose-john-kim"
+  },
+  "answers": {
+    "audience:children": "unknown",
+    "audience:ya": "unknown",
+    "author:alive": "unknown",
+    "author:american": "yes",
+    "author:british": "unknown",
+    "author:european": "unknown",
+    "author:female": "no",
+    "author:nonwestern": "no",
+    "author:prolific": "unknown",
+    "book:film": "unknown",
+    "fact:anonymous": "no",
+    "fact:firstpub_ge_2001": "yes",
+    "fact:firstpub_ge_2016": "yes",
+    "fact:firstpub_lt_1900": "no",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "no",
+    "fact:namedchars": "unknown",
+    "form:classic": "unknown",
+    "form:fiction": "no",
+    "form:firstperson": "unknown",
+    "form:memoir": "unknown",
+    "form:nonfiction": "yes",
+    "form:series": "unknown",
+    "form:webnovel": "unknown",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:fantasy": "unknown",
+    "genre:history": "unknown",
+    "genre:psychology": "yes",
+    "genre:romance": "unknown",
+    "genre:science": "unknown",
+    "genre:scifi": "unknown",
+    "place:britain": "unknown",
+    "place:europe_other": "unknown",
+    "place:usa": "unknown",
+    "setting:school": "unknown",
+    "setting:victorian": "unknown",
+    "t:child": "unknown",
+    "t:detective": "unknown",
+    "t:family": "unknown",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:powersystem": "unknown",
+    "t:realevents": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown"
+  },
+  "supports": {
+    "author:american": "https://openlibrary.org/works/OL21914301W",
+    "genre:psychology": "https://openlibrary.org/works/OL21914301W",
+    "publication.year": "https://openlibrary.org/works/OL21914301W"
+  },
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://www.harpercollins.com/products/single-on-purpose-john-kim"
+    ]
+  },
+  "questionCount": 52,
+  "sources": [
+    {
+      "url": "https://www.harpercollins.com/products/single-on-purpose-john-kim",
+      "supports": [
+        "identity",
+        "first_publication",
+        "authorship",
+        "form:nonfiction"
+      ]
+    }
+  ]
+}

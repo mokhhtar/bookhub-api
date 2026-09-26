@@ -1,0 +1,92 @@
+{
+  "key": "/works/OL24776665W",
+  "title": "A Dictionary Of Color Combinations",
+  "author": "Sanzo Wada",
+  "publication": {
+    "basis": "first_publication",
+    "year": 1933,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://seigensha.com/en/books/978-4-86152-247-5/"
+    ],
+    "url": "https://seigensha.com/en/books/978-4-86152-247-5/"
+  },
+  "answers": {
+    "audience:children": "unknown",
+    "audience:ya": "unknown",
+    "author:alive": "unknown",
+    "author:american": "no",
+    "author:british": "no",
+    "author:european": "unknown",
+    "author:female": "no",
+    "author:nonwestern": "yes",
+    "author:prolific": "unknown",
+    "book:film": "unknown",
+    "fact:anonymous": "no",
+    "fact:firstpub_ge_2001": "no",
+    "fact:firstpub_ge_2016": "no",
+    "fact:firstpub_lt_1900": "no",
+    "fact:firstpub_lt_1950": "yes",
+    "fact:firstpub_lt_1970": "yes",
+    "fact:firstpub_lt_2000": "yes",
+    "fact:namedchars": "unknown",
+    "form:classic": "unknown",
+    "form:fiction": "no",
+    "form:firstperson": "unknown",
+    "form:memoir": "unknown",
+    "form:nonfiction": "yes",
+    "form:series": "unknown",
+    "form:webnovel": "unknown",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:fantasy": "unknown",
+    "genre:history": "unknown",
+    "genre:psychology": "unknown",
+    "genre:romance": "unknown",
+    "genre:science": "yes",
+    "genre:scifi": "unknown",
+    "place:britain": "unknown",
+    "place:europe_other": "unknown",
+    "place:usa": "unknown",
+    "setting:school": "unknown",
+    "setting:victorian": "unknown",
+    "t:child": "unknown",
+    "t:detective": "unknown",
+    "t:family": "unknown",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:powersystem": "unknown",
+    "t:realevents": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown"
+  },
+  "supports": {
+    "author:nonwestern": "https://openlibrary.org/works/OL24776665W",
+    "form:nonfiction": "https://openlibrary.org/works/OL24776665W",
+    "publication.year": "https://openlibrary.org/works/OL24776665W"
+  },
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://seigensha.com/en/books/978-4-86152-247-5/"
+    ]
+  },
+  "questionCount": 52,
+  "sources": [
+    {
+      "url": "https://seigensha.com/en/books/978-4-86152-247-5/",
+      "supports": [
+        "identity",
+        "first_publication",
+        "authorship",
+        "form:nonfiction"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,92 @@
+{
+  "key": "/works/OL3241325W",
+  "title": "Environmental impact assessment",
+  "author": "Larry W. Canter",
+  "publication": {
+    "basis": "first_publication",
+    "year": 1977,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://www.mheducation.com/highered/product/environmental-impact-assessment-canter/M9780070097674.html"
+    ],
+    "url": "https://www.mheducation.com/highered/product/environmental-impact-assessment-canter/M9780070097674.html"
+  },
+  "answers": {
+    "audience:children": "unknown",
+    "audience:ya": "unknown",
+    "author:alive": "unknown",
+    "author:american": "yes",
+    "author:british": "unknown",
+    "author:european": "unknown",
+    "author:female": "no",
+    "author:nonwestern": "unknown",
+    "author:prolific": "unknown",
+    "book:film": "unknown",
+    "fact:anonymous": "no",
+    "fact:firstpub_ge_2001": "no",
+    "fact:firstpub_ge_2016": "no",
+    "fact:firstpub_lt_1900": "no",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "yes",
+    "fact:namedchars": "unknown",
+    "form:classic": "unknown",
+    "form:fiction": "no",
+    "form:firstperson": "unknown",
+    "form:memoir": "unknown",
+    "form:nonfiction": "yes",
+    "form:series": "unknown",
+    "form:webnovel": "unknown",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:fantasy": "unknown",
+    "genre:history": "unknown",
+    "genre:psychology": "unknown",
+    "genre:romance": "unknown",
+    "genre:science": "yes",
+    "genre:scifi": "unknown",
+    "place:britain": "unknown",
+    "place:europe_other": "yes",
+    "place:usa": "unknown",
+    "setting:school": "yes",
+    "setting:victorian": "unknown",
+    "t:child": "unknown",
+    "t:detective": "unknown",
+    "t:family": "unknown",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:powersystem": "unknown",
+    "t:realevents": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown"
+  },
+  "supports": {
+    "author:american": "https://openlibrary.org/works/OL3241325W",
+    "genre:science": "https://openlibrary.org/works/OL3241325W",
+    "publication.year": "https://openlibrary.org/works/OL3241325W"
+  },
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://www.mheducation.com/highered/product/environmental-impact-assessment-canter/M9780070097674.html"
+    ]
+  },
+  "questionCount": 52,
+  "sources": [
+    {
+      "url": "https://www.mheducation.com/highered/product/environmental-impact-assessment-canter/M9780070097674.html",
+      "supports": [
+        "identity",
+        "first_publication",
+        "authorship",
+        "form:nonfiction"
+      ]
+    }
+  ]
+}

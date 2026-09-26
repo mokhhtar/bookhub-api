@@ -1,0 +1,92 @@
+{
+  "key": "/works/OL9521203W",
+  "title": "Impi Yabomdabu Isethunjini",
+  "author": "J.C. Buthelezi",
+  "publication": {
+    "basis": "first_publication",
+    "year": 1996,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://www.worldcat.org/title/37920194"
+    ],
+    "url": "https://www.worldcat.org/title/37920194"
+  },
+  "answers": {
+    "audience:children": "unknown",
+    "audience:ya": "unknown",
+    "author:alive": "unknown",
+    "author:american": "no",
+    "author:british": "no",
+    "author:european": "unknown",
+    "author:female": "no",
+    "author:nonwestern": "yes",
+    "author:prolific": "unknown",
+    "book:film": "unknown",
+    "fact:anonymous": "no",
+    "fact:firstpub_ge_2001": "no",
+    "fact:firstpub_ge_2016": "no",
+    "fact:firstpub_lt_1900": "no",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "yes",
+    "fact:namedchars": "unknown",
+    "form:classic": "unknown",
+    "form:fiction": "yes",
+    "form:firstperson": "unknown",
+    "form:memoir": "unknown",
+    "form:nonfiction": "no",
+    "form:series": "unknown",
+    "form:webnovel": "unknown",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:fantasy": "unknown",
+    "genre:history": "unknown",
+    "genre:psychology": "unknown",
+    "genre:romance": "unknown",
+    "genre:science": "unknown",
+    "genre:scifi": "unknown",
+    "place:britain": "unknown",
+    "place:europe_other": "unknown",
+    "place:usa": "unknown",
+    "setting:school": "yes",
+    "setting:victorian": "unknown",
+    "t:child": "unknown",
+    "t:detective": "unknown",
+    "t:family": "unknown",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:powersystem": "unknown",
+    "t:realevents": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown"
+  },
+  "supports": {
+    "author:nonwestern": "https://openlibrary.org/works/OL9521203W",
+    "form:fiction": "https://openlibrary.org/works/OL9521203W",
+    "publication.year": "https://openlibrary.org/works/OL9521203W"
+  },
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://www.worldcat.org/title/37920194"
+    ]
+  },
+  "questionCount": 52,
+  "sources": [
+    {
+      "url": "https://www.worldcat.org/title/37920194",
+      "supports": [
+        "identity",
+        "first_publication",
+        "authorship",
+        "form:nonfiction"
+      ]
+    }
+  ]
+}

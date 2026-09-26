@@ -1,0 +1,92 @@
+{
+  "key": "/works/OL19662996W",
+  "title": "Crush",
+  "author": "Svetlana Chmakova",
+  "publication": {
+    "basis": "first_publication",
+    "year": 2018,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://yenpress.com/titles/9781975308421-crush"
+    ],
+    "url": "https://yenpress.com/titles/9781975308421-crush"
+  },
+  "answers": {
+    "audience:children": "unknown",
+    "audience:ya": "yes",
+    "author:alive": "unknown",
+    "author:american": "unknown",
+    "author:british": "unknown",
+    "author:european": "yes",
+    "author:female": "yes",
+    "author:nonwestern": "unknown",
+    "author:prolific": "unknown",
+    "book:film": "unknown",
+    "fact:anonymous": "no",
+    "fact:firstpub_ge_2001": "yes",
+    "fact:firstpub_ge_2016": "yes",
+    "fact:firstpub_lt_1900": "no",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "no",
+    "fact:namedchars": "unknown",
+    "form:classic": "unknown",
+    "form:fiction": "yes",
+    "form:firstperson": "unknown",
+    "form:memoir": "unknown",
+    "form:nonfiction": "no",
+    "form:series": "unknown",
+    "form:webnovel": "unknown",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:fantasy": "unknown",
+    "genre:history": "unknown",
+    "genre:psychology": "unknown",
+    "genre:romance": "yes",
+    "genre:science": "unknown",
+    "genre:scifi": "unknown",
+    "place:britain": "unknown",
+    "place:europe_other": "unknown",
+    "place:usa": "unknown",
+    "setting:school": "yes",
+    "setting:victorian": "unknown",
+    "t:child": "yes",
+    "t:detective": "unknown",
+    "t:family": "unknown",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:powersystem": "unknown",
+    "t:realevents": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown"
+  },
+  "supports": {
+    "author:female": "https://yenpress.com",
+    "form:fiction": "https://yenpress.com",
+    "publication.year": "https://yenpress.com"
+  },
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://yenpress.com/titles/9781975308421-crush"
+    ]
+  },
+  "questionCount": 52,
+  "sources": [
+    {
+      "url": "https://yenpress.com/titles/9781975308421-crush",
+      "supports": [
+        "identity",
+        "first_publication",
+        "authorship",
+        "form:nonfiction"
+      ]
+    }
+  ]
+}

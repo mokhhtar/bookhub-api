@@ -1,0 +1,92 @@
+{
+  "key": "/works/OL10121835M",
+  "title": "New Peak Mathematics",
+  "author": "Alan Brighouse",
+  "publication": {
+    "basis": "first_publication",
+    "year": 1986,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://www.worldcat.org/title/43187292"
+    ],
+    "url": "https://www.worldcat.org/title/43187292"
+  },
+  "answers": {
+    "audience:children": "yes",
+    "audience:ya": "unknown",
+    "author:alive": "unknown",
+    "author:american": "no",
+    "author:british": "yes",
+    "author:european": "unknown",
+    "author:female": "no",
+    "author:nonwestern": "unknown",
+    "author:prolific": "unknown",
+    "book:film": "unknown",
+    "fact:anonymous": "no",
+    "fact:firstpub_ge_2001": "no",
+    "fact:firstpub_ge_2016": "no",
+    "fact:firstpub_lt_1900": "no",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "yes",
+    "fact:namedchars": "unknown",
+    "form:classic": "unknown",
+    "form:fiction": "no",
+    "form:firstperson": "unknown",
+    "form:memoir": "unknown",
+    "form:nonfiction": "yes",
+    "form:series": "unknown",
+    "form:webnovel": "unknown",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:fantasy": "unknown",
+    "genre:history": "unknown",
+    "genre:psychology": "unknown",
+    "genre:romance": "unknown",
+    "genre:science": "yes",
+    "genre:scifi": "unknown",
+    "place:britain": "unknown",
+    "place:europe_other": "unknown",
+    "place:usa": "unknown",
+    "setting:school": "yes",
+    "setting:victorian": "unknown",
+    "t:child": "yes",
+    "t:detective": "unknown",
+    "t:family": "unknown",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:powersystem": "unknown",
+    "t:realevents": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "yes",
+    "theme:magic": "unknown"
+  },
+  "supports": {
+    "author:british": "https://openlibrary.org/works/OL10121835M",
+    "genre:science": "https://openlibrary.org/works/OL10121835M",
+    "publication.year": "https://openlibrary.org/works/OL10121835M"
+  },
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://www.worldcat.org/title/43187292"
+    ]
+  },
+  "questionCount": 52,
+  "sources": [
+    {
+      "url": "https://www.worldcat.org/title/43187292",
+      "supports": [
+        "identity",
+        "first_publication",
+        "authorship",
+        "form:nonfiction"
+      ]
+    }
+  ]
+}

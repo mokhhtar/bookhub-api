@@ -1,0 +1,92 @@
+{
+  "key": "/works/OL18174517W",
+  "title": "Numerology and the divine triangle",
+  "author": "Faith Javane",
+  "publication": {
+    "basis": "first_publication",
+    "year": 1980,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://redwheelweiser.com/detail/9780877284277/"
+    ],
+    "url": "https://redwheelweiser.com/detail/9780877284277/"
+  },
+  "answers": {
+    "audience:children": "unknown",
+    "audience:ya": "unknown",
+    "author:alive": "unknown",
+    "author:american": "yes",
+    "author:british": "unknown",
+    "author:european": "unknown",
+    "author:female": "yes",
+    "author:nonwestern": "unknown",
+    "author:prolific": "unknown",
+    "book:film": "unknown",
+    "fact:anonymous": "no",
+    "fact:firstpub_ge_2001": "no",
+    "fact:firstpub_ge_2016": "no",
+    "fact:firstpub_lt_1900": "no",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "yes",
+    "fact:namedchars": "unknown",
+    "form:classic": "unknown",
+    "form:fiction": "no",
+    "form:firstperson": "unknown",
+    "form:memoir": "unknown",
+    "form:nonfiction": "yes",
+    "form:series": "unknown",
+    "form:webnovel": "unknown",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:fantasy": "unknown",
+    "genre:history": "unknown",
+    "genre:psychology": "unknown",
+    "genre:romance": "unknown",
+    "genre:science": "unknown",
+    "genre:scifi": "unknown",
+    "place:britain": "unknown",
+    "place:europe_other": "unknown",
+    "place:usa": "unknown",
+    "setting:school": "unknown",
+    "setting:victorian": "unknown",
+    "t:child": "unknown",
+    "t:detective": "unknown",
+    "t:family": "unknown",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:powersystem": "unknown",
+    "t:realevents": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown"
+  },
+  "supports": {
+    "author:american": "https://openlibrary.org/works/OL18174517W",
+    "author:female": "https://openlibrary.org/works/OL18174517W",
+    "publication.year": "https://openlibrary.org/works/OL18174517W"
+  },
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://redwheelweiser.com/detail/9780877284277/"
+    ]
+  },
+  "questionCount": 52,
+  "sources": [
+    {
+      "url": "https://redwheelweiser.com/detail/9780877284277/",
+      "supports": [
+        "identity",
+        "first_publication",
+        "authorship",
+        "form:nonfiction"
+      ]
+    }
+  ]
+}

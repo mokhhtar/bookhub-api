@@ -1,0 +1,92 @@
+{
+  "key": "/works/OL4114917W",
+  "title": "How to Write a Movie in 21 Days",
+  "author": "Viki King",
+  "publication": {
+    "basis": "first_publication",
+    "year": 1987,
+    "earliest": null,
+    "latest": null,
+    "sources": [
+      "https://www.harpercollins.com/products/how-to-write-a-movie-in-21-days-viki-king"
+    ],
+    "url": "https://www.harpercollins.com/products/how-to-write-a-movie-in-21-days-viki-king"
+  },
+  "answers": {
+    "audience:children": "unknown",
+    "audience:ya": "unknown",
+    "author:alive": "unknown",
+    "author:american": "yes",
+    "author:british": "unknown",
+    "author:european": "unknown",
+    "author:female": "yes",
+    "author:nonwestern": "unknown",
+    "author:prolific": "unknown",
+    "book:film": "yes",
+    "fact:anonymous": "no",
+    "fact:firstpub_ge_2001": "no",
+    "fact:firstpub_ge_2016": "no",
+    "fact:firstpub_lt_1900": "no",
+    "fact:firstpub_lt_1950": "no",
+    "fact:firstpub_lt_1970": "no",
+    "fact:firstpub_lt_2000": "yes",
+    "fact:namedchars": "unknown",
+    "form:classic": "unknown",
+    "form:fiction": "no",
+    "form:firstperson": "unknown",
+    "form:memoir": "unknown",
+    "form:nonfiction": "yes",
+    "form:series": "unknown",
+    "form:webnovel": "unknown",
+    "genre:adventure": "unknown",
+    "genre:drama": "unknown",
+    "genre:fantasy": "unknown",
+    "genre:history": "unknown",
+    "genre:psychology": "unknown",
+    "genre:romance": "unknown",
+    "genre:science": "unknown",
+    "genre:scifi": "unknown",
+    "place:britain": "unknown",
+    "place:europe_other": "unknown",
+    "place:usa": "unknown",
+    "setting:school": "unknown",
+    "setting:victorian": "unknown",
+    "t:child": "unknown",
+    "t:detective": "unknown",
+    "t:family": "unknown",
+    "t:funny": "unknown",
+    "t:otherworld": "unknown",
+    "t:powersystem": "unknown",
+    "t:realevents": "unknown",
+    "t:romance": "unknown",
+    "t:survival": "unknown",
+    "t:travel": "unknown",
+    "t:war": "unknown",
+    "theme:family": "unknown",
+    "theme:friendship": "unknown",
+    "theme:magic": "unknown"
+  },
+  "supports": {
+    "author:american": "https://openlibrary.org/works/OL4114917W",
+    "author:female": "https://openlibrary.org/works/OL4114917W",
+    "publication.year": "https://openlibrary.org/works/OL4114917W"
+  },
+  "authorship": {
+    "status": "known",
+    "sources": [
+      "https://www.harpercollins.com/products/how-to-write-a-movie-in-21-days-viki-king"
+    ]
+  },
+  "questionCount": 52,
+  "sources": [
+    {
+      "url": "https://www.harpercollins.com/products/how-to-write-a-movie-in-21-days-viki-king",
+      "supports": [
+        "identity",
+        "first_publication",
+        "authorship",
+        "form:nonfiction"
+      ]
+    }
+  ]
+}
