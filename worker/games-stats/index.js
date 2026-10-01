@@ -135,15 +135,14 @@ async function recordSolve(request, env) {
     "INSERT OR IGNORE INTO solves (game, day, player, guesses, created_at) VALUES (?, ?, ?, ?, ?)"
   ).bind(game, day, player, guesses, Date.now()).run();
 
-  return json({ ok: true });
+  // Return the aggregate in the same request. The old client made a second
+  // /stats request immediately after every write; this halves end-of-game
+  // Worker invocations while preserving /stats for cached/older clients.
+  return json({ ok: true, stats: await readStatsData(game, day, env) });
 }
 
-async function readStats(url, env) {
-  const game = url.searchParams.get("game") || "";
-  const day = url.searchParams.get("day") || "";
+async function readStatsData(game, day, env) {
   const rules = GAMES[game];
-  if (!rules) return json({ error: "unknown game" }, 400);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return json({ error: "bad day" }, 400);
 
   // One query gives the total and the distribution together.
   const { results } = await env.DB.prepare(
@@ -174,9 +173,17 @@ async function readStats(url, env) {
   if (players < MIN_PLAYERS) {
     // No counts leave the building. The caller learns only that there is not
     // enough yet, which is all it needs to render nothing.
-    return json({ enough: false, min: MIN_PLAYERS, source: "players" });
+    return { enough: false, min: MIN_PLAYERS, source: "players" };
   }
-  return json({ enough: true, players, solvers, dist, source: "players" });
+  return { enough: true, players, solvers, dist, source: "players" };
+}
+
+async function readStats(url, env) {
+  const game = url.searchParams.get("game") || "";
+  const day = url.searchParams.get("day") || "";
+  if (!GAMES[game]) return json({ error: "unknown game" }, 400);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return json({ error: "bad day" }, 400);
+  return json(await readStatsData(game, day, env));
 }
 
 export default {

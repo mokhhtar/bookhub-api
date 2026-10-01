@@ -20,6 +20,28 @@
 
 const ACCESS_HEADER = "Cf-Access-Jwt-Assertion";
 
+const ADMIN_DATA_PREFIX = "admin/v1/";
+const ADMIN_DATA_FILES = new Set([
+  "admin_corrections.json", "author_overrides.json", "authors.json",
+  "books.json", "cold_questions.json", "display_overrides.json",
+  "excluded.json", "exclusive_overrides.json", "matrix.bin", "meta.json",
+  "overrides.json", "question_candidates.json", "question_dependencies.json",
+  "question_policy.json", "questions.json",
+]);
+
+async function adminData(name, env) {
+  if (!ADMIN_DATA_FILES.has(name)) return new Response("not found", { status: 404 });
+  const object = await env.ADMIN_DATA.get(ADMIN_DATA_PREFIX + name);
+  if (!object) return new Response("admin snapshot unavailable", { status: 503 });
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set("Content-Type", name.endsWith(".bin")
+    ? "application/octet-stream" : "application/json; charset=utf-8");
+  headers.set("Cache-Control", "private, no-store");
+  headers.set("X-Robots-Tag", "noindex, nofollow");
+  return new Response(object.body, { headers });
+}
+
 // The Render service this project is deployed to (see CLAUDE.md). Hardcoded
 // like the games Worker hardcodes litheca.com for CORS — this almost never
 // changes, and an env var here would be one more thing to keep in sync
@@ -620,7 +642,9 @@ Publication corrections recalculate the related answers and take effect on the n
 </div>
 <script>
 ${ESC_FN}
-const DATA = "https://litheca.com/games/data/akinator";
+ // Same-origin, Access-gated data route backed by private R2. Never point this
+ // at litheca.com: the public site intentionally does not publish the corpus.
+ const DATA = "/data";
 let books = [], questions = [], excluded = new Set(), dupFlag = [];
 let authorsData = {};
 
@@ -4114,6 +4138,10 @@ export default {
           "X-Robots-Tag": "noindex, nofollow",
         },
       });
+    }
+
+    if (url.pathname.startsWith("/data/") && request.method === "GET") {
+      return adminData(url.pathname.slice("/data/".length), env);
     }
 
     const handler = request.method === "POST" ? ROUTES[url.pathname] : null;

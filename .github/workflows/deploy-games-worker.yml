@@ -35,6 +35,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check combined solve/stats contract
+        working-directory: worker/games-stats
+        run: node check.mjs
+
       - name: Deploy
         working-directory: worker/games-stats
         env:

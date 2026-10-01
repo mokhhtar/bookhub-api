@@ -20,6 +20,12 @@ workers_dev = false
 # happens to install.
 preview_urls = false
 
+# Private admin snapshot. The public Pages build deliberately excludes these
+# files; authenticated dashboard requests stream them from R2 instead.
+[[r2_buckets]]
+binding = "ADMIN_DATA"
+bucket_name = "litheca-mind-reader-runtime-staging"
+
 # THE CUSTOM DOMAIN IS ATTACHED IN THE DASHBOARD, NOT DECLARED HERE — the
 # same choice worker/seo-status/wrangler.toml records, and for the same
 # reason: declaring it makes the deploy need zone-level DNS permission
@@ -56,3 +62,4 @@ preview_urls = false
 
 [observability]
 enabled = true
+head_sampling_rate = 1
