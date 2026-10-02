@@ -36,6 +36,7 @@ book stale is fine; a game with a shifted matrix is not.**
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import json
 import logging
@@ -120,14 +121,67 @@ def _get_file(path: str, ref: str | None = None) -> tuple[bytes, str]:
     lets a caller resolve the head ONCE and read several files at that same
     commit — both cheaper and a consistent snapshot, which is what
     `_load_live_artifacts` needs and could not previously promise.
+
+    GitHub's Contents API omits inline content once a file exceeds 1 MiB
+    (`encoding` becomes "none"). `books.json` crossed that boundary in
+    October 2026 while still returning HTTP 200, so treating the response as
+    an ordinary base64 payload made every admin edit report "Artifacts
+    unavailable". The response still carries the immutable blob sha; large
+    files therefore fall back to the Git Blobs API at that exact sha. This
+    preserves the consistent-snapshot guarantee above and works up to the
+    Git Blobs API's 100 MiB limit.
     """
     ref = ref or _head_sha() or GITHUB_BRANCH
     r = httpx.get(_url(path), headers=_HEADERS,
                   params={"ref": ref}, timeout=30.0)
     if r.status_code != 200:
+        log.warning("could not read %s at %s: HTTP %s", path, ref,
+                    r.status_code)
         return b"", ""
-    data = r.json()
-    return base64.b64decode(data.get("content", "") or ""), data.get("sha", "") or ""
+    try:
+        data = r.json()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("invalid Contents API response for %s: %s", path,
+                    str(exc)[:120])
+        return b"", ""
+
+    blob_sha = data.get("sha", "") or ""
+    content = data.get("content", "") or ""
+    if content and data.get("encoding") in (None, "base64"):
+        try:
+            compact = "".join(content.split())
+            return base64.b64decode(compact, validate=True), blob_sha
+        except (binascii.Error, ValueError) as exc:
+            # A sha-backed retry is safer than making a transient malformed
+            # Contents response look like an absent artifact.
+            log.warning("invalid inline base64 for %s (%s); trying blob %s",
+                        path, str(exc)[:80], blob_sha[:12])
+
+    if not blob_sha:
+        log.warning("Contents API omitted usable content and sha for %s", path)
+        return b"", ""
+
+    log.info("Contents API omitted usable content for %s (%s bytes); "
+             "reading blob %s", path, data.get("size", "unknown"),
+             blob_sha[:12])
+    blob = httpx.get(
+        f"{GITHUB_API}/repos/{GITHUB_REPO}/git/blobs/{blob_sha}",
+        headers=_HEADERS, timeout=60.0)
+    if blob.status_code != 200:
+        log.warning("could not read blob for %s: HTTP %s", path,
+                    blob.status_code)
+        return b"", blob_sha
+    try:
+        blob_data = blob.json()
+        encoded = "".join((blob_data.get("content", "") or "").split())
+        if blob_data.get("encoding") != "base64" or not encoded:
+            raise ValueError("blob response has no base64 content")
+        raw = base64.b64decode(encoded, validate=True)
+    except (AttributeError, binascii.Error, TypeError, ValueError) as exc:
+        log.warning("invalid blob response for %s: %s", path, str(exc)[:120])
+        return b"", blob_sha
+    log.info("read %s through Git Blobs API: %s bytes", path, len(raw))
+    return raw, blob_sha
 
 
 def _commit_files(files: dict[str, bytes], message: str,
