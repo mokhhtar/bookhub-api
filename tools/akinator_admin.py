@@ -305,8 +305,6 @@ def work_facts(body: WorkFactsRequest):
     for qid, verdict in body.answers.items():
         if verdict not in ('yes', 'no', 'clear'):
             raise HTTPException(status_code=400, detail='Invalid answer verdict')
-        if qid in QUESTIONS or qid == 'fact:anonymous' or qid.startswith('author:'):
-            raise HTTPException(status_code=409, detail='Use sourced work facts or the author profile for this answer')
 
     def build(head):
         books, _ = _get_json(f'{ARTIFACT_DIR}/books.json', None, head)
@@ -350,7 +348,13 @@ def work_facts(body: WorkFactsRequest):
             cells.pop(qid, None)
             held.discard(qid)
         applied = {}
+        ignored = {}
         for qid, verdict in body.answers.items():
+            if qid in protected or qid.startswith('author:'):
+                ignored[qid] = ('derived from publication/authorship facts'
+                                if qid in QUESTIONS or qid == 'fact:anonymous'
+                                else 'stored centrally on the author profile')
+                continue
             if verdict == 'clear':
                 cells.pop(qid, None); held.discard(qid); applied[qid] = None
             else:
@@ -372,10 +376,15 @@ def work_facts(body: WorkFactsRequest):
         states = {q['id']: (raw[row_index * width + j // 4] >> (2 * (j % 4))) & 3
                   for j, q in enumerate(qs)}
         return files, f'mind reader: sourced work facts for {body.work_key}', {
-            'applied':applied, 'book':row, 'states':states}
+            'applied':applied, 'ignored':ignored, 'book':row, 'states':states}
     wrote, result = _commit_with_retry(build)
     if not wrote: raise HTTPException(status_code=502, detail='Commit failed')
-    return {'ok':True, **result, 'note':'Facts and answers saved together; available on the next game load.'}
+    ignored_count = len(result.get('ignored', {}))
+    note = 'Facts and answers saved together; available on the next game load.'
+    if ignored_count:
+        note += (f' {ignored_count} derived/author answer(s) were routed away from the '
+                 'book override instead of rejecting the sheet.')
+    return {'ok':True, **result, 'note':note}
 
 
 # ── POST /akinator/admin/noauthor ───────────────────────────────────────
