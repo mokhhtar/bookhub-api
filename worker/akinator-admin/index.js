@@ -657,7 +657,17 @@ document.querySelectorAll("nav button").forEach(b=>b.addEventListener("click", (
 async function post(path, body){
   const r = await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
   const data = await r.json().catch(()=>({}));
-  if (!r.ok) throw new Error(data.detail || ("HTTP " + r.status));
+  if (!r.ok) {
+    const detail = data.detail;
+    if (r.status === 409 && detail && detail.requires_confirmation && !body.force) {
+      const warning = String(detail.warning || "The facts contain a logical conflict.");
+      if (window.confirm("Logical warning:\\n\\n" + warning + "\\n\\nContinue and save anyway?")) {
+        return post(path, Object.assign({}, body, {force:true}));
+      }
+      throw new Error("Save cancelled after logical warning: " + warning);
+    }
+    throw new Error(typeof detail === "string" ? detail : (detail && detail.warning) || ("HTTP " + r.status));
+  }
   return data;
 }
 

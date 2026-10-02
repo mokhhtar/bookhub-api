@@ -137,7 +137,7 @@ def overlay_docs(docs, records):
             doc['first_publish_year'] = (fact['publication'] or {}).get('year')
 
 
-def validate_fact(fact):
+def validate_fact(fact, require_sources=True):
     """Reject unsupported claims rather than accepting model confidence."""
     if not isinstance(fact, dict) or set(fact) - {'publication','publication_answers','authorship'}:
         raise ValueError('Unknown work fact field')
@@ -146,8 +146,8 @@ def validate_fact(fact):
             raise ValueError('Work facts must be objects')
     def sourced(entry):
         sources = entry.get('sources')
-        if not isinstance(sources, list) or not sources or not all(
-                isinstance(s, str) and s.startswith(('https://', 'http://')) for s in sources):
+        if require_sources and (not isinstance(sources, list) or not sources or not all(
+                isinstance(s, str) and s.startswith(('https://', 'http://')) for s in sources)):
             raise ValueError('A factual claim needs source URLs')
     publication = fact.get('publication')
     if publication:

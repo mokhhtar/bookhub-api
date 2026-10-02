@@ -260,6 +260,36 @@ class WorkFactsRequest(BaseModel):
     work_key: str = Field(..., max_length=220)
     facts: dict = Field(default_factory=dict)
     answers: dict[str, str] = Field(default_factory=dict)
+    force: bool = Field(default=False)
+
+
+def _validate_admin_facts(facts: dict, force: bool) -> None:
+    """Keep schema safety, but let the authenticated admin overrule logic.
+
+    Source URLs are useful provenance rather than a write permission. Missing
+    ones therefore never block this owner-only page. A contradictory year,
+    range, or direct answer is still shown before writing; the second request
+    carries ``force`` when the admin explicitly chooses to continue.
+    """
+    from publication import validate_fact
+    try:
+        validate_fact(facts, require_sources=False)
+    except (ValueError, TypeError, AttributeError) as exc:
+        message = str(exc)
+        structural = {
+            "Unknown work fact field",
+            "Work facts must be objects",
+            "Invalid authorship status",
+            "Invalid direct publication answer",
+        }
+        if message in structural:
+            raise HTTPException(status_code=400, detail=message) from exc
+        if force:
+            return
+        raise HTTPException(status_code=409, detail={
+            "requires_confirmation": True,
+            "warning": message,
+        }) from exc
 
 
 @router.post('/work-facts')
@@ -295,10 +325,7 @@ def work_facts(body: WorkFactsRequest):
             raise HTTPException(status_code=400, detail='Sheet contains retired question ids')
         records, _ = _get_json(f'{ARTIFACT_DIR}/work_facts.json', {}, head)
         record = {**records.get(body.work_key, {}), **body.facts}
-        try:
-            validate_fact(record)
-        except (ValueError, TypeError, AttributeError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        _validate_admin_facts(record, body.force)
         records[body.work_key] = record
         corrections, _ = _get_json(ADMIN_CORRECTIONS_PATH, {}, head)
         correction = corrections.get(body.work_key, {})
@@ -955,6 +982,7 @@ class BookRequest(BaseModel):
     # page at the next full build and would otherwise lose it.
     no_author: bool = Field(default=False)
     facts: dict = Field(default_factory=dict)
+    force: bool = Field(default=False)
     year: int | None = Field(default=None, ge=1, le=2100)
     summary: str = Field(default="", max_length=4000)
     themes: list[str] = Field(default_factory=list, max_length=20)
@@ -1055,11 +1083,7 @@ def book(body: BookRequest):
 
     from book_data import BookRecord, resolve_book         # noqa: E402
     from features import normalize                         # noqa: E402
-    from publication import validate_fact
-    try:
-        validate_fact(body.facts)
-    except (ValueError, TypeError, AttributeError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _validate_admin_facts(body.facts, body.force)
     if (body.facts.get('authorship') or {}).get('status') == 'anonymous':
         body.no_author = True
 

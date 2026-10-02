@@ -47,6 +47,28 @@ class PublicationTests(unittest.TestCase):
                'answers':{'fact:firstpub_ge_2016':'no'}}
         self.assertEqual(normalize(sheet)['answers']['fact:firstpub_ge_2016'],'yes')
 
+    def test_normalize_extracts_markdown_wrapped_source_urls(self):
+        url='https://en.wikipedia.org/wiki/A_Game_of_Thrones'
+        wrapped=f'[[{url}]({url})]({url}]({url}))'
+        sheet={
+            'publication': {'basis':'first_publication','year':1996,'sources':[wrapped]},
+            'authorship': {'status':'known','sources':[wrapped]},
+            'answers': {},
+        }
+        normalized=normalize(sheet)
+        self.assertEqual(normalized['publication']['sources'],[url])
+        self.assertEqual(normalized['authorship']['sources'],[url])
+        self.assertEqual(normalized['answers']['fact:firstpub_lt_2000'],'yes')
+
+    def test_admin_validation_allows_facts_without_sources(self):
+        fact={
+            'publication': {'basis':'first_publication','year':1996,'sources':[]},
+            'authorship': {'status':'known','sources':[]},
+        }
+        with self.assertRaisesRegex(ValueError, 'source URLs'):
+            validate_fact(fact)
+        self.assertIs(validate_fact(fact, require_sources=False),fact)
+
     def test_anonymous_is_not_empty_author(self):
         with self.assertRaises(ValueError):
             validate_fact({'authorship': {'status': 'anonymous', 'sources': []}})
